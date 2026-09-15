@@ -65,7 +65,32 @@ jobs:
       # any file whose name starts with an underscore.
       - run: touch dist/.nojekyll
 
-      - uses: actions/configure-pages@v5
+      - name: Enable and configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          # Switches Pages on through the API if it is not already on, so there
+          # is no manual trip to Settings -> Pages.
+          #
+          # This cannot work on a PRIVATE repo without GitHub Pro: Pages simply
+          # is not available there, and this step fails with a bare "Not Found".
+          # The step below turns that into a readable explanation.
+          enablement: true
+
+      - name: Explain why Pages failed
+        if: failure()
+        run: |
+          echo "::error title=GitHub Pages is not available for this repository::"
+          echo "Pages could not be enabled. The usual cause is that this repository is"
+          echo "private, and GitHub Pages on a private repository requires GitHub Pro."
+          echo ""
+          echo "Two free ways forward:"
+          echo "  1. Make the repository public, then re-run this workflow."
+          echo "     The repo holds source code only - your notes, tasks and"
+          echo "     subscriptions live in your phone's browser storage and are"
+          echo "     never uploaded anywhere. There is no database in this project."
+          echo "  2. Deploy to Cloudflare Pages instead, which is free and supports"
+          echo "     private repositories. See DEPLOY.md, Option B."
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

@@ -68,12 +68,13 @@ enabled Pages, so kick it off by hand once:
 3. Click the **Run workflow** dropdown on the right → **Run workflow**
 4. Wait about two minutes. Refresh. You want a green tick ✅
 
-If it goes red ❌, click into it and read the failed step — the error is usually
-one line and says exactly what's wrong.
+If it goes red ❌, click into it and read the failed step. A failure at
+**Enable and configure Pages** means the repo is still private and not on
+GitHub Pro — the workflow prints an explanation and your options.
 
-### 4. Get the address
+### 3. Get the address
 
-Go back to **Settings → Pages**. At the top there's now a box saying
+Go to **Settings → Pages**. At the top there's now a box saying
 *"Your site is live at…"* with a link:
 
 ```
@@ -82,7 +83,7 @@ https://jl-cox.github.io/Missile-Guap/
 
 **The trailing slash matters.** Without it some browsers will 404.
 
-### 5. Install it on your phone
+### 4. Install it on your phone
 
 1. Open that URL in **Chrome on your Android phone** (not Samsung Internet or
    Firefox — Chrome handles installed web apps best)
@@ -95,7 +96,7 @@ You now have a Steady icon in your app drawer. Opening it launches full screen,
 with no browser address bar. Long-press the icon for shortcuts straight to
 *Write something down* or *Add a subscription*.
 
-### 6. Turn on notifications
+### 5. Turn on notifications
 
 Open the app → **Settings** → **Allow notifications** → **Allow** when Android
 asks.
@@ -121,7 +122,7 @@ alarms that fire whether or not the app is running.
 5. **Save and Deploy**, and wait a couple of minutes
 
 You'll get a URL like `https://missile-guap.pages.dev`. Install it on your phone
-exactly as in **Step 5** above.
+exactly as in **Step 4** above.
 
 Cloudflare rebuilds automatically every time you push, same as the GitHub
 workflow.
