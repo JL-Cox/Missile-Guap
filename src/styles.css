@@ -1,0 +1,475 @@
+/*
+  Design rules this file encodes, all of them deliberate:
+
+  1. Nothing shouts. No red "OVERDUE", no streak counters, no guilt mechanics.
+     Colour carries at most a hint; the words carry the meaning.
+  2. Warm off-white / warm dark rather than pure #fff or #000, which glare.
+  3. One column. Same things in the same places, every screen, every time.
+  4. Touch targets are >= 44px and never rely on a gesture you have to know.
+  5. Motion is small by default and removable entirely.
+  6. Everything is labelled in words. No icon-only controls.
+*/
+
+:root {
+  --bg: #f7f5f0;
+  --surface: #fffdf8;
+  --surface-sunk: #efece4;
+  --border: #ddd8cc;
+  --border-strong: #c3bcab;
+  --text: #2b2823;
+  --text-soft: #5f594e;
+  --text-faint: #857e70;
+  --accent: #4a6b5d;
+  --accent-soft: #e2ebe5;
+  --accent-text: #2f4a3e;
+  --warn-soft: #f4ecd9;
+  --warn-text: #6b5a2e;
+  --done: #7c9885;
+
+  --radius: 12px;
+  --gap: 12px;
+  --pad: 16px;
+  --text-scale: 1;
+  --base-size: calc(17px * var(--text-scale));
+  --motion: 140ms;
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: #1b1a18;
+  --surface: #242220;
+  --surface-sunk: #2e2b28;
+  --border: #3a3733;
+  --border-strong: #514c45;
+  --text: #ece7de;
+  --text-soft: #b8b1a5;
+  --text-faint: #8d867a;
+  --accent: #8fb3a1;
+  --accent-soft: #2c3a33;
+  --accent-text: #b6d4c3;
+  --warn-soft: #3a3320;
+  --warn-text: #d8c48a;
+  --done: #7c9885;
+  color-scheme: dark;
+}
+
+/* Maximum legibility for days when the calm palette isn't enough. */
+[data-theme='contrast'] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-sunk: #f0f0f0;
+  --border: #000000;
+  --border-strong: #000000;
+  --text: #000000;
+  --text-soft: #1a1a1a;
+  --text-faint: #333333;
+  --accent: #00407a;
+  --accent-soft: #dceaf7;
+  --accent-text: #00305c;
+  --warn-soft: #fff4cc;
+  --warn-text: #4a3800;
+  --done: #005c2e;
+  color-scheme: light;
+}
+
+[data-theme='contrast'] .card,
+[data-theme='contrast'] .btn,
+[data-theme='contrast'] input,
+[data-theme='contrast'] textarea,
+[data-theme='contrast'] select {
+  border-width: 2px;
+}
+
+[data-reduce-motion='true'] * {
+  animation-duration: 0s !important;
+  transition-duration: 0s !important;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--base-size);
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+}
+
+body { overflow-wrap: break-word; }
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+h1, h2, h3 { line-height: 1.25; margin: 0; font-weight: 650; }
+h1 { font-size: 1.45rem; }
+h2 { font-size: 1.15rem; }
+h3 { font-size: 1rem; }
+p { margin: 0; }
+
+/* ---------- layout ---------- */
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--pad);
+  /* Room for the fixed bottom nav plus the phone's own gesture bar. */
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.stack { display: flex; flex-direction: column; gap: var(--gap); }
+.stack-sm { display: flex; flex-direction: column; gap: 8px; }
+.row { display: flex; align-items: center; gap: var(--gap); flex-wrap: wrap; }
+.row-tight { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+}
+
+.muted { color: var(--text-soft); }
+.faint { color: var(--text-faint); font-size: 0.85rem; }
+.small { font-size: 0.88rem; }
+
+/* ---------- cards ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--pad);
+}
+
+.card-tight { padding: 12px; }
+
+.card-quiet {
+  background: transparent;
+  border-style: dashed;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  min-height: 44px;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 550;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background var(--motion) ease, transform var(--motion) ease;
+  text-align: center;
+}
+
+.btn:hover { background: var(--surface-sunk); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: var(--accent-text); }
+[data-theme='dark'] .btn-primary { color: #17201b; }
+
+.btn-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-soft);
+  padding: 8px 10px;
+  min-height: 40px;
+}
+.btn-quiet:hover { background: var(--surface-sunk); }
+
+.btn-sm { min-height: 38px; padding: 6px 12px; font-size: 0.9rem; }
+
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- inputs ---------- */
+
+input[type='text'],
+input[type='number'],
+input[type='date'],
+input[type='time'],
+input[type='search'],
+textarea,
+select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+
+textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
+
+label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 550;
+  color: var(--text-soft);
+  margin-bottom: 4px;
+}
+
+.field { display: flex; flex-direction: column; }
+.field-row { display: flex; gap: var(--gap); flex-wrap: wrap; }
+.field-row > .field { flex: 1 1 140px; }
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 0;
+  cursor: pointer;
+  font-weight: 450;
+  color: var(--text);
+  margin: 0;
+  font-size: 1rem;
+}
+
+.check input[type='checkbox'] {
+  width: 24px;
+  height: 24px;
+  margin: 3px 0 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* ---------- capture bar ---------- */
+
+.capture {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.capture textarea {
+  background: var(--surface);
+  min-height: 56px;
+}
+
+/* ---------- list items ---------- */
+
+.item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.item-done .item-title { color: var(--text-faint); text-decoration: line-through; }
+
+.item-title { font-weight: 550; }
+
+.time-chip {
+  flex: none;
+  min-width: 62px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-soft);
+}
+
+.pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 0.8rem;
+  font-weight: 550;
+}
+
+.pill-warn { background: var(--warn-soft); color: var(--warn-text); }
+
+.amount { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.blurred {
+  filter: blur(7px);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ---------- empty states ---------- */
+/* Empty is a valid state, not a failure. These never say "you have nothing". */
+
+.empty {
+  padding: 20px var(--pad);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-soft);
+  text-align: left;
+}
+
+/* ---------- nav ---------- */
+
+.nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.nav-btn {
+  flex: 1;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 550;
+  cursor: pointer;
+  border-top: 3px solid transparent;
+}
+
+.nav-btn[aria-current='page'] {
+  color: var(--accent-text);
+  border-top-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.nav-glyph { font-size: 1.1rem; line-height: 1; }
+
+.nav-count {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+/* ---------- header ---------- */
+
+.header {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 10;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 12px var(--pad);
+}
+
+.header-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+}
+
+/* ---------- toast ---------- */
+
+.toast .btn { flex: none; }
+
+.toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  max-width: 560px;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  animation: rise var(--motion) ease-out;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- misc ---------- */
+
+.divider { height: 1px; background: var(--border); border: none; margin: 4px 0; }
+
+.note-body {
+  white-space: pre-wrap;
+  color: var(--text-soft);
+  font-size: 0.95rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  min-width: 3px;
+}
+
+.bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-sunk);
+  overflow: hidden;
+}

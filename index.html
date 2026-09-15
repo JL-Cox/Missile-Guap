@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!--
+      This is the privacy guarantee, enforced by the browser rather than by
+      trusting us. `connect-src 'none'` means this page CANNOT make a network
+      request: no fetch, no XHR, no WebSocket, no beacon, no analytics.
+      If any code ever tried, the browser would block it and log a console error.
+      (The dev server relaxes this to allow hot-reload; the built app does not.)
+
+      `frame-ancestors` is deliberately absent: a <meta> CSP cannot carry it.
+      If you host this yourself, add `frame-ancestors 'none'` as a real response
+      header - see DEPLOY.md.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'self'; object-src 'none'"
+    />
+
+    <title>Steady</title>
+    <meta name="description" content="Notes, day plan, reminders and subscriptions. Stored only on this device." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#f7f5f0" />
+    <link rel="icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Steady needs JavaScript. Everything runs on your device; nothing is sent anywhere.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

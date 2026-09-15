@@ -1,0 +1,21 @@
+{
+  "name": "Steady",
+  "short_name": "Steady",
+  "description": "Notes, day plan, reminders and subscriptions. Stored only on this device.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f5f0",
+  "theme_color": "#f7f5f0",
+  "categories": ["productivity", "lifestyle"],
+  "icons": [
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "/icon-maskable-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Write something down", "short_name": "Capture", "url": "/?view=inbox" },
+    { "name": "Today", "short_name": "Today", "url": "/" }
+  ]
+}

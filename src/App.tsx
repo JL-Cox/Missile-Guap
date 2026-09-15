@@ -1,0 +1,161 @@
+import { useCallback, useEffect, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db, getSettings } from './db';
+import { DEFAULT_SETTINGS, type Settings as SettingsType, type Task } from './types';
+import { startScheduler } from './lib/notify';
+import CaptureBar from './components/CaptureBar';
+import { Toast } from './components/ui';
+import Today from './views/Today';
+import Inbox from './views/Inbox';
+import Tasks from './views/Tasks';
+import Notes from './views/Notes';
+import Money from './views/Money';
+import Settings from './views/Settings';
+
+type ViewId = 'today' | 'inbox' | 'tasks' | 'notes' | 'money' | 'settings';
+
+/** Fixed order, fixed labels, every time. The nav never reorders itself. */
+const NAV: { id: ViewId; label: string; glyph: string }[] = [
+  { id: 'today', label: 'Today', glyph: '◎' },
+  { id: 'inbox', label: 'Inbox', glyph: '↓' },
+  { id: 'tasks', label: 'Tasks', glyph: '✓' },
+  { id: 'notes', label: 'Notes', glyph: '≡' },
+  { id: 'money', label: 'Money', glyph: '¤' },
+];
+
+const TITLES: Record<ViewId, string> = {
+  today: 'Today',
+  inbox: 'Inbox',
+  tasks: 'Tasks',
+  notes: 'Notes',
+  money: 'Money',
+  settings: 'Settings',
+};
+
+export default function App() {
+  const [view, setView] = useState<ViewId>('today');
+  const [settings, setSettings] = useState<SettingsType>(DEFAULT_SETTINGS);
+  const [toast, setToast] = useState<string | null>(null);
+  const [missed, setMissed] = useState<Task[]>([]);
+
+  useEffect(() => {
+    void getSettings().then(setSettings);
+  }, []);
+
+  // Appearance is applied to <html> so it covers everything, including the
+  // browser's own form controls via color-scheme.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = settings.theme;
+    root.dataset.reduceMotion = String(settings.reduceMotion);
+    root.style.setProperty('--text-scale', String(settings.textScale));
+  }, [settings.theme, settings.reduceMotion, settings.textScale]);
+
+  useEffect(() => {
+    return startScheduler((tick) => {
+      if (tick.missed.length) setMissed((prev) => [...prev, ...tick.missed]);
+      if (tick.fired.length === 1) setToast(`Reminder: ${tick.fired[0].title}`);
+      else if (tick.fired.length > 1) setToast(`${tick.fired.length} reminders just came due.`);
+    });
+  }, []);
+
+  const openCount = useLiveQuery(
+    () => db.captures.filter((c) => !c.clearedAt).count(),
+    [settings.rev],
+    0,
+  ) ?? 0;
+
+  const showToast = useCallback((message: string) => setToast(message), []);
+
+  return (
+    <div className="app">
+      <header className="header">
+        <div className="header-inner">
+          <div>
+            <h1>{TITLES[view]}</h1>
+            {view === 'today' && <p className="faint">{longDate()}</p>}
+          </div>
+          <button
+            type="button"
+            className={`btn btn-quiet btn-sm${view === 'settings' ? ' btn-primary' : ''}`}
+            aria-current={view === 'settings' ? 'page' : undefined}
+            onClick={() => setView(view === 'settings' ? 'today' : 'settings')}
+          >
+            {view === 'settings' ? 'Done' : 'Settings'}
+          </button>
+        </div>
+      </header>
+
+      <main className="main">
+        {/* The capture box is on every screen except Settings, always first. */}
+        {view !== 'settings' && (
+          <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />
+        )}
+
+        {missed.length > 0 && (
+          <div className="card stack-sm" role="status">
+            <h2>While the app was closed</h2>
+            <p className="small">
+              {missed.length === 1 ? 'This reminder' : 'These reminders'} came due while Steady was not running,
+              so {missed.length === 1 ? 'it was not' : 'they were not'} shown at the time.
+            </p>
+            <ul className="stack-sm" style={{ margin: 0, paddingLeft: 20 }}>
+              {missed.map((task) => (
+                <li key={task.id}>
+                  {task.title}
+                  {task.remindAt && (
+                    <span className="faint">
+                      {' '}
+                      - {new Date(task.remindAt).toLocaleString(undefined, {
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <div className="btn-row">
+              <button type="button" className="btn btn-sm" onClick={() => setMissed([])}>
+                Got it
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === 'today' && <Today settings={settings} />}
+        {view === 'inbox' && <Inbox settings={settings} />}
+        {view === 'tasks' && <Tasks settings={settings} />}
+        {view === 'notes' && <Notes settings={settings} />}
+        {view === 'money' && <Money settings={settings} />}
+        {view === 'settings' && <Settings settings={settings} onChange={setSettings} onToast={showToast} />}
+      </main>
+
+      <nav className="nav" aria-label="Main">
+        {NAV.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className="nav-btn"
+            aria-current={view === item.id ? 'page' : undefined}
+            onClick={() => setView(item.id)}
+          >
+            <span className="nav-glyph" aria-hidden="true">
+              {item.glyph}
+            </span>
+            <span>{item.label}</span>
+            {item.id === 'inbox' && openCount > 0 && <span className="nav-count">{openCount}</span>}
+          </button>
+        ))}
+      </nav>
+
+      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
+function longDate(): string {
+  return new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+}
