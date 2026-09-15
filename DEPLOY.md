@@ -49,6 +49,11 @@ private repos, and takes about the same number of clicks.** Jump to
 
 ### 2. Turn on Pages
 
+**This one has to be done by hand, and cannot be automated.** The `GITHUB_TOKEN`
+a workflow runs with is not permitted to create a Pages site, so a workflow that
+tries fails with the thoroughly unhelpful `Resource not accessible by
+integration`. Ten seconds of clicking, once, and never again.
+
 1. Go to **https://github.com/JL-Cox/Missile-Guap/settings/pages**
 2. Under **Build and deployment**, find the **Source** dropdown
 3. Change it from *Deploy from a branch* to **GitHub Actions**
@@ -57,6 +62,9 @@ private repos, and takes about the same number of clicks.** Jump to
 > **The dropdown matters.** If you leave it on "Deploy from a branch", GitHub
 > looks for finished HTML files in your repo, finds only source code, and
 > publishes a broken page. "GitHub Actions" tells it to run the build first.
+>
+> **If you see an upgrade prompt instead of a Source dropdown**, the repository
+> is still private. Do step 1 first — the dropdown does not exist until then.
 
 ### 3. Run the build
 
@@ -69,10 +77,10 @@ enabled Pages, so kick it off by hand once:
 4. Wait about two minutes. Refresh. You want a green tick ✅
 
 If it goes red ❌, click into it and read the failed step. A failure at
-**Enable and configure Pages** means the repo is still private and not on
-GitHub Pro — the workflow prints an explanation and your options.
+**Configure Pages** means step 2 hasn't taken effect — the workflow prints the
+exact page to visit and what to set.
 
-### 3. Get the address
+### 4. Get the address
 
 Go to **Settings → Pages**. At the top there's now a box saying
 *"Your site is live at…"* with a link:
@@ -83,7 +91,7 @@ https://jl-cox.github.io/Missile-Guap/
 
 **The trailing slash matters.** Without it some browsers will 404.
 
-### 4. Install it on your phone
+### 5. Install it on your phone
 
 1. Open that URL in **Chrome on your Android phone** (not Samsung Internet or
    Firefox — Chrome handles installed web apps best)
@@ -96,7 +104,7 @@ You now have a Steady icon in your app drawer. Opening it launches full screen,
 with no browser address bar. Long-press the icon for shortcuts straight to
 *Write something down* or *Add a subscription*.
 
-### 5. Turn on notifications
+### 6. Turn on notifications
 
 Open the app → **Settings** → **Allow notifications** → **Allow** when Android
 asks.
@@ -122,7 +130,7 @@ alarms that fire whether or not the app is running.
 5. **Save and Deploy**, and wait a couple of minutes
 
 You'll get a URL like `https://missile-guap.pages.dev`. Install it on your phone
-exactly as in **Step 4** above.
+exactly as in **Step 5** above.
 
 Cloudflare rebuilds automatically every time you push, same as the GitHub
 workflow.
@@ -156,6 +164,10 @@ offline support and reminders.
 ---
 
 ## Things that will go wrong, and why
+
+**`Resource not accessible by integration` in the Actions log.**
+Pages is not switched on yet — step 2. A workflow genuinely cannot do this part
+for you, whatever the `configure-pages` action's `enablement` option suggests.
 
 **Blank white screen after installing.**
 Almost always a base-path problem — the app built for the wrong folder. The
