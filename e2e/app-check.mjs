@@ -100,6 +100,49 @@ check(
   PATH_BASE,
 );
 
+// --- the update notice ----------------------------------------------------
+// A first-ever launch has not updated from anything, so it must stay silent.
+check(
+  'says nothing about updates on a first launch',
+  await page.locator('text=Steady updated').count(),
+  0,
+);
+
+// Simulate having last seen an older build, without needing a second deploy.
+await page.evaluate(
+  () =>
+    new Promise((resolve) => {
+      const req = indexedDB.open('steady');
+      req.onsuccess = () => {
+        const tx = req.result.transaction('settings', 'readwrite');
+        const store = tx.objectStore('settings');
+        const get = store.get('settings');
+        get.onsuccess = () => {
+          store.put({ ...(get.result ?? { id: 'settings' }), lastSeenBuild: 'an-older-build' });
+        };
+        tx.oncomplete = () => {
+          req.result.close();
+          resolve();
+        };
+      };
+    }),
+);
+
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+check('tells you once when the build has changed', await page.locator('text=Steady updated').count(), 1);
+check(
+  'reassures you the data is untouched',
+  (await page.textContent('.main')).includes('untouched'),
+  true,
+);
+await page.screenshot({ path: `${OUT}/update-notice.png`, fullPage: true });
+
+// The build is recorded as soon as it is shown, so it must not come back.
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+check('does not repeat on the next launch', await page.locator('text=Steady updated').count(), 0);
+
 // --- capture -------------------------------------------------------------
 await page.fill('#capture-input', 'Ring the dentist about the referral');
 await page.click('button:has-text("Save to inbox")');

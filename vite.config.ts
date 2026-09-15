@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
@@ -38,6 +37,14 @@ function resolveBase(): string {
 }
 
 const BASE = resolveBase();
+
+/**
+ * One build identity, shared by the app bundle and the service worker's cache
+ * name, so "which version is on my phone" has a single answer. In CI that is
+ * the commit; locally it is the clock, which is enough to make each `npm run
+ * build` distinct.
+ */
+const BUILD_ID = process.env.GITHUB_SHA?.slice(0, 7) ?? `dev-${Date.now().toString(36)}`;
 
 /**
  * The web manifest lives in public/ and is copied verbatim, so Vite cannot
@@ -89,11 +96,11 @@ function precacheServiceWorker(): Plugin {
       ];
       const swPath = join(dir, 'sw.js');
       const body = readFileSync(swPath, 'utf8');
-      // A content hash in the cache name means a new build never serves stale files.
-      const build = createHash('sha256').update(urls.join('|')).digest('hex').slice(0, 12);
+      // The cache is named after the build, so a new version never serves stale
+      // files and the cache name says which commit produced it.
       const header =
         `self.__BASE__ = ${JSON.stringify(BASE)};\n` +
-        `self.__BUILD__ = ${JSON.stringify(build)};\n` +
+        `self.__BUILD__ = ${JSON.stringify(BUILD_ID)};\n` +
         `self.__PRECACHE__ = ${JSON.stringify([...new Set(urls)])};\n\n`;
       writeFileSync(swPath, header + body);
     },
@@ -103,6 +110,11 @@ function precacheServiceWorker(): Plugin {
 // No analytics, no CDN, no external anything. Everything ships in the bundle.
 export default defineConfig({
   base: BASE,
+  define: {
+    // Lets the running app recognise that it is a different build than the one
+    // it last showed the user. See src/lib/version.ts.
+    __APP_BUILD__: JSON.stringify(BUILD_ID),
+  },
   plugins: [react(), relaxCspInDev(), rewriteManifest(), precacheServiceWorker()],
   build: {
     target: 'es2020',

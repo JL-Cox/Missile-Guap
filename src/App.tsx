@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, getSettings } from './db';
+import { db, getSettings, saveSettings } from './db';
 import { DEFAULT_SETTINGS, type Settings as SettingsType, type Task } from './types';
 import { startScheduler } from './lib/notify';
 import { requestPersistence } from './lib/storage';
+import { updateNotice } from './lib/version';
 import CaptureBar from './components/CaptureBar';
 import { Toast } from './components/ui';
 import Today from './views/Today';
@@ -53,9 +54,21 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsType>(DEFAULT_SETTINGS);
   const [toast, setToast] = useState<string | null>(null);
   const [missed, setMissed] = useState<Task[]>([]);
+  const [updated, setUpdated] = useState(false);
 
   useEffect(() => {
-    void getSettings().then(setSettings);
+    void (async () => {
+      const loaded = await getSettings();
+      setSettings(loaded);
+      // Record the build straight away, whether or not we say anything. The
+      // notice is then guaranteed to appear at most once, even if the user
+      // never taps Dismiss.
+      const notice = updateNotice(loaded.lastSeenBuild);
+      if (loaded.lastSeenBuild !== notice.next) {
+        setSettings(await saveSettings({ lastSeenBuild: notice.next }));
+      }
+      setUpdated(notice.show);
+    })();
     // Ask the browser not to treat this data as disposable. Chrome decides
     // silently from heuristics (being installed is the big one), so asking on
     // every start costs nothing and catches the moment it becomes grantable.
@@ -110,6 +123,19 @@ export default function App() {
         {/* The capture box is on every screen except Settings, always first. */}
         {view !== 'settings' && (
           <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />
+        )}
+
+        {updated && (
+          <div className="card stack-sm" role="status">
+            <div className="spread">
+              <span className="grow">
+                <strong>Steady updated.</strong> Your notes, tasks and subscriptions are untouched.
+              </span>
+              <button type="button" className="btn btn-sm" onClick={() => setUpdated(false)}>
+                Dismiss
+              </button>
+            </div>
+          </div>
         )}
 
         {missed.length > 0 && (

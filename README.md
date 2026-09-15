@@ -199,7 +199,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-110 unit tests cover the parts where a quiet wrong answer would make the app
+118 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation
@@ -227,6 +227,7 @@ src/
   db.ts               Dexie/IndexedDB tables and constructors
   lib/
     time.ts           Local-time date maths (never UTC - it shifts the day)
+    version.ts        Notices when the app has updated under you
     recurrence.ts     Repeats, and billing dates anchored to the first charge
     money.ts          Minor units only; cost normalised to a year
     classify.ts       Naive Bayes tag suggestions, trained on your own notes

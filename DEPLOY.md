@@ -191,6 +191,42 @@ the next launch.
 
 ---
 
+## Updating — and the one thing not to do
+
+Push, and the workflow rebuilds and republishes. On the phone: open the app,
+then **fully close it (swipe it out of recents) and open it again**. That is the
+whole process. The page already on screen is running the old JavaScript, which
+is the only reason the relaunch is needed.
+
+You will then see one dismissible line — *"Steady updated. Your notes, tasks and
+subscriptions are untouched."* — so a screen looking different is never
+unexplained. It appears once per version, never on a first install.
+
+**Never clear site data to force an update.** You do not need to, and it would
+delete everything:
+
+| Chrome setting | What it does |
+| --- | --- |
+| Clear browsing data → **Cached images and files** | Harmless, and pointless here |
+| Clear browsing data → **Cookies and site data** | ⚠️ Deletes every note, task and subscription |
+| Android → Apps → Chrome → Storage → **Clear storage** | ⚠️ Deletes everything |
+
+The names sit next to each other and sound alike, but your notes live in
+IndexedDB, which counts as *site data* — not as cache. The app's files and your
+data are separate stores, so an update never touches your data, and clearing the
+cache never speeds one up.
+
+There is nothing to clear by hand in any case: the service worker deletes its own
+stale cache every time a new version activates.
+
+```js
+const names = await caches.keys();
+await Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n)));
+```
+
+If you ever want to know which build is on the phone, the cache name is the
+commit it was built from.
+
 ## Backups — please read this one
 
 There is **no copy of your data anywhere except that phone**. Clearing Chrome's

@@ -119,6 +119,12 @@ export interface Settings {
   /** Days ahead that "coming up" looks. */
   lookaheadDays: number;
   notificationsAsked: boolean;
+  /**
+   * The build we last told the user about. Deliberately optional with no
+   * default: `undefined` is what marks a first-ever launch, and a default would
+   * suppress the update notice permanently.
+   */
+  lastSeenBuild?: string;
   /** Offer tag suggestions learned from your own notes. */
   suggestTags: boolean;
   /** Bumped by backup import so views know to refetch. */
