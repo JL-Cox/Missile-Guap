@@ -119,6 +119,8 @@ export interface Settings {
   /** Days ahead that "coming up" looks. */
   lookaheadDays: number;
   notificationsAsked: boolean;
+  /** Offer tag suggestions learned from your own notes. */
+  suggestTags: boolean;
   /** Bumped by backup import so views know to refetch. */
   rev: number;
 }
@@ -132,5 +134,6 @@ export const DEFAULT_SETTINGS: Settings = {
   currency: 'GBP',
   lookaheadDays: 14,
   notificationsAsked: false,
+  suggestTags: true,
   rev: 0,
 };

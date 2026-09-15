@@ -84,6 +84,34 @@ If you skipped it, every subscription card has the same button, and dated tasks
 have it too. *Settings → Export everything to my calendar* still exports the lot
 in one file.
 
+### Tag suggestions, learned on this phone
+
+Notes can suggest their own tags. The classifier is a small Naive Bayes model
+trained on **your own already-tagged notes** — not a language model, and not
+something that has read anyone else's writing. That is the point: the corpus is
+one person's notes in their own vocabulary, so "ring the surgery" comes to mean
+*health* because that is what it means to **you**.
+
+It is deliberately shy, because a wrong suggestion costs more than a missing one:
+
+- **It starts knowing nothing.** No built-in categories. It says nothing at all
+  until you have tagged five notes yourself, and only ever suggests tags you
+  invented.
+- **A tag has to be a pattern.** Used once or twice, it is never suggested.
+- **Three at most**, and never one the note already carries.
+- **It explains itself** — *"Because you have used "health" on notes mentioning
+  dentist, appointment"* — so you can check its reasoning instead of trusting it.
+- **It never files anything for you.** A suggestion is a chip you tap. Nothing
+  is moved, renamed or re-tagged behind your back.
+
+Suggestions appear in the note editor, on the Inbox panel after you file a
+capture (filing stays one tap), and on *Notes → Tidy up untagged notes* for
+catching up on old ones. Turn the whole thing off in Settings.
+
+There is no network call in any of this, and nothing to call. `connect-src
+'none'` is untouched — the browser check proves it by still failing to
+exfiltrate data with the feature switched on.
+
 ## Privacy, stated precisely
 
 The claim is not "we promise not to look". The claim is that **the app cannot
@@ -171,7 +199,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-84 unit tests cover the parts where a quiet wrong answer would make the app
+110 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation
@@ -201,6 +229,7 @@ src/
     time.ts           Local-time date maths (never UTC - it shifts the day)
     recurrence.ts     Repeats, and billing dates anchored to the first charge
     money.ts          Minor units only; cost normalised to a year
+    classify.ts       Naive Bayes tag suggestions, trained on your own notes
     subscriptions.ts  Category list and name autocomplete (static, no lookups)
     share.ts          Hands a file to the phone's share sheet, not the network
     ics.ts            Calendar export, whole-app or one item at a time

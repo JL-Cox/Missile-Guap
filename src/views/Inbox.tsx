@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankNote, blankTask, clearCapture, db, saveNote, unclearCapture } from '../db';
-import type { Capture, Settings, Task } from '../types';
+import type { Capture, Note, Settings, Task } from '../types';
 import TaskEditor from '../components/TaskEditor';
 import { Empty, Section } from '../components/ui';
+import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSuggestions';
 
 /**
  * Where everything you typed into the capture box lands. Three buttons per
@@ -14,6 +15,14 @@ export default function Inbox({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<{ task: Task; captureId: string } | null>(null);
   const [showCleared, setShowCleared] = useState(false);
   const [lastCleared, setLastCleared] = useState<Capture | null>(null);
+  /** The note just filed, so we can offer it tags without adding a step. */
+  const [justFiled, setJustFiled] = useState<Note | null>(null);
+  const model = useTagModel();
+  const suggestions = useSuggestions(
+    model,
+    justFiled ? `${justFiled.title}\n${justFiled.body}` : '',
+    justFiled?.tags ?? [],
+  );
 
   const all = useLiveQuery(() => db.captures.orderBy('createdAt').reverse().toArray(), [settings.rev], []) ?? [];
   const open = all.filter((c) => !c.clearedAt);
@@ -25,14 +34,18 @@ export default function Inbox({ settings }: { settings: Settings }) {
 
   const toNote = async (capture: Capture) => {
     const firstLine = capture.text.split('\n')[0].slice(0, 80);
-    await saveNote(blankNote({ title: firstLine, body: capture.text }));
+    // Filing stays a single tap. Tags are offered afterwards, on the panel
+    // below, so nothing is added to the fastest path through this screen.
+    const saved = await saveNote(blankNote({ title: firstLine, body: capture.text }));
     await clearCapture(capture.id);
     setLastCleared(capture);
+    setJustFiled(saved);
   };
 
   const dismiss = async (capture: Capture) => {
     await clearCapture(capture.id);
     setLastCleared(capture);
+    setJustFiled(null);
   };
 
   if (editing) {
@@ -87,18 +100,30 @@ export default function Inbox({ settings }: { settings: Settings }) {
       </Section>
 
       {lastCleared && (
-        <div className="card card-quiet spread">
-          <span className="small">Cleared "{lastCleared.text.slice(0, 40)}".</span>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={async () => {
-              await unclearCapture(lastCleared.id);
-              setLastCleared(null);
-            }}
-          >
-            Put it back
-          </button>
+        <div className="card card-quiet stack-sm">
+          <div className="spread">
+            <span className="small">Cleared "{lastCleared.text.slice(0, 40)}".</span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={async () => {
+                await unclearCapture(lastCleared.id);
+                setLastCleared(null);
+                setJustFiled(null);
+              }}
+            >
+              Put it back
+            </button>
+          </div>
+          {settings.suggestTags && justFiled && (
+            <TagSuggestions
+              suggestions={suggestions}
+              onAdd={async (tag) => {
+                const next = await saveNote({ ...justFiled, tags: [...justFiled.tags, tag] });
+                setJustFiled(next);
+              }}
+            />
+          )}
         </div>
       )}
 

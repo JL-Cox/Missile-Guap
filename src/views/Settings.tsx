@@ -136,6 +136,19 @@ export default function Settings({
           <span>Blur money amounts until I tap them</span>
         </label>
 
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={settings.suggestTags}
+            onChange={(e) => void patch({ suggestTags: e.target.checked })}
+          />
+          <span>Suggest tags for my notes</span>
+        </label>
+        <p className="faint">
+          Learned from the tags you have already used, on this phone. It only ever suggests tags you invented
+          yourself, it never files anything for you, and nothing is sent anywhere to work it out.
+        </p>
+
         <div className="field">
           <label htmlFor="lookahead">Show money leaving in the next {settings.lookaheadDays} days</label>
           <input

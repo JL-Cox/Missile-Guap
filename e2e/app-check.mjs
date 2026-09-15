@@ -178,6 +178,92 @@ await page.fill('#note-body', 'Reception: 0161 496 0000\nAsk for Dr Hall.');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
 
+// --- tag suggestions, learned on-device -----------------------------------
+// Teach it a theme by writing several tagged notes, then check a brand-new
+// note about the same theme gets a suggestion, and that tapping it sticks.
+const makeNote = async (title, body, tags) => {
+  await page.click('.nav-btn:has-text("Notes")');
+  await page.click('button:has-text("New note")');
+  await page.waitForSelector('#note-title');
+  await page.fill('#note-title', title);
+  await page.fill('#note-body', body);
+  if (tags) await page.fill('#note-tags', tags);
+  await page.click('form.card button[type="submit"]:has-text("Save")');
+  await page.waitForTimeout(250);
+};
+
+// Below the cold-start floor it must say nothing at all.
+await makeNote('Dentist appointment', 'Dentist appointment booked for Tuesday', 'health');
+await makeNote('Prescription', 'Prescription ready at the pharmacy', 'health');
+await page.click('.nav-btn:has-text("Notes")');
+await page.click('button:has-text("New note")');
+await page.waitForSelector('#note-title');
+await page.fill('#note-body', 'Dentist appointment next week');
+await page.waitForTimeout(300);
+check(
+  'stays silent before it has learned enough',
+  await page.locator('button:has-text("+ health")').count(),
+  0,
+);
+await page.click('form.card button:has-text("Cancel")');
+
+// Now push the corpus over the floor.
+await makeNote('Hygienist', 'Dentist said to book a hygienist appointment', 'health');
+await makeNote('Plumber invoice', 'Invoice from the plumber needs paying', 'money');
+await makeNote('Refund', 'Refund for the invoice came through', 'money');
+await makeNote('Overcharge', 'Paid the invoice and got a refund on the overcharge', 'money');
+
+await page.click('.nav-btn:has-text("Notes")');
+await page.click('button:has-text("New note")');
+await page.waitForSelector('#note-title');
+await page.fill('#note-title', 'Ring the dentist');
+await page.fill('#note-body', 'Need to ring the dentist about that appointment');
+await page.waitForTimeout(400);
+check('suggests a tag it learned from me', await page.locator('button:has-text("+ health")').count(), 1);
+check('does not suggest the unrelated tag', await page.locator('button:has-text("+ money")').count(), 0);
+check(
+  'explains itself',
+  (await page.textContent('.main')).includes('Because you have used'),
+  true,
+);
+
+// Tapping the chip must actually put the tag on the saved note.
+await page.click('button:has-text("+ health")');
+await page.waitForTimeout(200);
+check('tapping fills the tag box', await page.inputValue('#note-tags'), 'health');
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+check(
+  'the tag is saved on the note',
+  await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('steady');
+        req.onsuccess = () => {
+          const tx = req.result.transaction('notes', 'readonly');
+          const all = tx.objectStore('notes').getAll();
+          all.onsuccess = () => {
+            const note = all.result.find((n) => n.title === 'Ring the dentist');
+            req.result.close();
+            resolve(note ? note.tags.join(',') : 'NOT FOUND');
+          };
+        };
+      }),
+  ),
+  'health',
+);
+await page.screenshot({ path: `${OUT}/tag-suggestions.png`, fullPage: true });
+
+// The tidy-up screen should offer the same suggestion for an untagged note.
+await makeNote('Old note', 'Dentist rang about the appointment', '');
+await page.click('.nav-btn:has-text("Notes")');
+await page.click('button:has-text("Tidy up untagged notes")');
+await page.waitForTimeout(400);
+check('tidy-up offers suggestions', await page.locator('button:has-text("+ health")').count() >= 1, true);
+await page.screenshot({ path: `${OUT}/tidy-up.png`, fullPage: true });
+await page.click('button:has-text("Done")');
+await page.waitForTimeout(200);
+
 // --- today pulls it all together ----------------------------------------
 await page.click('.nav-btn:has-text("Today")');
 await page.waitForTimeout(400);
