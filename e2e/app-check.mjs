@@ -16,7 +16,10 @@ import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const PORT = 4173;
-const BASE = `http://127.0.0.1:${PORT}`;
+// Set VITE_BASE to check a subpath deployment (GitHub Pages serves a project
+// repo at /<repo>/, which is exactly where absolute paths go wrong).
+const PATH_BASE = process.env.VITE_BASE?.trim() ? `/${process.env.VITE_BASE.replace(/^\/+|\/+$/g, '')}/` : '/';
+const BASE = `http://127.0.0.1:${PORT}${PATH_BASE}`;
 const OUT = process.env.SCREENSHOT_DIR ?? 'e2e/screenshots';
 const CHROME = process.env.CHROME_PATH; // unset uses Playwright's own download
 
@@ -25,6 +28,7 @@ mkdirSync(OUT, { recursive: true });
 const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--host', '127.0.0.1'], {
   stdio: 'ignore',
   detached: true,
+  env: process.env,
 });
 const stopServer = () => {
   try {
@@ -58,9 +62,21 @@ const todayKey = (() => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 })();
 
+console.log(`Checking ${BASE}\n`);
 await page.goto(BASE, { waitUntil: 'networkidle' });
 await page.evaluate(() => navigator.serviceWorker.ready);
 await page.waitForTimeout(1500);
+
+// --- the app is wired for wherever it is served from ----------------------
+// Read the href rather than fetching it: the page's own CSP forbids fetch(),
+// which is the point of the policy, so the test must not rely on one either.
+const manifestHref = await page.evaluate(() => document.querySelector('link[rel=manifest]').href);
+check('the manifest link matches the served path', new URL(manifestHref).pathname, `${PATH_BASE}manifest.webmanifest`);
+check(
+  'the service worker is scoped to the served path',
+  await page.evaluate(async () => new URL((await navigator.serviceWorker.ready).scope).pathname),
+  PATH_BASE,
+);
 
 // --- capture -------------------------------------------------------------
 await page.fill('#capture-input', 'Ring the dentist about the referral');

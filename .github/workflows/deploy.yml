@@ -1,0 +1,81 @@
+# Builds Steady and publishes it to GitHub Pages.
+#
+# This is why there is no dist/ folder in the repo: dist/ is build output, and
+# committing build output means it goes stale the moment anyone edits the source.
+# Instead GitHub rebuilds it here on every push, and publishes the result.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [claude/personal-notes-task-tracker-gjn5gs, main]
+  # Lets you re-deploy by hand from the Actions tab without pushing anything.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# If you push twice quickly, finish the newer deploy and drop the older one,
+# rather than queueing them and publishing them out of order.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # A broken build should fail here, loudly, rather than quietly publishing
+      # something that does not work.
+      - run: npm test
+
+      # GitHub Pages serves a normal ("project") repo at /<repo-name>/ rather
+      # than at the domain root, and the app has to be built knowing that or
+      # every path in it points one level too high. A user site, named
+      # <your-username>.github.io, IS served at the root - hence the check.
+      - name: Work out the base path
+        id: base
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          if [ "$REPO" = "$OWNER.github.io" ]; then
+            echo "path=/" >> "$GITHUB_OUTPUT"
+            echo "Serving from the domain root."
+          else
+            echo "path=$REPO" >> "$GITHUB_OUTPUT"
+            echo "Serving from /$REPO/."
+          fi
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_BASE: ${{ steps.base.outputs.path }}
+
+      # Stops GitHub trying to run the output through Jekyll, which would drop
+      # any file whose name starts with an underscore.
+      - run: touch dist/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

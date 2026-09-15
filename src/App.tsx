@@ -32,8 +32,23 @@ const TITLES: Record<ViewId, string> = {
   settings: 'Settings',
 };
 
+/**
+ * Android home-screen shortcuts (long-press the icon) open the app with
+ * `?view=inbox`. Reading it here is what makes those shortcuts real rather
+ * than decorative.
+ */
+function startingView(): ViewId {
+  try {
+    const wanted = new URLSearchParams(window.location.search).get('view');
+    if (wanted && wanted in TITLES) return wanted as ViewId;
+  } catch {
+    // A malformed URL is not a reason to fail to open.
+  }
+  return 'today';
+}
+
 export default function App() {
-  const [view, setView] = useState<ViewId>('today');
+  const [view, setView] = useState<ViewId>(startingView);
   const [settings, setSettings] = useState<SettingsType>(DEFAULT_SETTINGS);
   const [toast, setToast] = useState<string | null>(null);
   const [missed, setMissed] = useState<Task[]>([]);

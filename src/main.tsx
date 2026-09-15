@@ -13,7 +13,8 @@ createRoot(document.getElementById('root')!).render(
 // with no signal. It has no fetch path to any other origin.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    const base = import.meta.env.BASE_URL;
+    navigator.serviceWorker.register(`${base}sw.js`, { scope: base }).catch(() => {
       // Offline support is a bonus; the app works fine without it.
     });
   });

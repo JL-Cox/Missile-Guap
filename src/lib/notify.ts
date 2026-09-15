@@ -37,8 +37,8 @@ async function show(title: string, body: string, tag: string): Promise<void> {
   const options: NotificationOptions = {
     body,
     tag,
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    icon: `${import.meta.env.BASE_URL}icon-192.png`,
+    badge: `${import.meta.env.BASE_URL}icon-192.png`,
     // Stay on screen. A notification that vanishes before it is read has not reminded anyone.
     requireInteraction: true,
   };

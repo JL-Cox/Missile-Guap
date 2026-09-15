@@ -25,6 +25,50 @@ function relaxCspInDev(): Plugin {
  * visit caches everything the app needs. Without this the shell is cached but
  * the JavaScript is not, and going offline after one visit yields a blank page.
  */
+/**
+ * Where the app will be served from. GitHub Pages puts a project repo at
+ * `/<repo-name>/`, not at the domain root, so every absolute path in the app
+ * has to know about it. Netlify, Cloudflare Pages and a plain web root all use
+ * the default '/'.
+ */
+function resolveBase(): string {
+  const raw = process.env.VITE_BASE?.trim();
+  if (!raw || raw === '/') return '/';
+  return `/${raw.replace(/^\/+|\/+$/g, '')}/`;
+}
+
+const BASE = resolveBase();
+
+/**
+ * The web manifest lives in public/ and is copied verbatim, so Vite cannot
+ * rewrite the paths inside it. Without this, an app served from a subpath
+ * installs with a start_url of '/' and opens someone else's website.
+ */
+function rewriteManifest(): Plugin {
+  return {
+    name: 'steady:manifest-base',
+    apply: 'build',
+    writeBundle(options) {
+      const dir = options.dir ?? 'dist';
+      const path = join(dir, 'manifest.webmanifest');
+      const manifest = JSON.parse(readFileSync(path, 'utf8'));
+      manifest.start_url = BASE;
+      manifest.scope = BASE;
+      manifest.icons = manifest.icons.map((icon: { src: string }) => ({
+        ...icon,
+        src: `${BASE}${icon.src.replace(/^\//, '')}`,
+      }));
+      if (Array.isArray(manifest.shortcuts)) {
+        manifest.shortcuts = manifest.shortcuts.map((s: { url: string }) => ({
+          ...s,
+          url: `${BASE}${s.url.replace(/^\//, '')}`,
+        }));
+      }
+      writeFileSync(path, JSON.stringify(manifest, null, 2));
+    },
+  };
+}
+
 function precacheServiceWorker(): Plugin {
   return {
     name: 'steady:precache-sw',
@@ -33,21 +77,24 @@ function precacheServiceWorker(): Plugin {
       const dir = options.dir ?? 'dist';
       const assets = Object.keys(bundle)
         .filter((name) => !name.endsWith('.map'))
-        .map((name) => `/${name}`);
+        .map((name) => `${BASE}${name}`);
       const urls = [
-        '/',
-        '/index.html',
-        '/manifest.webmanifest',
-        '/icon-192.png',
-        '/icon-512.png',
-        '/icon-maskable-512.png',
+        BASE,
+        `${BASE}index.html`,
+        `${BASE}manifest.webmanifest`,
+        `${BASE}icon-192.png`,
+        `${BASE}icon-512.png`,
+        `${BASE}icon-maskable-512.png`,
         ...assets,
       ];
       const swPath = join(dir, 'sw.js');
       const body = readFileSync(swPath, 'utf8');
       // A content hash in the cache name means a new build never serves stale files.
       const build = createHash('sha256').update(urls.join('|')).digest('hex').slice(0, 12);
-      const header = `self.__BUILD__ = ${JSON.stringify(build)};\nself.__PRECACHE__ = ${JSON.stringify([...new Set(urls)])};\n\n`;
+      const header =
+        `self.__BASE__ = ${JSON.stringify(BASE)};\n` +
+        `self.__BUILD__ = ${JSON.stringify(build)};\n` +
+        `self.__PRECACHE__ = ${JSON.stringify([...new Set(urls)])};\n\n`;
       writeFileSync(swPath, header + body);
     },
   };
@@ -55,7 +102,8 @@ function precacheServiceWorker(): Plugin {
 
 // No analytics, no CDN, no external anything. Everything ships in the bundle.
 export default defineConfig({
-  plugins: [react(), relaxCspInDev(), precacheServiceWorker()],
+  base: BASE,
+  plugins: [react(), relaxCspInDev(), rewriteManifest(), precacheServiceWorker()],
   build: {
     target: 'es2020',
     // Keep the output auditable for anyone who wants to check the claims above.

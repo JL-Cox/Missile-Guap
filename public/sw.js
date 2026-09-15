@@ -7,10 +7,13 @@
   when the app is not open.
 */
 
-// The build step prepends `self.__PRECACHE__` and `self.__BUILD__` with the
-// real hashed filenames. Without them (dev server) we fall back to the shell.
+// The build step prepends `self.__BASE__`, `self.__BUILD__` and
+// `self.__PRECACHE__` with the real hashed filenames and the path the app is
+// served from. Without them (dev server) we fall back to the shell at the root.
+const BASE = self.__BASE__ || '/';
+const SHELL = `${BASE}index.html`;
 const CACHE = `steady-${self.__BUILD__ || 'dev'}`;
-const PRECACHE = self.__PRECACHE__ || ['/', '/index.html', '/manifest.webmanifest'];
+const PRECACHE = self.__PRECACHE__ || [BASE, SHELL, `${BASE}manifest.webmanifest`];
 
 self.addEventListener('install', (event) => {
   // Take over immediately rather than waiting for every tab to close.
@@ -59,11 +62,11 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put('/index.html', copy));
+          caches.open(CACHE).then((cache) => cache.put(SHELL, copy));
           return response;
         })
         .catch(async () => {
-          const hit = await fromCache('/index.html');
+          const hit = await fromCache(SHELL);
           return hit ?? new Response('Steady is not cached on this device yet.', {
             status: 503,
             headers: { 'Content-Type': 'text/plain' },
@@ -101,7 +104,7 @@ self.addEventListener('notificationclick', (event) => {
       const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       const existing = all.find((c) => 'focus' in c);
       if (existing) return existing.focus();
-      return self.clients.openWindow('/');
+      return self.clients.openWindow(BASE);
     })(),
   );
 });
