@@ -473,3 +473,6 @@ label {
   background: var(--surface-sunk);
   overflow: hidden;
 }
+
+/* A primary action that should never have to be hunted for. */
+.btn-wide { width: 100%; }

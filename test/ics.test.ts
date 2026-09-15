@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalendar } from '../src/lib/ics';
+import { buildCalendar, calendarForSubscription, calendarForTask, icsFilename } from '../src/lib/ics';
 import type { Subscription, Task } from '../src/types';
 
 function task(partial: Partial<Task> = {}): Task {
@@ -117,5 +117,65 @@ describe('escaping and folding', () => {
     const long = 'y'.repeat(200);
     const ics = build([task({ date: '2026-09-20', title: long })]);
     expect(ics.replace(/\r\n /g, '')).toContain(`SUMMARY:${long}`);
+  });
+});
+
+describe('a calendar for one subscription', () => {
+  const at = Date.UTC(2026, 8, 15, 10, 0, 0);
+
+  it('contains exactly that subscription and nothing else', () => {
+    const ics = calendarForSubscription(sub(), '£12.99', at)!;
+    expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1);
+    expect(ics).toContain('SUMMARY:Netflix - £12.99');
+    expect(ics).toContain('RRULE:FREQ=MONTHLY;INTERVAL=1');
+  });
+
+  it('names the calendar after the subscription, so the import is recognisable', () => {
+    expect(calendarForSubscription(sub({ name: 'Spotify' }), '£11.99', at)).toContain('X-WR-CALNAME:Spotify');
+  });
+
+  it('escapes a name that would otherwise break the calendar name line', () => {
+    const ics = calendarForSubscription(sub({ name: 'Gym, the one on Bridge St' }), '£30.00', at)!;
+    expect(ics).toContain('X-WR-CALNAME:Gym\\, the one on Bridge St');
+  });
+
+  it('keeps the same UID as the full export, so re-adding updates rather than duplicates', () => {
+    const single = calendarForSubscription(sub(), '£12.99', at)!;
+    const full = build([], [sub()]);
+    const uid = /UID:(.+)/.exec(single)![1];
+    expect(full).toContain(`UID:${uid}`);
+  });
+
+  it('returns null for a cancelled subscription rather than an empty calendar', () => {
+    expect(calendarForSubscription(sub({ endedOn: '2026-05-01' }), '£12.99', at)).toBeNull();
+  });
+});
+
+describe('a calendar for one task', () => {
+  it('contains just that task', () => {
+    const ics = calendarForTask(task({ date: '2026-09-20', title: 'Ring the dentist' }))!;
+    expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1);
+    expect(ics).toContain('X-WR-CALNAME:Ring the dentist');
+  });
+
+  it('returns null for a task with no date', () => {
+    expect(calendarForTask(task())).toBeNull();
+  });
+});
+
+describe('icsFilename', () => {
+  it('makes a name a phone will not choke on', () => {
+    expect(icsFilename('Netflix')).toBe('netflix.ics');
+    expect(icsFilename('Gym, the one on Bridge St')).toBe('gym-the-one-on-bridge-st.ics');
+    expect(icsFilename('  Sky  ')).toBe('sky.ics');
+  });
+
+  it('never produces a nameless file', () => {
+    expect(icsFilename('!!!')).toBe('steady.ics');
+    expect(icsFilename('')).toBe('steady.ics');
+  });
+
+  it('keeps the name short enough to be usable', () => {
+    expect(icsFilename('a'.repeat(200)).length).toBeLessThanOrEqual(44);
   });
 });

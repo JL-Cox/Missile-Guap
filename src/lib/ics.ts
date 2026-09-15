@@ -140,6 +140,20 @@ function subscriptionEvent(sub: Subscription, amountLabel: string, now: number):
   };
 }
 
+function wrapCalendar(events: IcsEvent[], now: number, name: string): string {
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Steady//Local Planner//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    `X-WR-CALNAME:${escapeText(name)}`,
+    ...events.flatMap((ev) => renderEvent(ev, now)),
+    'END:VCALENDAR',
+  ];
+  return lines.map(fold).join('\r\n') + '\r\n';
+}
+
 export interface CalendarInput {
   tasks: Task[];
   subscriptions: Subscription[];
@@ -160,18 +174,36 @@ export function buildCalendar({ tasks, subscriptions, formatAmount, now = Date.n
     const ev = subscriptionEvent(sub, formatAmount(sub), now);
     if (ev) events.push(ev);
   }
+  return wrapCalendar(events, now, 'Steady');
+}
 
-  const lines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Steady//Local Planner//EN',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    'X-WR-CALNAME:Steady',
-    ...events.flatMap((ev) => renderEvent(ev, now)),
-    'END:VCALENDAR',
-  ];
-  return lines.map(fold).join('\r\n') + '\r\n';
+/**
+ * A calendar containing exactly one subscription, for the "put this in my
+ * calendar" button that appears the moment you finish adding it. The UID is
+ * stable, so adding the same subscription twice updates the existing entry in
+ * most calendar apps rather than creating a duplicate.
+ */
+export function calendarForSubscription(sub: Subscription, amountLabel: string, now: number = Date.now()): string | null {
+  const ev = subscriptionEvent(sub, amountLabel, now);
+  if (!ev) return null;
+  return wrapCalendar([ev], now, sub.name);
+}
+
+/** A calendar containing exactly one task. */
+export function calendarForTask(task: Task, now: number = Date.now()): string | null {
+  const ev = taskEvent(task, now);
+  if (!ev) return null;
+  return wrapCalendar([ev], now, task.title);
+}
+
+/** A filename a phone will not choke on. */
+export function icsFilename(label: string): string {
+  const safe = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return `${safe || 'steady'}.ics`;
 }
 
 /** Exported for tests: proves the DTSTART for an all-day event lands on the right day. */

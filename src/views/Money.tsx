@@ -2,10 +2,21 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankSubscription, db, saveSubscription } from '../db';
 import type { BillingCycle, Settings, Subscription } from '../types';
-import { byCategoryYearly, formatMoney, monthlyMinor, parseMoney, totalMonthlyMinor, totalYearlyMinor, yearlyMinor } from '../lib/money';
+import {
+  byCategoryYearly,
+  formatMoney,
+  monthlyMinor,
+  parseMoney,
+  totalMonthlyMinor,
+  totalYearlyMinor,
+  yearlyMinor,
+} from '../lib/money';
 import { describeCycle, nextBilling } from '../lib/recurrence';
 import { upcomingBills } from '../lib/agenda';
-import { describeDate, todayKey } from '../lib/time';
+import { calendarForSubscription, icsFilename } from '../lib/ics';
+import AddToCalendar from '../components/AddToCalendar';
+import { categoryChoices, findPreset, SERVICE_PRESETS } from '../lib/subscriptions';
+import { addDays, describeDate, todayKey } from '../lib/time';
 import { Amount, ConfirmButton, Empty, Section, useAutoFocus } from '../components/ui';
 
 const CYCLES: { id: BillingCycle; label: string }[] = [
@@ -20,9 +31,14 @@ const CYCLES: { id: BillingCycle; label: string }[] = [
  * stopped using, and the cancel page is never where you expect. So the two
  * things this screen insists on are "when is the next charge" and "how do I
  * actually get out of this", written down while you still know.
+ *
+ * Adding one is meant to be a single journey: tap Add, fill in three fields,
+ * and the next screen already knows what it costs a year, when it next charges,
+ * and offers to put it in your phone's calendar. No trip to Settings.
  */
 export default function Money({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<Subscription | null>(null);
+  const [justSaved, setJustSaved] = useState<Subscription | null>(null);
   const [showEnded, setShowEnded] = useState(false);
   const today = todayKey();
 
@@ -30,17 +46,40 @@ export default function Money({ settings }: { settings: Settings }) {
   const active = subs.filter((s) => !s.endedOn).sort((a, b) => yearlyMinor(b) - yearlyMinor(a));
   const ended = subs.filter((s) => s.endedOn);
 
+  const startNew = () => {
+    setJustSaved(null);
+    setEditing(blankSubscription({ currency: settings.currency, firstBilled: today }));
+  };
+
   if (editing) {
     return (
       <SubscriptionEditor
         sub={editing}
-        currency={settings.currency}
-        onSaved={() => setEditing(null)}
+        knownCategories={categoryChoices(subs.map((s) => s.category))}
+        onSaved={(saved) => {
+          setEditing(null);
+          setJustSaved(saved);
+        }}
         onCancel={() => setEditing(null)}
         onDelete={async (s) => {
           await db.subscriptions.delete(s.id);
           setEditing(null);
         }}
+      />
+    );
+  }
+
+  if (justSaved) {
+    return (
+      <SavedConfirmation
+        sub={justSaved}
+        blurAmounts={settings.blurAmounts}
+        onAddAnother={startNew}
+        onEdit={() => {
+          setJustSaved(null);
+          setEditing(justSaved);
+        }}
+        onDone={() => setJustSaved(null)}
       />
     );
   }
@@ -53,14 +92,13 @@ export default function Money({ settings }: { settings: Settings }) {
 
   return (
     <>
-      <Section
-        title="Subscriptions"
-        aside={
-          <button type="button" className="btn btn-sm" onClick={() => setEditing(blankSubscription({ currency: settings.currency }))}>
-            Add one
-          </button>
-        }
-      >
+      <Section title="Subscriptions">
+        {/* The primary action is a full-width button, not a small one tucked
+            into the heading. Adding one should never be a thing you hunt for. */}
+        <button type="button" className="btn btn-primary btn-wide" onClick={startNew}>
+          Add a subscription
+        </button>
+
         {active.length === 0 ? (
           <Empty>
             Nothing tracked yet. Add anything that takes money on a repeat: streaming, phone, gym, storage, that
@@ -155,6 +193,99 @@ export default function Money({ settings }: { settings: Settings }) {
   );
 }
 
+/**
+ * The screen straight after saving. It exists because "£12.99 a month" and
+ * "£155.88 a year" are very different pieces of information, and the second one
+ * is the one that changes your mind. It also puts the calendar step here, where
+ * you are already thinking about this subscription.
+ */
+function SavedConfirmation({
+  sub,
+  blurAmounts,
+  onAddAnother,
+  onEdit,
+  onDone,
+}: {
+  sub: Subscription;
+  blurAmounts: boolean;
+  onAddAnother: () => void;
+  onEdit: () => void;
+  onDone: () => void;
+}) {
+  const next = nextBilling(sub);
+
+  return (
+    <Section title={`${sub.name} is saved`}>
+      <div className="card stack-sm">
+        <div className="spread">
+          <span className="muted">Each charge</span>
+          <Amount text={formatMoney(sub.amountMinor, sub.currency)} blur={blurAmounts} />
+        </div>
+        <div className="spread">
+          <span className="muted">How often</span>
+          <span>{describeCycle(sub.cycle, sub.every)}</span>
+        </div>
+        <div className="spread">
+          <span className="muted">Next charge</span>
+          <span>{next ? describeDate(next) : 'None - it is cancelled'}</span>
+        </div>
+        <hr className="divider" />
+        <div className="spread">
+          <span className="muted">That works out at</span>
+          <Amount text={`${formatMoney(monthlyMinor(sub), sub.currency)} a month`} blur={blurAmounts} />
+        </div>
+        <div className="spread">
+          <span className="muted">Over a year</span>
+          <Amount text={formatMoney(yearlyMinor(sub), sub.currency)} blur={blurAmounts} />
+        </div>
+        {sub.category && (
+          <div className="spread">
+            <span className="muted">Filed under</span>
+            <span className="tag">{sub.category}</span>
+          </div>
+        )}
+      </div>
+
+      <AddToCalendar
+        build={() => calendarForSubscription(sub, formatMoney(sub.amountMinor, sub.currency))}
+        filename={icsFilename(sub.name)}
+        className="btn btn-primary btn-wide"
+        nothingToAdd="This one is cancelled, so there is nothing to put in a calendar."
+      />
+      <p className="faint">
+        Adds a repeating entry on every charge date
+        {sub.remindDaysBefore > 0
+          ? `, with a reminder ${sub.remindDaysBefore} day${sub.remindDaysBefore === 1 ? '' : 's'} before each one`
+          : ''}
+        . Your phone's calendar does the reminding from then on, whether or not Steady is open.
+      </p>
+
+      {!sub.cancelHow.trim() && (
+        <div className="card card-quiet stack-sm">
+          <p className="small">
+            You haven't written down how to cancel this one. It takes a minute now and saves a bad half hour later.
+          </p>
+          <button type="button" className="btn btn-sm" onClick={onEdit}>
+            Add the cancellation steps
+          </button>
+        </div>
+      )}
+
+      <div className="btn-row">
+        <button type="button" className="btn" onClick={onDone}>
+          Done
+        </button>
+        <button type="button" className="btn" onClick={onAddAnother}>
+          Add another
+        </button>
+        <button type="button" className="btn btn-quiet" onClick={onEdit}>
+          Change something
+        </button>
+      </div>
+    </Section>
+  );
+}
+
 function SubscriptionCard({
   sub,
   settings,
@@ -207,6 +338,11 @@ function SubscriptionCard({
             </p>
           )}
           {sub.notes.trim() && <p className="note-body">{sub.notes}</p>}
+          <AddToCalendar
+            build={() => calendarForSubscription(sub, formatMoney(sub.amountMinor, sub.currency))}
+            filename={icsFilename(sub.name)}
+            nothingToAdd="This one is cancelled, so there is nothing to put in a calendar."
+          />
           <div className="btn-row">
             <button type="button" className="btn btn-sm" onClick={() => onEdit(sub)}>
               Edit
@@ -226,23 +362,44 @@ function SubscriptionCard({
 
 function SubscriptionEditor({
   sub,
-  currency,
+  knownCategories,
   onSaved,
   onCancel,
   onDelete,
 }: {
   sub: Subscription;
-  currency: string;
-  onSaved: () => void;
+  knownCategories: string[];
+  onSaved: (sub: Subscription) => void;
   onCancel: () => void;
   onDelete: (sub: Subscription) => void;
 }) {
-  const [draft, setDraft] = useState({ ...sub, currency: sub.currency || currency });
+  const [draft, setDraft] = useState(sub);
   const [amountText, setAmountText] = useState(sub.amountMinor ? (sub.amountMinor / 100).toFixed(2) : '');
   const [error, setError] = useState('');
+  const [showMore, setShowMore] = useState(Boolean(sub.cancelHow || sub.notes || sub.every !== 1));
+  const [customCategory, setCustomCategory] = useState(
+    Boolean(sub.category && !knownCategories.includes(sub.category)),
+  );
   const nameRef = useAutoFocus<HTMLInputElement>();
 
   const patch = (changes: Partial<Subscription>) => setDraft((d) => ({ ...d, ...changes }));
+
+  /**
+   * Typing a name we recognise fills in the category and the usual billing
+   * cycle, so the common case is name, amount, date and nothing else. It only
+   * ever fills blanks - it never overwrites something you chose.
+   */
+  const onNameChange = (name: string) => {
+    const preset = findPreset(name);
+    if (!preset) return patch({ name });
+    patch({
+      name,
+      category: draft.category ?? preset.category,
+      cycle: draft.cycle === 'monthly' ? preset.cycle : draft.cycle,
+    });
+  };
+
+  const today = todayKey();
 
   return (
     <form
@@ -255,8 +412,7 @@ function SubscriptionEditor({
           return;
         }
         if (!draft.name.trim()) return;
-        await saveSubscription({ ...draft, name: draft.name.trim(), amountMinor });
-        onSaved();
+        onSaved(await saveSubscription({ ...draft, name: draft.name.trim(), amountMinor }));
       }}
     >
       <div className="field">
@@ -265,10 +421,18 @@ function SubscriptionEditor({
           id="sub-name"
           ref={nameRef}
           type="text"
+          list="sub-name-suggestions"
           value={draft.name}
-          onChange={(e) => patch({ name: e.target.value })}
+          onChange={(e) => onNameChange(e.target.value)}
           placeholder="Netflix"
+          autoComplete="off"
         />
+        <datalist id="sub-name-suggestions">
+          {SERVICE_PRESETS.map((p) => (
+            <option key={p.name} value={p.name} />
+          ))}
+        </datalist>
+        <p className="faint">Start typing and common ones will offer themselves, category included.</p>
       </div>
 
       <div className="field-row">
@@ -299,43 +463,102 @@ function SubscriptionEditor({
       </div>
       {error && <p className="pill pill-warn">{error}</p>}
 
-      <div className="field-row">
-        <div className="field">
-          <label htmlFor="sub-cycle">How often</label>
-          <select
-            id="sub-cycle"
-            value={draft.cycle}
-            onChange={(e) => patch({ cycle: e.target.value as BillingCycle })}
-          >
-            {CYCLES.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="sub-every">Every how many?</label>
-          <input
-            id="sub-every"
-            type="number"
-            min={1}
-            max={24}
-            value={draft.every}
-            onChange={(e) => patch({ every: Math.max(1, Number(e.target.value) || 1) })}
-          />
+      <div className="field">
+        <label>How often</label>
+        <div className="btn-row">
+          {CYCLES.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              aria-pressed={draft.cycle === c.id}
+              className={`btn btn-sm${draft.cycle === c.id ? ' btn-primary' : ''}`}
+              onClick={() => patch({ cycle: c.id })}
+            >
+              {c.label}
+            </button>
+          ))}
         </div>
       </div>
 
       <div className="field">
-        <label htmlFor="sub-first">Date of the next (or first) charge</label>
+        <label htmlFor="sub-first">Date of the next charge</label>
+        <div className="btn-row" style={{ marginBottom: 8 }}>
+          <button
+            type="button"
+            aria-pressed={draft.firstBilled === today}
+            className={`btn btn-sm${draft.firstBilled === today ? ' btn-primary' : ''}`}
+            onClick={() => patch({ firstBilled: today })}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            aria-pressed={draft.firstBilled === addDays(today, 1)}
+            className={`btn btn-sm${draft.firstBilled === addDays(today, 1) ? ' btn-primary' : ''}`}
+            onClick={() => patch({ firstBilled: addDays(today, 1) })}
+          >
+            Tomorrow
+          </button>
+          <button
+            type="button"
+            aria-pressed={draft.firstBilled === addDays(today, 7)}
+            className={`btn btn-sm${draft.firstBilled === addDays(today, 7) ? ' btn-primary' : ''}`}
+            onClick={() => patch({ firstBilled: addDays(today, 7) })}
+          >
+            In a week
+          </button>
+        </div>
         <input
           id="sub-first"
           type="date"
           value={draft.firstBilled}
           onChange={(e) => patch({ firstBilled: e.target.value })}
         />
-        <p className="faint">Every future date is worked out from this one, so it only has to be right once.</p>
+        <p className="faint">
+          {describeDate(draft.firstBilled)}. Every future date is worked out from this one, so it only has to be
+          right once.
+        </p>
+      </div>
+
+      <div className="field">
+        <label>Category</label>
+        <div className="btn-row">
+          {knownCategories.map((c) => (
+            <button
+              key={c}
+              type="button"
+              aria-pressed={draft.category === c}
+              className={`btn btn-sm${draft.category === c ? ' btn-primary' : ''}`}
+              onClick={() => {
+                setCustomCategory(false);
+                patch({ category: draft.category === c ? undefined : c });
+              }}
+            >
+              {c}
+            </button>
+          ))}
+          <button
+            type="button"
+            aria-pressed={customCategory}
+            className={`btn btn-sm${customCategory ? ' btn-primary' : ''}`}
+            onClick={() => {
+              setCustomCategory(true);
+              patch({ category: '' });
+            }}
+          >
+            Something else
+          </button>
+        </div>
+        {customCategory && (
+          <input
+            type="text"
+            aria-label="Your own category"
+            value={draft.category ?? ''}
+            onChange={(e) => patch({ category: e.target.value || undefined })}
+            placeholder="Type your own"
+            style={{ marginTop: 8 }}
+          />
+        )}
       </div>
 
       <div className="field">
@@ -351,42 +574,54 @@ function SubscriptionEditor({
           <option value={7}>A week before</option>
           <option value={14}>2 weeks before</option>
         </select>
-        <p className="faint">Used when you export to your calendar, from Settings.</p>
+        <p className="faint">Becomes the alarm on the calendar entry you can add on the next screen.</p>
       </div>
 
-      <div className="field">
-        <label htmlFor="sub-cancel">How do you cancel it?</label>
-        <textarea
-          id="sub-cancel"
-          value={draft.cancelHow}
-          onChange={(e) => patch({ cancelHow: e.target.value })}
-          placeholder="Account > Membership > Cancel. Or: ring 0800 123 4567, account number 12345."
-        />
-        <p className="faint">
-          Write this down now, while you are already looking at it. Future you will not want to go hunting.
-        </p>
-      </div>
+      {!showMore ? (
+        <button type="button" className="btn btn-quiet btn-sm" onClick={() => setShowMore(true)}>
+          More options (how to cancel, notes, every N cycles)
+        </button>
+      ) : (
+        <>
+          <hr className="divider" />
 
-      <div className="field">
-        <label htmlFor="sub-category">Category (optional)</label>
-        <input
-          id="sub-category"
-          type="text"
-          value={draft.category ?? ''}
-          onChange={(e) => patch({ category: e.target.value || undefined })}
-          placeholder="Entertainment, bills, health"
-        />
-      </div>
+          <div className="field">
+            <label htmlFor="sub-cancel">How do you cancel it?</label>
+            <textarea
+              id="sub-cancel"
+              value={draft.cancelHow}
+              onChange={(e) => patch({ cancelHow: e.target.value })}
+              placeholder="Account > Membership > Cancel. Or: ring 0800 123 4567, account number 12345."
+            />
+            <p className="faint">
+              Write this down now, while you are already looking at it. Future you will not want to go hunting.
+            </p>
+          </div>
 
-      <div className="field">
-        <label htmlFor="sub-notes">Notes (optional)</label>
-        <textarea
-          id="sub-notes"
-          value={draft.notes}
-          onChange={(e) => patch({ notes: e.target.value })}
-          placeholder="Which card it comes off, who else uses it..."
-        />
-      </div>
+          <div className="field">
+            <label htmlFor="sub-every">Bill every how many {CYCLES.find((c) => c.id === draft.cycle)?.label.toLowerCase()} periods?</label>
+            <input
+              id="sub-every"
+              type="number"
+              min={1}
+              max={24}
+              value={draft.every}
+              onChange={(e) => patch({ every: Math.max(1, Number(e.target.value) || 1) })}
+            />
+            <p className="faint">Leave this at 1 unless it is something odd like every 2 months.</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="sub-notes">Notes</label>
+            <textarea
+              id="sub-notes"
+              value={draft.notes}
+              onChange={(e) => patch({ notes: e.target.value })}
+              placeholder="Which card it comes off, who else uses it..."
+            />
+          </div>
+        </>
+      )}
 
       {draft.endedOn && (
         <div className="card card-quiet spread">

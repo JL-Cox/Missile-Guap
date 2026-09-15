@@ -84,17 +84,51 @@ await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
 check('inbox is emptied once the item becomes a task', await page.locator('.nav-count').count(), 0);
 
-// --- a subscription ------------------------------------------------------
+// --- a subscription, in one journey -------------------------------------
 await page.click('.nav-btn:has-text("Money")');
-await page.click('button:has-text("Add one")');
+await page.click('button:has-text("Add a subscription")');
 await page.waitForSelector('#sub-name');
+// A recognised name should fill the category in by itself.
 await page.fill('#sub-name', 'Netflix');
+await page.waitForTimeout(200);
+check(
+  'a known name picks its own category',
+  await page.getAttribute('button[aria-pressed="true"]:has-text("TV & film")', 'aria-pressed'),
+  'true',
+);
 await page.fill('#sub-amount', '12.99');
+await page.click('button:has-text("More options")');
 await page.fill('#sub-cancel', 'Account > Membership > Cancel Membership');
-await page.fill('#sub-category', 'Entertainment');
-await page.fill('#sub-first', todayKey);
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
+
+// Straight to the confirmation, which must show the yearly figure - the number
+// that actually changes your mind about a subscription.
+const confirmation = await page.textContent('.main');
+check('saving lands on the confirmation', confirmation.includes('Netflix is saved'), true);
+check('the confirmation shows the yearly cost', confirmation.includes('155.88'), true);
+check('the confirmation offers the calendar', await page.locator('button:has-text("Add to my calendar")').count(), 1);
+
+// Take the calendar file and check it is a real, single-subscription calendar.
+const download = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('button:has-text("Add to my calendar")'),
+]).then(([d]) => d);
+check('the calendar file is named after the subscription', download.suggestedFilename(), 'netflix.ics');
+const icsText = await download.createReadStream().then(async (stream) => {
+  let out = '';
+  for await (const chunk of stream) out += chunk;
+  return out;
+});
+check('the calendar is well formed', icsText.startsWith('BEGIN:VCALENDAR'), true);
+check('it holds exactly one event', (icsText.match(/BEGIN:VEVENT/g) ?? []).length, 1);
+check('it repeats monthly', icsText.includes('RRULE:FREQ=MONTHLY;INTERVAL=1'), true);
+check('it carries the 3-day warning', icsText.includes('TRIGGER:-PT4320M'), true);
+check('it carries the cancellation steps', icsText.replace(/\r\n /g, '').includes('To cancel: Account'), true);
+await page.screenshot({ path: `${OUT}/subscription-saved.png`, fullPage: true });
+
+await page.click('button:has-text("Done")');
+await page.waitForTimeout(400);
 await page.screenshot({ path: `${OUT}/money.png`, fullPage: true });
 
 // --- a note --------------------------------------------------------------

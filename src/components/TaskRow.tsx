@@ -4,6 +4,8 @@ import { completeTask, stepProgress, toggleStep, uncompleteTask } from '../lib/t
 import { describeDate, describeDuration } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
 import { TagList } from './ui';
+import AddToCalendar from './AddToCalendar';
+import { calendarForTask, icsFilename } from '../lib/ics';
 
 /**
  * A row shows everything true about the task without needing a tap: when it is,
@@ -75,6 +77,13 @@ export default function TaskRow({
                 Edit
               </button>
             </div>
+            {task.date && (
+              <AddToCalendar
+                build={() => calendarForTask(task)}
+                filename={icsFilename(task.title)}
+                nothingToAdd="Give this a day first, then it can go in your calendar."
+              />
+            )}
           </div>
         )}
       </div>

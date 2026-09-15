@@ -47,12 +47,42 @@ opposite on all three counts.
 | **Inbox** | Everything you typed into the capture box. Three buttons per item, always the same three: make it a task, keep it as a note, done with it. |
 | **Tasks** | All tasks, grouped by day, searchable across titles, notes, steps and tags. Optional times, durations, reminders, repeats and an energy level. |
 | **Notes** | Plain text you will want to look up again. Reference numbers, phone scripts, what the nurse actually said. Pin the important ones. |
-| **Money** | Subscriptions, with the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. |
+| **Money** | Subscriptions, with the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
 | **Settings** | Appearance, notifications, backup and restore, calendar export, and a plain-English account of what happens to your data. |
 
 There are four buckets, not five: **a reminder is a property of a task**, not a
 separate kind of thing, so there is never a moment of "is this a task or a
 reminder?".
+
+### Adding a subscription
+
+One button, three fields, done:
+
+1. **Tap "Add a subscription"** — full width, top of the Money screen, never a
+   thing you have to hunt for.
+2. **Type the name.** Common services autocomplete and fill in the category and
+   the usual billing cycle for you. Deliberately no prices: they change
+   constantly, and a wrong number sitting quietly in your budget is worse than
+   no number.
+3. **Amount, how often, next charge date.** Category is a row of buttons, not a
+   text box — tapping one of nine is not a decision the way inventing one is.
+   Everything else (how to cancel, notes, "every 2 months") is behind
+   *More options*.
+
+Saving lands on a confirmation that tells you what you just signed up to:
+each charge, the next date, **what it works out at per month and per year**, and
+the category. The yearly figure is there because it is the number that actually
+changes your mind.
+
+On that screen is one more button: **Add to my calendar.** It puts a repeating
+entry on every future charge date, carrying the lead-time warning you chose and
+the cancellation steps in the notes. On Android this opens the share sheet, so
+Google Calendar is one tap away. From then on your phone's own alarms do the
+reminding, whether or not Steady is open.
+
+If you skipped it, every subscription card has the same button, and dated tasks
+have it too. *Settings → Export everything to my calendar* still exports the lot
+in one file.
 
 ## Privacy, stated precisely
 
@@ -124,7 +154,7 @@ folder of static files, and installing it is "open the URL in Chrome, tap
 npm test
 ```
 
-65 unit tests cover the parts where a quiet wrong answer would make the app
+84 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation
@@ -139,9 +169,10 @@ npm i --no-save playwright && npx playwright install chromium
 node e2e/app-check.mjs
 ```
 
-It drives a real browser through capture → task → subscription → note, verifies
-the privacy claim by attempting to exfiltrate data, then **kills the server** and
-reloads to prove the app still works with nothing behind it.
+It drives a real browser through capture → task → subscription → note,
+**downloads the generated .ics and checks its contents**, verifies the privacy
+claim by attempting to exfiltrate data, then **kills the server** and reloads to
+prove the app still works with nothing behind it.
 
 ## Layout
 
@@ -153,7 +184,9 @@ src/
     time.ts           Local-time date maths (never UTC - it shifts the day)
     recurrence.ts     Repeats, and billing dates anchored to the first charge
     money.ts          Minor units only; cost normalised to a year
-    ics.ts            Calendar export, the reliable reminder channel
+    subscriptions.ts  Category list and name autocomplete (static, no lookups)
+    share.ts          Hands a file to the phone's share sheet, not the network
+    ics.ts            Calendar export, whole-app or one item at a time
     agenda.ts         Builds one ordered list for a day
     tasks.ts          Completion, rolling repeats forward, moving days
     notify.ts         The in-app scheduler, and its honest limits
