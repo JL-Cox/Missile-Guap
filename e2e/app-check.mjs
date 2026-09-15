@@ -12,7 +12,7 @@
  * It starts and stops its own preview server.
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const PORT = 4173;
@@ -24,6 +24,28 @@ const OUT = process.env.SCREENSHOT_DIR ?? 'e2e/screenshots';
 const CHROME = process.env.CHROME_PATH; // unset uses Playwright's own download
 
 mkdirSync(OUT, { recursive: true });
+
+// The preview server serves at VITE_BASE, but dist/ was built with whatever
+// base was set when `npm run build` ran. If they disagree every asset 404s and
+// the app never mounts - which looks like a mysterious hang, not a mismatch.
+// Fail immediately, with the command that fixes it.
+{
+  const indexHtml = readFileSync('dist/index.html', 'utf8');
+  const scriptSrc = /<script[^>]+src="([^"]+)"/.exec(indexHtml)?.[1] ?? '';
+  // Compare the base itself, not a prefix: every absolute path starts with
+  // "/", so a startsWith check silently passes for a root-built dist.
+  const distBase = scriptSrc.slice(0, scriptSrc.indexOf('assets/'));
+  if (distBase !== PATH_BASE) {
+    // Throw rather than process.exit: exit can truncate a buffered write, and
+    // a guard whose message never appears is worse than no guard.
+    throw new Error(
+      `dist/ was built for a different base.\n` +
+        `  serving at : ${PATH_BASE}\n` +
+        `  dist built : ${distBase || '(could not parse dist/index.html)'}\n` +
+        `Rebuild first: ${PATH_BASE === '/' ? 'npm run build' : `VITE_BASE=${PATH_BASE} npm run build`}`,
+    );
+  }
+}
 
 const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--host', '127.0.0.1'], {
   stdio: 'ignore',

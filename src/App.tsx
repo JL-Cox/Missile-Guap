@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, getSettings } from './db';
 import { DEFAULT_SETTINGS, type Settings as SettingsType, type Task } from './types';
 import { startScheduler } from './lib/notify';
+import { requestPersistence } from './lib/storage';
 import CaptureBar from './components/CaptureBar';
 import { Toast } from './components/ui';
 import Today from './views/Today';
@@ -55,6 +56,10 @@ export default function App() {
 
   useEffect(() => {
     void getSettings().then(setSettings);
+    // Ask the browser not to treat this data as disposable. Chrome decides
+    // silently from heuristics (being installed is the big one), so asking on
+    // every start costs nothing and catches the moment it becomes grantable.
+    void requestPersistence();
   }, []);
 
   // Appearance is applied to <html> so it covers everything, including the

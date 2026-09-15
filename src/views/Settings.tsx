@@ -5,6 +5,7 @@ import { BackupError, backupFilename, downloadFile, exportBackup, importBackup, 
 import { buildCalendar } from '../lib/ics';
 import { formatMoney } from '../lib/money';
 import { notificationSupport, requestPermission, type PermissionState } from '../lib/notify';
+import { formatBytes, requestPersistence, storageOrigin, storageStatus, type StorageStatus } from '../lib/storage';
 import { ConfirmButton, Section } from '../components/ui';
 
 const THEMES: { id: ThemeName; label: string; hint: string }[] = [
@@ -26,6 +27,7 @@ export default function Settings({
   const [importMode, setImportMode] = useState<ImportMode>('merge');
   const [importError, setImportError] = useState('');
   const [counts, setCounts] = useState({ captures: 0, tasks: 0, notes: 0, subscriptions: 0 });
+  const [storage, setStorage] = useState<StorageStatus | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -36,6 +38,7 @@ export default function Settings({
         notes: await db.notes.count(),
         subscriptions: await db.subscriptions.count(),
       });
+      setStorage(await storageStatus());
     })();
   }, [settings.rev]);
 
@@ -210,6 +213,59 @@ export default function Settings({
             All of it lives in this browser's storage on this phone. It has never been sent anywhere, because this
             app cannot send anything anywhere - see below.
           </p>
+        </div>
+
+        <div className="card card-quiet stack-sm">
+          <h3>Where exactly it lives</h3>
+          <p className="small">
+            In your browser's own database, filed under <code>{storageOrigin()}</code>, inside Chrome's private
+            storage on this phone. No other app can read it. Neither can any other website. Neither can GitHub,
+            who only ever sent your phone the app's files.
+          </p>
+          {storage?.databaseBytes !== undefined ? (
+            <p className="faint">
+              Your notes, tasks and subscriptions take up {formatBytes(storage.databaseBytes)}.
+              {storage.usageBytes !== undefined &&
+                ` The app's own offline copy of itself takes another ${formatBytes(Math.max(0, storage.usageBytes - storage.databaseBytes))}.`}
+            </p>
+          ) : (
+            storage?.usageBytes !== undefined && (
+              <p className="faint">
+                This site is using {formatBytes(storage.usageBytes)} in total. That covers the app's offline copy
+                of itself as well as what you have written, which this browser won't separate out.
+              </p>
+            )
+          )}
+          {storage && !storage.supported && (
+            <p className="faint">
+              This browser won't say whether it protects the data from being cleared automatically. Keep backups.
+            </p>
+          )}
+          {storage?.supported && storage.persisted && (
+            <p className="small">
+              <strong>The browser has promised not to delete it</strong> to free up space. Only you clearing this
+              site's data removes it.
+            </p>
+          )}
+          {storage?.supported && !storage.persisted && (
+            <>
+              <p className="small">
+                <strong>Not yet protected from automatic clearing.</strong> If the phone runs very low on storage,
+                the browser is allowed to delete this to make room. Installing the app to your home screen usually
+                earns the protection; you can also ask for it directly.
+              </p>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={async () => {
+                  await requestPersistence();
+                  setStorage(await storageStatus());
+                }}
+              >
+                Ask the browser to protect it
+              </button>
+            </>
+          )}
         </div>
 
         <button type="button" className="btn btn-primary" onClick={() => void doExport()}>

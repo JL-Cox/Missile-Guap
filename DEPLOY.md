@@ -196,6 +196,12 @@ the next launch.
 There is **no copy of your data anywhere except that phone**. Clearing Chrome's
 site data deletes everything. So does losing the phone.
 
+Storage is shared per *origin*, not per folder. Everything you publish under
+`jl-cox.github.io` shares one storage area, so another app you host there could
+read Steady's database. Nobody else can - not other apps on the phone, not other
+websites - but if that bothers you, put Steady on its own custom domain, or on
+Cloudflare Pages where it gets its own hostname.
+
 **Settings → Save a backup file** writes a plain JSON file you can open in any
 text editor. Do it occasionally, and keep it somewhere you trust. Restoring
 offers two modes:

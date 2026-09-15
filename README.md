@@ -112,7 +112,15 @@ Everything else follows from that:
 - **Works in aeroplane mode.** The service worker caches the app itself on first
   visit, so every feature works with no signal at all.
 
-Your data lives in this browser's IndexedDB storage, on this device.
+Your data lives in this browser's IndexedDB storage, on this device, in a
+database called `steady`, filed under the origin the app is served from.
+
+On first run the app asks the browser for **persistent storage**. Without that,
+IndexedDB is "best-effort" and the browser is allowed to evict it when the
+device runs short of space - no warning, no recovery, which is disqualifying for
+an app you are meant to be able to stop carrying in your head. Settings shows
+whether the promise was granted, how much space your own data uses, and offers
+to ask again if it was not.
 
 **The trade-off, stated honestly:** there is no sync between devices, and if you
 lose the phone or clear your browser's site data without a backup, the data is
