@@ -33,6 +33,23 @@ export interface Step {
 
 export type Energy = 'low' | 'medium' | 'high';
 
+/**
+ * How pressing something is.
+ *
+ * Optional, like every other field on a task: not choosing is a valid answer and
+ * the form never demands one. An unset priority is not "lowest" - it is "nobody
+ * has decided yet", which is why it sorts after everything that has been decided
+ * rather than below Low.
+ */
+export type Priority = 'low' | 'medium' | 'high' | 'critical';
+
+/**
+ * How the Backlog is ordered. Declared here rather than in `lib/priority.ts` for
+ * the same reason as HolidayId: Settings stores it, and the type file must not
+ * drag a lib import in behind it.
+ */
+export type BacklogSort = 'priority' | 'oldest' | 'newest' | 'az';
+
 export interface Recurrence {
   kind: 'daily' | 'weekly' | 'monthly' | 'yearly';
   /** Every N days/weeks/months/years. 1 = every one. */
@@ -49,6 +66,8 @@ export interface Task {
   steps: Step[];
   tags: string[];
   energy?: Energy;
+  /** Absent means nobody has said. See Priority - that is not the same as Low. */
+  priority?: Priority;
 
   /** The day this is planned for. Absent = unscheduled, which is fine and not a failure. */
   date?: DateKey;
@@ -258,6 +277,8 @@ export interface Settings {
   lastSeenBuild?: string;
   /** Offer tag suggestions learned from your own notes. */
   suggestTags: boolean;
+  /** How the Backlog was last sorted. Remembered so the list opens as you left it. */
+  backlogSort: BacklogSort;
   /** Bumped by backup import so views know to refetch. */
   rev: number;
 }
@@ -272,5 +293,6 @@ export const DEFAULT_SETTINGS: Settings = {
   lookaheadDays: 14,
   notificationsAsked: false,
   suggestTags: true,
+  backlogSort: 'priority',
   rev: 0,
 };

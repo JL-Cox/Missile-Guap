@@ -507,6 +507,78 @@ check('the task shows on Today', todayText.includes('Ring the dentist'), true);
 check('the renewal shows on Today', todayText.includes('Netflix renews'), true);
 await page.screenshot({ path: `${OUT}/today.png`, fullPage: true });
 
+// --- the backlog: priority, sorting, and that the sort is remembered ------
+// The order is the whole feature. If Critical did not float to the top, or the
+// chosen sort reset itself every time the app was opened, the list would be a
+// pile rather than a queue.
+await page.click('.nav-btn:has-text("Backlog")');
+await page.waitForTimeout(300);
+check(
+  'the backlog starts empty, and says so without calling it a failure',
+  (await page.textContent('.main')).includes('Nothing outstanding'),
+  true,
+);
+
+for (const [title, priority] of [
+  ['Order printer ink', 'Low'],
+  ['Book the optician', 'Critical'],
+]) {
+  await page.click('button:has-text("Add something")');
+  await page.waitForSelector('#task-title');
+  await page.fill('#task-title', title);
+  await page.click(`button:text-is("${priority}")`);
+  await page.click('form.card button[type="submit"]:has-text("Save")');
+  await page.waitForTimeout(400);
+}
+
+// A task saved with no date at all must land here by itself - that is the whole
+// premise, and it is what makes the list need no decision at capture time.
+const backlogText = await page.textContent('.main');
+check('an undated task lands in the backlog on its own', backlogText.includes('Order printer ink'), true);
+check(
+  'critical sorts above low by default, whatever order they were added in',
+  backlogText.indexOf('Book the optician') < backlogText.indexOf('Order printer ink'),
+  true,
+);
+check('and the level is named, not just coloured', backlogText.includes('Critical'), true);
+await page.screenshot({ path: `${OUT}/backlog.png`, fullPage: true });
+
+await page.click('button:text-is("A to Z")');
+await page.waitForTimeout(400);
+const azText = await page.textContent('.main');
+check(
+  'switching to A to Z reorders the list',
+  azText.indexOf('Book the optician') < azText.indexOf('Order printer ink'),
+  true,
+);
+
+// Reload rather than re-render: the sort is only really remembered if it
+// survives the app being closed and reopened, which is how it is actually used.
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+await page.click('.nav-btn:has-text("Backlog")');
+await page.waitForTimeout(400);
+check(
+  'the chosen sort is still chosen after a reload',
+  await page.getAttribute('button:text-is("A to Z")', 'aria-pressed'),
+  'true',
+);
+
+// Ticking one off should take it out of the list - and still be findable, so it
+// does not read as "where did it go?".
+await page.click('.item input[type="checkbox"]');
+await page.waitForTimeout(500);
+const afterTick = await page.textContent('.main');
+check('a finished thing leaves the list', afterTick.includes('Book the optician'), false);
+check('but is still there to be found', afterTick.includes('Show what I have finished'), true);
+await page.click('button:has-text("Show what I have finished")');
+await page.waitForTimeout(300);
+check(
+  'and reappears when asked for',
+  (await page.textContent('.main')).includes('Book the optician'),
+  true,
+);
+
 // --- appearance settings really apply ------------------------------------
 await page.click('.header button:has-text("Settings")');
 await page.waitForTimeout(300);
@@ -573,7 +645,7 @@ await new Promise((r) => setTimeout(r, 1500));
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(2500);
 check('the app still renders with no server', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
-check('the whole nav is there', await page.evaluate(() => document.querySelectorAll('.nav-btn').length), 5);
+check('the whole nav is there', await page.evaluate(() => document.querySelectorAll('.nav-btn').length), 6);
 check('the data is still there', (await page.textContent('.main')).includes('Ring the dentist'), true);
 await page.screenshot({ path: `${OUT}/offline.png`, fullPage: true });
 

@@ -4,6 +4,7 @@ import { completeTask, stepProgress, toggleStep, uncompleteTask } from '../lib/t
 import { describeDate, describeDuration } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
 import { TagList } from './ui';
+import { PRIORITY_LABELS, priorityClass } from '../lib/priority';
 import AddToCalendar from './AddToCalendar';
 import { calendarForTask, icsFilename } from '../lib/ics';
 
@@ -50,6 +51,10 @@ export default function TaskRow({
         </button>
 
         <div className="row-tight faint">
+          {/* First, because it is the thing that decides whether you read the
+              rest of the row. Critical and High are badges; the other two are
+              quiet text, since most things are medium. */}
+          {task.priority && <span className={priorityClass(task.priority)}>{PRIORITY_LABELS[task.priority]}</span>}
           {task.startTime && <span>{task.startTime}</span>}
           {showDate && task.date && <span>{describeDate(task.date)}</span>}
           {task.durationMin && <span>{describeDuration(task.durationMin)}</span>}

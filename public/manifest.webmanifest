@@ -17,6 +17,7 @@
   "shortcuts": [
     { "name": "Write something down", "short_name": "Capture", "url": "/?view=inbox" },
     { "name": "Add a subscription", "short_name": "Subscription", "url": "/?view=money" },
+    { "name": "Backlog", "short_name": "Backlog", "url": "/?view=backlog" },
     { "name": "Today", "short_name": "Today", "url": "/" }
   ]
 }

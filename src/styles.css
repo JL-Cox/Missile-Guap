@@ -681,12 +681,26 @@ code {
 }
 
 /* Blurred until tapped, for days when seeing the number is too much. It stays a
-   real button, so it keeps a hit area and a focus ring. */
+   real button, so it keeps a hit area and a focus ring.
+
+   The hit area is expanded the same way .btn-sm does it, rather than with
+   padding: an amount sits inline at the end of a row, and real padding would
+   push the row taller and knock the number out of line with its label. The
+   visible text is around 24px, so -10px top and bottom clears 44px. Nothing
+   sits directly above or below it inside a row, so there is no neighbour for
+   the expanded area to overlap. */
 .blurred {
+  position: relative;
   filter: blur(7px);
   cursor: pointer;
   user-select: none;
   transition: filter var(--motion) var(--ease-out);
+}
+
+.blurred::after {
+  content: '';
+  position: absolute;
+  inset: -10px -4px;
 }
 
 .sr-only {

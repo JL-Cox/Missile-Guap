@@ -4,6 +4,7 @@ import type { Recurrence, Task } from '../types';
 import { atTime, describeDuration, todayKey } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
 import { ConfirmButton, parseTags, useAutoFocus } from './ui';
+import { PRIORITIES, PRIORITY_LABELS } from '../lib/priority';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DURATIONS = [10, 15, 30, 45, 60, 90, 120];
@@ -17,8 +18,10 @@ function offsetLabel(min: number): string {
 
 /**
  * Everything here is optional. A task with nothing but a title is a complete,
- * valid task. The form never demands a date, a priority or an estimate, because
- * being made to decide is the thing that stops the task getting written at all.
+ * valid task. The form offers a date, a priority and an estimate and demands
+ * none of them, because being made to decide is the thing that stops the task
+ * getting written at all. Anything added here has to keep that true: a new
+ * field may be offered, never required, and never rendered as missing.
  */
 export default function TaskEditor({
   task,
@@ -119,6 +122,30 @@ export default function TaskEditor({
         </div>
       )}
 
+      {/* Offered, never demanded - see the note at the top of this file. Tapping
+          the level it already has clears it, so "actually I don't know" is one
+          tap rather than a trip through a menu. */}
+      <div className="field">
+        <label>How pressing is it?</label>
+        <div className="btn-row" role="group" aria-label="How pressing is it?">
+          {PRIORITIES.map((p) => (
+            <button
+              key={p}
+              type="button"
+              aria-pressed={draft.priority === p}
+              className={`btn btn-sm${draft.priority === p ? ' btn-primary' : ''}`}
+              onClick={() => patch({ priority: draft.priority === p ? undefined : p })}
+            >
+              {PRIORITY_LABELS[p]}
+            </button>
+          ))}
+        </div>
+        <p className="faint">
+          Only used to sort your backlog. Leave it alone if you would rather not decide - that is a normal
+          answer, and nothing is treated as late either way.
+        </p>
+      </div>
+
       {draft.date && (
         <>
           <div className="field">
@@ -194,6 +221,15 @@ export default function TaskEditor({
               <option value="monthly">Every month</option>
               <option value="yearly">Every year</option>
             </select>
+            {draft.recurrence && !draft.date && (
+              // Ticking a repeat off rolls it to its next date - which needs a
+              // date to roll from. Without one it just completes, so say so here
+              // rather than letting a repeat quietly stop after the first time.
+              <p className="faint">
+                A repeat needs a day to repeat from. Give it one above, or this will simply finish when you
+                tick it off.
+              </p>
+            )}
           </div>
 
           {draft.recurrence?.kind === 'weekly' && (

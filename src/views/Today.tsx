@@ -5,6 +5,7 @@ import type { IncomeSource, Settings, Task } from '../types';
 import { isActiveIncome, nextPayday } from '../lib/pay';
 import { netMonthlyMinor } from '../lib/money';
 import { agendaFor, stillOpen, unscheduled, upcomingBills } from '../lib/agenda';
+import { sortTasks } from '../lib/priority';
 import { describeDate, describeDuration, todayKey } from '../lib/time';
 import { formatMoney } from '../lib/money';
 import { moveTo } from '../lib/tasks';
@@ -30,7 +31,10 @@ export default function Today({ settings }: { settings: Settings }) {
   const openToday = agenda.filter((i) => i.kind !== 'task' || !i.task?.doneAt);
   const doneToday = agenda.filter((i) => i.kind === 'task' && i.task?.doneAt);
   const waiting = stillOpen(tasks, today);
-  const loose = unscheduled(tasks).slice(0, 5);
+  // The most pressing five, not the five most recent - otherwise this and the
+  // Backlog tab would disagree about what matters, which is worse than either
+  // order on its own.
+  const loose = sortTasks(unscheduled(tasks), 'priority').slice(0, 5);
   const bills = upcomingBills(subs, settings.lookaheadDays, today).filter((b) => b.inDays > 0);
 
   // "Can this wait until I get paid?" is only answerable if payday is on screen.
@@ -182,7 +186,9 @@ export default function Today({ settings }: { settings: Settings }) {
 
       {loose.length > 0 && (
         <Section title="No date on these">
-          <p className="faint">Sitting here quietly. Give one a day only if you want to.</p>
+          <p className="faint">
+            The ones nearest the top of your backlog. Give one a day only if you want to.
+          </p>
           <div className="stack-sm">
             {loose.map((task) => (
               <div key={task.id} className="stack-sm">

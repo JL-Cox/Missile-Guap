@@ -7,6 +7,7 @@ import { describeDate, todayKey } from '../lib/time';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { Empty, Section } from '../components/ui';
+import { sortTasks } from '../lib/priority';
 
 type Filter = 'open' | 'today' | 'someday' | 'done';
 
@@ -118,11 +119,20 @@ export default function Tasks({ settings }: { settings: Settings }) {
             <h3 className="muted">
               {key === 'No date yet' || key === 'Finished' ? key : describeDate(key, todayKey())}
             </h3>
-            {groups.get(key)!
-              .sort((a, b) => (a.startTime ?? '99:99').localeCompare(b.startTime ?? '99:99'))
-              .map((task) => (
-                <TaskRow key={task.id} task={task} onEdit={setEditing} />
-              ))}
+            {/* Dated groups read in time order. The undated group has no times
+                at all, so sorting it by start time left it in whatever order
+                IndexedDB handed it back - the same items the Backlog tab shows,
+                in a different and meaningless order. It uses the same ranking as
+                the Backlog now. Both sort a copy; the old code sorted the
+                grouped array in place, during render. */}
+            {(key === 'No date yet'
+              ? sortTasks(groups.get(key)!, 'priority')
+              : [...groups.get(key)!].sort((a, b) =>
+                  (a.startTime ?? '99:99').localeCompare(b.startTime ?? '99:99'),
+                )
+            ).map((task) => (
+              <TaskRow key={task.id} task={task} onEdit={setEditing} />
+            ))}
           </section>
         ))
       )}

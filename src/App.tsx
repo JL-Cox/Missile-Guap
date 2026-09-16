@@ -11,17 +11,19 @@ import { Toast } from './components/ui';
 import Today from './views/Today';
 import Inbox from './views/Inbox';
 import Tasks from './views/Tasks';
+import Backlog from './views/Backlog';
 import Notes from './views/Notes';
 import Money from './views/Money';
 import Settings from './views/Settings';
 
-type ViewId = 'today' | 'inbox' | 'tasks' | 'notes' | 'money' | 'settings';
+type ViewId = 'today' | 'inbox' | 'tasks' | 'backlog' | 'notes' | 'money' | 'settings';
 
 /** Fixed order, fixed labels, every time. The nav never reorders itself. */
 const NAV: { id: ViewId; label: string; glyph: string }[] = [
   { id: 'today', label: 'Today', glyph: '◎' },
   { id: 'inbox', label: 'Inbox', glyph: '↓' },
   { id: 'tasks', label: 'Tasks', glyph: '✓' },
+  { id: 'backlog', label: 'Backlog', glyph: '◇' },
   { id: 'notes', label: 'Notes', glyph: '≡' },
   { id: 'money', label: 'Money', glyph: '¤' },
 ];
@@ -30,6 +32,7 @@ const TITLES: Record<ViewId, string> = {
   today: 'Today',
   inbox: 'Inbox',
   tasks: 'Tasks',
+  backlog: 'Backlog',
   notes: 'Notes',
   money: 'Money',
   settings: 'Settings',
@@ -216,6 +219,7 @@ export default function App() {
         {view === 'today' && <Today settings={settings} />}
         {view === 'inbox' && <Inbox settings={settings} />}
         {view === 'tasks' && <Tasks settings={settings} />}
+        {view === 'backlog' && <Backlog settings={settings} onChange={setSettings} />}
         {view === 'notes' && <Notes settings={settings} />}
         {view === 'money' && <Money settings={settings} />}
         {view === 'settings' && <Settings settings={settings} onChange={setSettings} onToast={showToast} />}

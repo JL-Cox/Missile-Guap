@@ -35,9 +35,12 @@ opposite on all three counts.
 6. **Big things break into small ones.** Step lists sit in the main task form,
    not behind an "advanced" toggle, because "ring the dentist" is often really
    "find the letter, then ring at 9am".
-7. **You can turn the volume down.** Calm / dark / high-contrast themes, a text
-   size slider, motion off, and a switch that blurs every money amount until you
-   tap it, for days when seeing the number is too much.
+7. **You can turn the volume down.** Six themes — Calm, Amber, Overcast, Dark,
+   Midnight and High contrast — plus a custom one you compose from a paper and a
+   single colour, every combination contrast-checked in the tests so an
+   unreadable pair cannot be made. A text size slider, motion off, and a switch
+   that blurs every money amount until you tap it, for days when seeing the
+   number is too much.
 
 ## What's in it
 
@@ -46,13 +49,16 @@ opposite on all three counts.
 | **Today** | What is planned today, what is still waiting, what money is about to leave, and anything with no date yet. |
 | **Inbox** | Everything you typed into the capture box. Three buttons per item, always the same three: make it a task, keep it as a note, done with it. |
 | **Tasks** | All tasks, grouped by day, searchable across titles, notes, steps and tags. Optional times, durations, reminders, repeats and an energy level. |
+| **Backlog** | Everything that needs doing and has no day on it — book the appointment, order the thing, chase the letter. Anything you write down without giving it a date lands here by itself, so there is no decision to make at the time. Four priority levels (Low, Medium, High, Critical, and "not said", which stays a valid answer), four sort orders, and the one you used last is remembered. Nothing here is ever called late. |
 | **Notes** | Plain text you will want to look up again. Reference numbers, phone scripts, what the nurse actually said. Pin the important ones. |
 | **Money** | Your income and your subscriptions, and what one leaves of the other. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
 | **Settings** | Appearance, notifications, backup and restore, calendar export, and a plain-English account of what happens to your data. |
 
-There are four buckets, not five: **a reminder is a property of a task**, not a
+There are four buckets, not six: **a reminder is a property of a task**, not a
 separate kind of thing, so there is never a moment of "is this a task or a
-reminder?".
+reminder?". Backlog is the same rule applied again — it is a view of the tasks
+that have no date, not a fifth kind of thing, so nothing has to be sorted into
+it. Priority is a field on a task, like a reminder.
 
 ### Adding a subscription
 
@@ -253,7 +259,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-290 unit tests cover the parts where a quiet wrong answer would make the app
+435 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between

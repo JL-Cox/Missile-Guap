@@ -97,6 +97,21 @@ export function unscheduled(tasks: Task[]): Task[] {
   return tasks.filter((t) => !t.doneAt && !t.date).sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/**
+ * Backlog things you have finished, most recently first.
+ *
+ * Ticking something off makes it vanish from the list, which is correct and also
+ * briefly alarming - on a bad day "where did it go?" is a real cost. So the
+ * Backlog can show the last few back to you. It is proof of work, not a running
+ * total: no streak, no count of what you managed this week.
+ */
+export function finishedWithoutDate(tasks: Task[], limit = 10): Task[] {
+  return tasks
+    .filter((t) => t.doneAt && !t.date)
+    .sort((a, b) => b.doneAt! - a.doneAt!)
+    .slice(0, limit);
+}
+
 /** The single most expensive active subscription, for the "worth a look?" prompt. */
 export function priciest(subs: Subscription[]): Subscription | null {
   const active = subs.filter((s) => !s.endedOn);
