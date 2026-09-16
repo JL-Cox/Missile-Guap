@@ -45,6 +45,22 @@ export default function IncomeEditor({
   const [grossText, setGrossText] = useState(source.grossMinor ? (source.grossMinor / 100).toFixed(2) : '');
   const [netText, setNetText] = useState(source.netMinor ? (source.netMinor / 100).toFixed(2) : '');
   const [error, setError] = useState('');
+  /*
+    Amounts and day lists are held as the raw text you typed, and only turned
+    into numbers when you save.
+
+    A controlled input that reformats its own value on every keystroke fights
+    you: type "4", the box rewrites itself to "4.00", the caret is stranded in
+    the middle, and the next character lands in the wrong place. Typing
+    "1234.56" produced "5.01". The gross and net fields already worked this way;
+    these two did not.
+  */
+  const [amountTexts, setAmountTexts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      source.deductions.map((d) => [d.id, d.amountMinor ? (d.amountMinor / 100).toFixed(2) : '']),
+    ),
+  );
+  const [daysText, setDaysText] = useState(() => (source.daysOfMonth ?? []).join(', '));
   const nameRef = useAutoFocus<HTMLInputElement>();
 
   const patch = (changes: Partial<IncomeSource>) => setDraft((d) => ({ ...d, ...changes }));
@@ -52,8 +68,23 @@ export default function IncomeEditor({
   const setDeduction = (id: string, changes: Partial<Deduction>) =>
     patch({ deductions: draft.deductions.map((d) => (d.id === id ? { ...d, ...changes } : d)) });
 
-  const addDeduction = (label: string) =>
-    patch({ deductions: [...draft.deductions, { id: newId(), label, amountMinor: 0 }] });
+  const addDeduction = (label: string) => {
+    const id = newId();
+    setAmountTexts((prev) => ({ ...prev, [id]: '' }));
+    patch({ deductions: [...draft.deductions, { id, label, amountMinor: 0 }] });
+  };
+
+  /** Days as typed, cleaned up only when they are actually used. */
+  const parsedDays = daysText
+    .split(',')
+    .map((n) => Number(n.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 1 && n <= 31);
+
+  /** Deductions with the typed amounts read back as numbers. */
+  const parsedDeductions: Deduction[] = draft.deductions.map((d) => ({
+    ...d,
+    amountMinor: parseMoney(amountTexts[d.id] ?? '') ?? 0,
+  }));
 
   // Live preview of the gap, so a missing line is visible while typing rather
   // than a surprise afterwards.
@@ -61,6 +92,7 @@ export default function IncomeEditor({
     ...draft,
     grossMinor: parseMoney(grossText) ?? 0,
     netMinor: parseMoney(netText) ?? 0,
+    deductions: parsedDeductions,
   };
   const gap = unitemisedMinor(preview);
 
@@ -76,7 +108,16 @@ export default function IncomeEditor({
           return;
         }
         if (!draft.name.trim()) return;
-        onSaved(await saveIncome({ ...draft, name: draft.name.trim(), grossMinor, netMinor }));
+        onSaved(
+          await saveIncome({
+            ...draft,
+            name: draft.name.trim(),
+            grossMinor,
+            netMinor,
+            deductions: parsedDeductions,
+            daysOfMonth: parsedDays,
+          }),
+        );
       }}
     >
       <div className="field">
@@ -136,9 +177,9 @@ export default function IncomeEditor({
                   <button
                     key={choice.label}
                     type="button"
-                    aria-pressed={String(draft.daysOfMonth) === String(choice.days)}
-                    className={`btn btn-sm${String(draft.daysOfMonth) === String(choice.days) ? ' btn-primary' : ''}`}
-                    onClick={() => patch({ daysOfMonth: choice.days })}
+                    aria-pressed={String(parsedDays) === String(choice.days)}
+                    className={`btn btn-sm${String(parsedDays) === String(choice.days) ? ' btn-primary' : ''}`}
+                    onClick={() => setDaysText(choice.days.join(', '))}
                   >
                     {choice.label}
                   </button>
@@ -149,15 +190,8 @@ export default function IncomeEditor({
             type="text"
             inputMode="numeric"
             aria-label="Days of the month you are paid"
-            value={(draft.daysOfMonth ?? []).join(', ')}
-            onChange={(e) =>
-              patch({
-                daysOfMonth: e.target.value
-                  .split(',')
-                  .map((n) => Number(n.trim()))
-                  .filter((n) => Number.isFinite(n) && n >= 1 && n <= 31),
-              })
-            }
+            value={daysText}
+            onChange={(e) => setDaysText(e.target.value)}
             placeholder="15, 31"
             style={{ marginTop: 8 }}
           />
@@ -274,8 +308,8 @@ export default function IncomeEditor({
                   inputMode="decimal"
                   aria-label={`Amount for ${d.label || 'this deduction'}`}
                   style={{ maxWidth: 120 }}
-                  value={d.amountMinor ? (d.amountMinor / 100).toFixed(2) : ''}
-                  onChange={(e) => setDeduction(d.id, { amountMinor: parseMoney(e.target.value) ?? 0 })}
+                  value={amountTexts[d.id] ?? ''}
+                  onChange={(e) => setAmountTexts((prev) => ({ ...prev, [d.id]: e.target.value }))}
                   placeholder="0.00"
                 />
                 <button

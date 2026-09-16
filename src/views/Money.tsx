@@ -506,6 +506,11 @@ function SubscriptionEditor({
 }) {
   const [draft, setDraft] = useState(sub);
   const [amountText, setAmountText] = useState(sub.amountMinor ? (sub.amountMinor / 100).toFixed(2) : '');
+  // Same reason as the amount: a box that rewrites itself as you type cannot be
+  // cleared and retyped, because emptying it snaps straight back to 1.
+  const [everyText, setEveryText] = useState(String(sub.every));
+  /** The interval as a number, for matching presets while it is being typed. */
+  const everyValue = Math.max(1, Math.floor(Number(everyText)) || 1);
   const [error, setError] = useState('');
   const [showMore, setShowMore] = useState(Boolean(sub.cancelHow || sub.notes || sub.every !== 1));
   const [customCategory, setCustomCategory] = useState(
@@ -550,7 +555,7 @@ function SubscriptionEditor({
           return;
         }
         if (!draft.name.trim()) return;
-        onSaved(await saveSubscription({ ...draft, name: draft.name.trim(), amountMinor }));
+        onSaved(await saveSubscription({ ...draft, name: draft.name.trim(), amountMinor, every: everyValue }));
       }}
     >
       <div className="field">
@@ -613,7 +618,7 @@ function SubscriptionEditor({
         <label>How often</label>
         <div className="btn-row">
           {CYCLE_PRESETS.map((c) => {
-            const selected = findCyclePreset(draft.cycle, draft.every)?.id === c.id;
+            const selected = findCyclePreset(draft.cycle, everyValue)?.id === c.id;
             return (
               <button
                 key={c.id}
@@ -622,16 +627,19 @@ function SubscriptionEditor({
                 className={`btn btn-sm${selected ? ' btn-primary' : ''}`}
                 // A preset sets both fields, so picking one can never leave a
                 // stale "every 2" behind from a previous choice.
-                onClick={() => patch({ cycle: c.cycle, every: c.every })}
+                onClick={() => {
+                  patch({ cycle: c.cycle });
+                  setEveryText(String(c.every));
+                }}
               >
                 {c.label}
               </button>
             );
           })}
         </div>
-        {!findCyclePreset(draft.cycle, draft.every) && (
+        {!findCyclePreset(draft.cycle, everyValue) && (
           <p className="faint">
-            Currently {describeCycle(draft.cycle, draft.every)}, which none of these cover. Picking one would
+            Currently {describeCycle(draft.cycle, everyValue)}, which none of these cover. Picking one would
             change when it charges; leave them alone to keep it as it is.
           </p>
         )}
@@ -762,8 +770,8 @@ function SubscriptionEditor({
               type="number"
               min={1}
               max={24}
-              value={draft.every}
-              onChange={(e) => patch({ every: Math.max(1, Number(e.target.value) || 1) })}
+              value={everyText}
+              onChange={(e) => setEveryText(e.target.value)}
             />
             <p className="faint">
               Only needed for a rhythm the buttons above do not cover, like every 2 months.

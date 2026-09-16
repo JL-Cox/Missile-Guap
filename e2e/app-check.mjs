@@ -294,8 +294,19 @@ await page.fill('#income-net', '1850.00');
 await page.click('button:has-text("+ Federal income tax")');
 await page.click('button:has-text("+ Social Security")');
 const dedAmounts = page.locator('input[aria-label^="Amount for"]');
-await dedAmounts.nth(0).fill('420.00');
-await dedAmounts.nth(1).fill('155.00');
+// Typed a character at a time, not filled in one go. A box that reformats
+// itself mid-typing passes .fill() and is unusable by a person: typing
+// "1234.56" once produced "5.01", and "15, 31" produced "1".
+await dedAmounts.nth(0).click();
+await dedAmounts.nth(0).pressSequentially('420.00', { delay: 15 });
+check('a deduction box keeps what you type', await dedAmounts.nth(0).inputValue(), '420.00');
+await dedAmounts.nth(1).click();
+await dedAmounts.nth(1).pressSequentially('155.00', { delay: 15 });
+
+const daysBox = page.locator('input[aria-label="Days of the month you are paid"]');
+await daysBox.fill('');
+await daysBox.pressSequentially('15, 31', { delay: 15 });
+check('the pay-days box keeps what you type', await daysBox.inputValue(), '15, 31');
 await page.waitForTimeout(150);
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
@@ -304,6 +315,24 @@ const moneyText = await page.textContent('.main');
 check('take-home is 24 paycheques a year, not 26', moneyText.includes('3,700.00'), true);
 check('gross is annualised the same way', moneyText.includes('60,000.00'), true);
 check('the deduction breakdown appears', moneyText.includes('Federal income tax'), true);
+check(
+  'and the typed deduction was stored, not a mangled version',
+  await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('steady');
+        req.onsuccess = () => {
+          const all = req.result.transaction('incomes', 'readonly').objectStore('incomes').getAll();
+          all.onsuccess = () => {
+            const job = all.result.find((i) => i.name === 'Main job');
+            req.result.close();
+            resolve(job ? job.deductions.map((d) => d.amountMinor).join(',') : 'NOT FOUND');
+          };
+        };
+      }),
+  ),
+  '42000,15500',
+);
 check('the unexplained gap is named, not hidden', moneyText.includes('Not itemised'), true);
 
 // The next payday shown must never be a Saturday or Sunday once shifting is on.
