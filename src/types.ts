@@ -137,7 +137,7 @@ export const DEFAULT_SETTINGS: Settings = {
   textScale: 1,
   reduceMotion: false,
   blurAmounts: false,
-  currency: 'GBP',
+  currency: 'USD',
   lookaheadDays: 14,
   notificationsAsked: false,
   suggestTags: true,

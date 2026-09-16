@@ -21,7 +21,8 @@ import {
   CYCLE_PRESETS,
   findCyclePreset,
   findPreset,
-  SERVICE_PRESETS,
+  matchPresets,
+  type ServicePreset,
 } from '../lib/subscriptions';
 import { addDays, describeDate, todayKey } from '../lib/time';
 import { Amount, ConfirmButton, Empty, Section, useAutoFocus } from '../components/ui';
@@ -194,8 +195,8 @@ export default function Money({ settings }: { settings: Settings }) {
 }
 
 /**
- * The screen straight after saving. It exists because "£12.99 a month" and
- * "£155.88 a year" are very different pieces of information, and the second one
+ * The screen straight after saving. It exists because "$12.99 a month" and
+ * "$155.88 a year" are very different pieces of information, and the second one
  * is the one that changes your mind. It also puts the calendar step here, where
  * you are already thinking about this subscription.
  */
@@ -384,19 +385,26 @@ function SubscriptionEditor({
 
   const patch = (changes: Partial<Subscription>) => setDraft((d) => ({ ...d, ...changes }));
 
+  const nameMatches = matchPresets(draft.name);
+
   /**
-   * Typing a name we recognise fills in the category and the usual billing
-   * cycle, so the common case is name, amount, date and nothing else. It only
-   * ever fills blanks - it never overwrites something you chose.
+   * Taking a suggestion fills in the category and the usual billing rhythm too,
+   * so the common case is name, amount, date and nothing else. It only ever
+   * fills blanks - it never overwrites something you chose.
    */
-  const onNameChange = (name: string) => {
-    const preset = findPreset(name);
-    if (!preset) return patch({ name });
+  const applyPreset = (preset: ServicePreset) =>
     patch({
-      name,
+      name: preset.name,
       category: draft.category ?? preset.category,
       cycle: draft.cycle === 'monthly' ? preset.cycle : draft.cycle,
+      every: draft.cycle === 'monthly' ? 1 : draft.every,
     });
+
+  /** Typing the full name of a known service counts as picking it. */
+  const onNameChange = (name: string) => {
+    const preset = findPreset(name);
+    if (preset) return applyPreset(preset);
+    patch({ name });
   };
 
   const today = todayKey();
@@ -421,17 +429,25 @@ function SubscriptionEditor({
           id="sub-name"
           ref={nameRef}
           type="text"
-          list="sub-name-suggestions"
           value={draft.name}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder="Netflix"
           autoComplete="off"
         />
-        <datalist id="sub-name-suggestions">
-          {SERVICE_PRESETS.map((p) => (
-            <option key={p.name} value={p.name} />
-          ))}
-        </datalist>
+        {nameMatches.length > 0 && (
+          <div className="btn-row" style={{ marginTop: 8 }}>
+            {nameMatches.map((p) => (
+              <button
+                key={p.name}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => applyPreset(p)}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+        )}
         <p className="faint">Start typing and common ones will offer themselves, category included.</p>
       </div>
 
@@ -457,7 +473,7 @@ function SubscriptionEditor({
             type="text"
             value={draft.currency}
             onChange={(e) => patch({ currency: e.target.value.toUpperCase().slice(0, 3) })}
-            placeholder="GBP"
+            placeholder="USD"
           />
         </div>
       </div>

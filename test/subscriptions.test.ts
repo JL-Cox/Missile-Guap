@@ -6,6 +6,7 @@ import {
   CYCLE_PRESETS,
   findCyclePreset,
   findPreset,
+  matchPresets,
   SERVICE_PRESETS,
 } from '../src/lib/subscriptions';
 
@@ -109,5 +110,52 @@ describe('cycleUnit', () => {
     expect(cycleUnit('monthly')).toBe('months');
     expect(cycleUnit('quarterly')).toBe('quarters');
     expect(cycleUnit('yearly')).toBe('years');
+  });
+});
+
+
+describe('matchPresets', () => {
+  it('offers services whose name starts with what you typed', () => {
+    expect(matchPresets('net').map((p) => p.name)).toContain('Netflix');
+    expect(matchPresets('spo').map((p) => p.name)).toContain('Spotify');
+  });
+
+  it('ignores case and stray spaces', () => {
+    expect(matchPresets('  NETF  ').map((p) => p.name)).toContain('Netflix');
+  });
+
+  it('also matches in the middle of a name', () => {
+    expect(matchPresets('tube').map((p) => p.name)).toContain('YouTube Premium');
+  });
+
+  it('prefers matches that start with what you typed', () => {
+    const names = matchPresets('a').map((p) => p.name);
+    expect(names[0].toLowerCase().startsWith('a')).toBe(true);
+  });
+
+  it('offers nothing for an empty box, rather than a wall of every service', () => {
+    expect(matchPresets('')).toEqual([]);
+    expect(matchPresets('   ')).toEqual([]);
+  });
+
+  it('stops offering a name once it is typed out in full', () => {
+    expect(matchPresets('Netflix').map((p) => p.name)).not.toContain('Netflix');
+  });
+
+  it('never returns more than it was asked for', () => {
+    expect(matchPresets('e', 3).length).toBeLessThanOrEqual(3);
+    expect(matchPresets('e').length).toBeLessThanOrEqual(4);
+  });
+
+  it('returns nothing for something it does not know', () => {
+    expect(matchPresets('zzzzzz')).toEqual([]);
+  });
+
+  it('every suggestion carries a visible name to show on its button', () => {
+    // The bug this replaced: a datalist rendered options with no label, so the
+    // list was blank rows you had to pick from blind.
+    for (const preset of matchPresets('e', 10)) {
+      expect(preset.name.trim().length).toBeGreaterThan(0);
+    }
   });
 });

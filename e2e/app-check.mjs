@@ -170,10 +170,19 @@ await page.click('.nav-btn:has-text("Money")');
 await page.click('button:has-text("Add a subscription")');
 await page.waitForSelector('#sub-name');
 // A recognised name should fill the category in by itself.
-await page.fill('#sub-name', 'Netflix');
+// Service suggestions must be visible buttons with readable names. The
+// native datalist this replaced rendered blank rows on Android - you picked
+// something invisible and hoped.
+await page.fill('#sub-name', 'netf');
+await page.waitForTimeout(250);
+const suggestion = page.locator('.field button.btn-sm', { hasText: 'Netflix' }).first();
+check('a typed prefix offers a named, visible suggestion', await suggestion.count(), 1);
+check('the suggestion button is not blank', (await suggestion.textContent()).trim(), 'Netflix');
+await suggestion.click();
 await page.waitForTimeout(200);
+check('taking the suggestion fills the name', await page.inputValue('#sub-name'), 'Netflix');
 check(
-  'a known name picks its own category',
+  'and picks its category too',
   await page.getAttribute('button[aria-pressed="true"]:has-text("TV & film")', 'aria-pressed'),
   'true',
 );

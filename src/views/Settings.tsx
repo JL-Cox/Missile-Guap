@@ -28,6 +28,8 @@ export default function Settings({
   const [importError, setImportError] = useState('');
   const [counts, setCounts] = useState({ captures: 0, tasks: 0, notes: 0, subscriptions: 0 });
   const [storage, setStorage] = useState<StorageStatus | null>(null);
+  /** Subscriptions saved under a different currency than the one now set. */
+  const [mismatched, setMismatched] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -39,8 +41,25 @@ export default function Settings({
         subscriptions: await db.subscriptions.count(),
       });
       setStorage(await storageStatus());
+      const subs = await db.subscriptions.toArray();
+      setMismatched(subs.filter((s) => s.currency !== settings.currency).length);
     })();
-  }, [settings.rev]);
+  }, [settings.rev, settings.currency]);
+
+  /**
+   * Relabels every subscription with the current currency.
+   *
+   * Deliberately does not convert: there is no exchange-rate source here and
+   * there never will be, since fetching one would mean a network call. This is
+   * for the case where the figures were always in your own currency and only
+   * the label was wrong.
+   */
+  const retagCurrency = async () => {
+    const subs = await db.subscriptions.toArray();
+    await db.subscriptions.bulkPut(subs.map((s) => ({ ...s, currency: settings.currency })));
+    onChange(await saveSettings({ rev: settings.rev + 1 }));
+    onToast(`All subscriptions now shown in ${settings.currency}.`);
+  };
 
   const patch = async (changes: Partial<SettingsType>) => onChange(await saveSettings(changes));
 
@@ -164,13 +183,31 @@ export default function Settings({
         </div>
 
         <div className="field">
-          <label htmlFor="currency">Default currency for new subscriptions</label>
+          <label htmlFor="currency">Currency</label>
           <input
             id="currency"
             type="text"
             value={settings.currency}
             onChange={(e) => void patch({ currency: e.target.value.toUpperCase().slice(0, 3) })}
           />
+          <p className="faint">
+            Used for new subscriptions. Each one also stores its own, so changing this does not touch anything
+            already saved - the button below does that.
+          </p>
+          {mismatched > 0 && (
+            <div className="stack-sm" style={{ marginTop: 8 }}>
+              <ConfirmButton
+                label={`Change ${mismatched} subscription${mismatched === 1 ? '' : 's'} to ${settings.currency}`}
+                confirmLabel={`Yes, use ${settings.currency} for all of them`}
+                className="btn btn-sm"
+                onConfirm={() => void retagCurrency()}
+              />
+              <p className="faint">
+                This relabels the amounts. It does not convert them - {settings.currency} 10 stays 10, so only do
+                this if the figures you typed were always in {settings.currency}.
+              </p>
+            </div>
+          )}
         </div>
       </Section>
 

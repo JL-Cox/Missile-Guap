@@ -111,6 +111,26 @@ export const SERVICE_PRESETS: ServicePreset[] = [
   { name: 'Dropbox', category: 'Storage & cloud', cycle: 'monthly' },
 ];
 
+/**
+ * Known services whose name starts with, or contains, what has been typed.
+ *
+ * Shown as tappable chips rather than a native `<datalist>`. A datalist renders
+ * each option's *label*, not its value, so options written `<option value="x"/>`
+ * appear as blank rows on Android - you pick something invisible and hope. More
+ * to the point, the app's rule is that nothing hides inside a native widget:
+ * if a choice exists, it is a button you can see.
+ */
+export function matchPresets(query: string, limit = 4): ServicePreset[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const starts = SERVICE_PRESETS.filter((p) => p.name.toLowerCase().startsWith(needle));
+  const contains = SERVICE_PRESETS.filter(
+    (p) => !p.name.toLowerCase().startsWith(needle) && p.name.toLowerCase().includes(needle),
+  );
+  // An exact match is already typed out in full - offering it back is noise.
+  return [...starts, ...contains].filter((p) => p.name.toLowerCase() !== needle).slice(0, limit);
+}
+
 /** Case-insensitive lookup, so "netflix" and "Netflix " both match. */
 export function findPreset(name: string): ServicePreset | undefined {
   const needle = name.trim().toLowerCase();
