@@ -1,4 +1,4 @@
-import type { BillingCycle } from '../types';
+import type { BillingCycle, IntervalCycle } from '../types';
 
 /**
  * The billing rhythms offered as buttons.
@@ -6,6 +6,12 @@ import type { BillingCycle } from '../types';
  * "Every 2 weeks" is not its own cycle - it is weekly billed every second week -
  * so a preset sets both `cycle` and `every` together. That keeps the stored
  * shape unchanged, so nothing already saved needs migrating.
+ *
+ * "Twice a month" is its own cycle, because it genuinely is one: 24 charges a
+ * year on set dates against 26 on a 14-day interval. The same pair sits in the
+ * income editor, and they must stay the same pair - a subscription that bills
+ * on the 1st and the 15th matched against an every-2-weeks approximation would
+ * be out by two charges a year, every year.
  *
  * The labels say exactly how often money moves. Deliberately not "semi-weekly",
  * "bi-weekly" or "fortnightly": the first two mean opposite things to different
@@ -22,9 +28,16 @@ export interface CyclePreset {
 export const CYCLE_PRESETS: CyclePreset[] = [
   { id: 'weekly', label: 'Weekly', cycle: 'weekly', every: 1 },
   { id: 'fortnightly', label: 'Every 2 weeks', cycle: 'weekly', every: 2 },
+  { id: 'semimonthly', label: 'Twice a month', cycle: 'semimonthly', every: 1 },
   { id: 'monthly', label: 'Monthly', cycle: 'monthly', every: 1 },
   { id: 'quarterly', label: 'Every 3 months', cycle: 'quarterly', every: 1 },
   { id: 'yearly', label: 'Yearly', cycle: 'yearly', every: 1 },
+];
+
+/** The day pairs offered for a twice-a-month subscription, matching income's. */
+export const BILLING_DAY_CHOICES: { label: string; days: number[] }[] = [
+  { label: '1st and 15th', days: [1, 15] },
+  { label: '15th and last day', days: [15, 31] },
 ];
 
 /**
@@ -40,8 +53,14 @@ export function findCyclePreset(cycle: BillingCycle, every: number): CyclePreset
   return CYCLE_PRESETS.find((p) => p.cycle === cycle && p.every === every);
 }
 
-/** The plain noun for a cycle's period, for "bill every how many ___?". */
-export function cycleUnit(cycle: BillingCycle): string {
+/**
+ * The plain noun for a cycle's period, for "bill every how many ___?".
+ *
+ * Interval cycles only, and the type says so: a twice-a-month subscription has
+ * no period to count, so the question itself does not apply and the form does
+ * not ask it.
+ */
+export function cycleUnit(cycle: IntervalCycle): string {
   return { weekly: 'weeks', monthly: 'months', quarterly: 'quarters', yearly: 'years' }[cycle];
 }
 

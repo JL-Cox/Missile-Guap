@@ -143,6 +143,36 @@ describe('every-2-weeks subscriptions', () => {
 });
 
 
+describe('twice-a-month subscriptions', () => {
+  // The other half of the same distinction: 24 charges a year, on set dates.
+  const twice = sub({ amountMinor: 1500, cycle: 'semimonthly', every: 1, daysOfMonth: [1, 15] });
+
+  it('counts 24 charges a year', () => {
+    expect(yearlyMinor(twice)).toBe(1500 * 24);
+  });
+
+  it('costs two charges a year less than the same amount every 2 weeks', () => {
+    const fortnightly = sub({ amountMinor: 1500, cycle: 'weekly', every: 2 });
+    expect(yearlyMinor(fortnightly) - yearlyMinor(twice)).toBe(1500 * 2);
+  });
+
+  it('works out at exactly twice the monthly amount', () => {
+    expect(monthlyMinor(twice)).toBe(1500 * 2);
+  });
+
+  it('ignores a stale "every 2" rather than halving the cost', () => {
+    // Switching from every-2-months to twice-a-month can leave every: 2 behind.
+    // Dividing by it would report half the money while the dates stayed put.
+    expect(yearlyMinor(sub({ ...twice, every: 2 }))).toBe(1500 * 24);
+  });
+
+  it('adds into the totals like any other rhythm', () => {
+    expect(totalYearlyMinor([twice])).toBe(1500 * 24);
+    expect(totalMonthlyMinor([twice])).toBe(1500 * 2);
+  });
+});
+
+
 function income(partial: Partial<IncomeSource> = {}): IncomeSource {
   return {
     id: Math.random().toString(36).slice(2),

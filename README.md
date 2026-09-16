@@ -64,11 +64,16 @@ One button, three fields, done:
    the usual billing cycle for you. Deliberately no prices: they change
    constantly, and a wrong number sitting quietly in your budget is worse than
    no number.
-   **How often** is a row of buttons: Weekly, **Every 2 weeks**, Monthly, Every
-   3 months, Yearly. They say exactly how often money moves — never
-   "semi-weekly" or "bi-weekly", which mean opposite things to different people.
-   Anything else (every 2 months, say) still goes under *More options*, and the
-   app leaves it alone rather than rounding it to the nearest button.
+   **How often** is a row of buttons: Weekly, **Every 2 weeks**, **Twice a
+   month**, Monthly, Every 3 months, Yearly. They say exactly how often money
+   moves — never "semi-weekly" or "bi-weekly", which mean opposite things to
+   different people. Every 2 weeks and twice a month are separate buttons
+   because they are separate things: 26 charges a year against 24. Twice a
+   month asks which dates ("the 1st and the 15th", or "the 15th and the last
+   day", which lands on the 28th in February by itself) — the same pair the
+   income screen uses. Anything else (every 2 months, say) still goes under
+   *More options*, and the app leaves it alone rather than rounding it to the
+   nearest button.
 3. **Amount, how often, next charge date.** Category is a row of buttons, not a
    text box — tapping one of nine is not a decision the way inventing one is.
    Everything else (how to cancel, notes, "every 2 months") is behind
@@ -248,10 +253,11 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-241 unit tests cover the parts where a quiet wrong answer would make the app
+290 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
-cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation
+cost normalisation across every rhythm including the 24-against-26 gap between
+twice a month and every 2 weeks, `.ics` generation
 including line folding and escaping, and backup files refusing to import
 anything they did not write.
 
@@ -279,6 +285,7 @@ src/
     version.ts        Notices when the app has updated under you
     recurrence.ts     Repeats, and billing dates anchored to the first charge
     money.ts          Minor units only; cost and pay normalised to a year
+    monthdays.ts      Fixed days of the month, shared by pay and billing
     pay.ts            Pay schedules: intervals and fixed days of the month
     holidays.ts       Employer closures, computed - including Easter
     classify.ts       Naive Bayes tag suggestions, trained on your own notes

@@ -17,13 +17,21 @@ import {
   totalYearlyMinor,
   yearlyMinor,
 } from '../lib/money';
-import { describeCycle, nextBilling } from '../lib/recurrence';
+import {
+  DEFAULT_BILLING_DAYS,
+  describeBilling,
+  describeCycle,
+  isFixedDayCycle,
+  nextBilling,
+} from '../lib/recurrence';
+import { normaliseDays } from '../lib/monthdays';
 import { upcomingBills } from '../lib/agenda';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
 import IncomeEditor from '../components/IncomeEditor';
 import { describeFrequency, isActiveIncome, nextPayday } from '../lib/pay';
 import {
+  BILLING_DAY_CHOICES,
   categoryChoices,
   cycleUnit,
   CYCLE_PRESETS,
@@ -354,7 +362,7 @@ function SavedConfirmation({
         </div>
         <div className="spread">
           <span className="muted">How often</span>
-          <span>{describeCycle(sub.cycle, sub.every)}</span>
+          <span>{describeBilling(sub)}</span>
         </div>
         <div className="spread">
           <span className="muted">Next charge</span>
@@ -444,7 +452,7 @@ function SubscriptionCard({
         <Amount text={formatMoney(sub.amountMinor, sub.currency)} blur={settings.blurAmounts} />
       </div>
       <div className="row-tight faint">
-        <span>{describeCycle(sub.cycle, sub.every)}</span>
+        <span>{describeBilling(sub)}</span>
         {next && <span>Next: {describeDate(next)}</span>}
         {sub.category && <span className="tag">{sub.category}</span>}
       </div>
@@ -511,6 +519,20 @@ function SubscriptionEditor({
   const [everyText, setEveryText] = useState(String(sub.every));
   /** The interval as a number, for matching presets while it is being typed. */
   const everyValue = Math.max(1, Math.floor(Number(everyText)) || 1);
+  /*
+    Which days a twice-a-month subscription charges on, held as raw text for the
+    same reason. Kept even while another rhythm is selected, so switching to
+    Monthly and back does not lose what you typed.
+  */
+  const [daysText, setDaysText] = useState(
+    (sub.daysOfMonth?.length ? sub.daysOfMonth : DEFAULT_BILLING_DAYS).join(', '),
+  );
+  const parsedDays = daysText
+    .split(',')
+    .map((n) => Number(n.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 1 && n <= 31);
+  const daysValue = normaliseDays(parsedDays, DEFAULT_BILLING_DAYS);
+  const fixedDay = isFixedDayCycle(draft.cycle);
   const [error, setError] = useState('');
   const [showMore, setShowMore] = useState(Boolean(sub.cancelHow || sub.notes || sub.every !== 1));
   const [customCategory, setCustomCategory] = useState(
@@ -555,7 +577,18 @@ function SubscriptionEditor({
           return;
         }
         if (!draft.name.trim()) return;
-        onSaved(await saveSubscription({ ...draft, name: draft.name.trim(), amountMinor, every: everyValue }));
+        onSaved(
+          await saveSubscription({
+            ...draft,
+            name: draft.name.trim(),
+            amountMinor,
+            // The two are exclusive: an interval has no days of the month, and
+            // twice a month has no interval. Storing both would leave a stale
+            // one to be read by mistake later.
+            every: fixedDay ? 1 : everyValue,
+            daysOfMonth: fixedDay ? daysValue : undefined,
+          }),
+        );
       }}
     >
       <div className="field">
@@ -639,14 +672,50 @@ function SubscriptionEditor({
         </div>
         {!findCyclePreset(draft.cycle, everyValue) && (
           <p className="faint">
-            Currently {describeCycle(draft.cycle, everyValue)}, which none of these cover. Picking one would
-            change when it charges; leave them alone to keep it as it is.
+            Currently {describeCycle(draft.cycle, everyValue, daysValue)}, which none of these cover. Picking
+            one would change when it charges; leave them alone to keep it as it is.
           </p>
         )}
+        <p className="faint">
+          Every 2 weeks is 26 charges a year; twice a month is 24. They are not the same, and the difference
+          is two whole charges.
+        </p>
       </div>
 
+      {fixedDay && (
+        <div className="field">
+          <label htmlFor="sub-days">Which days of the month?</label>
+          <div className="btn-row">
+            {BILLING_DAY_CHOICES.map((choice) => (
+              <button
+                key={choice.label}
+                type="button"
+                aria-pressed={String(daysValue) === String(choice.days)}
+                className={`btn btn-sm${String(daysValue) === String(choice.days) ? ' btn-primary' : ''}`}
+                onClick={() => setDaysText(choice.days.join(', '))}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+          <input
+            id="sub-days"
+            type="text"
+            inputMode="numeric"
+            value={daysText}
+            onChange={(e) => setDaysText(e.target.value)}
+            placeholder="1, 15"
+            style={{ marginTop: 8 }}
+          />
+          <p className="faint">
+            Charges {describeCycle(draft.cycle, everyValue, daysValue)}. Use 31 for the last day - it lands on
+            the 28th in February and the 30th in April automatically.
+          </p>
+        </div>
+      )}
+
       <div className="field">
-        <label htmlFor="sub-first">Date of the next charge</label>
+        <label htmlFor="sub-first">{fixedDay ? 'Charging from' : 'Date of the next charge'}</label>
         <div className="btn-row" style={{ marginBottom: 8 }}>
           <button
             type="button"
@@ -680,8 +749,10 @@ function SubscriptionEditor({
           onChange={(e) => patch({ firstBilled: e.target.value })}
         />
         <p className="faint">
-          {describeDate(draft.firstBilled)}. Every future date is worked out from this one, so it only has to be
-          right once.
+          {describeDate(draft.firstBilled)}.{' '}
+          {fixedDay
+            ? 'The charges land on the days above; this only says when they start, so the first one is the first of those dates on or after it.'
+            : 'Every future date is worked out from this one, so it only has to be right once.'}
         </p>
       </div>
 
@@ -763,20 +834,23 @@ function SubscriptionEditor({
             </p>
           </div>
 
-          <div className="field">
-            <label htmlFor="sub-every">Bill every how many {cycleUnit(draft.cycle)}?</label>
-            <input
-              id="sub-every"
-              type="number"
-              min={1}
-              max={24}
-              value={everyText}
-              onChange={(e) => setEveryText(e.target.value)}
-            />
-            <p className="faint">
-              Only needed for a rhythm the buttons above do not cover, like every 2 months.
-            </p>
-          </div>
+          {/* Twice a month has no interval to count, so the question is not asked. */}
+          {!isFixedDayCycle(draft.cycle) && (
+            <div className="field">
+              <label htmlFor="sub-every">Bill every how many {cycleUnit(draft.cycle)}?</label>
+              <input
+                id="sub-every"
+                type="number"
+                min={1}
+                max={24}
+                value={everyText}
+                onChange={(e) => setEveryText(e.target.value)}
+              />
+              <p className="faint">
+                Only needed for a rhythm the buttons above do not cover, like every 2 months.
+              </p>
+            </div>
+          )}
 
           <div className="field">
             <label htmlFor="sub-notes">Notes</label>

@@ -77,7 +77,19 @@ export interface Note {
   updatedAt: number;
 }
 
-export type BillingCycle = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
+/**
+ * How often a subscription takes money. These come in the same two shapes as
+ * pay schedules, and for the same reason they must not be conflated: every 2
+ * weeks is 26 charges a year on a 14-day interval, twice a month is 24 on set
+ * dates.
+ */
+export type BillingCycle = 'weekly' | 'semimonthly' | 'monthly' | 'quarterly' | 'yearly';
+
+/** Cycles that are a fixed number of days or months apart. */
+export type IntervalCycle = Exclude<BillingCycle, 'semimonthly'>;
+
+/** Cycles pinned to days of the month, where `every` means nothing. */
+export type FixedDayCycle = 'semimonthly';
 
 export interface Subscription {
   id: Id;
@@ -86,10 +98,20 @@ export interface Subscription {
   amountMinor: number;
   currency: string;
   cycle: BillingCycle;
-  /** Every N cycles, e.g. every 2 months. */
+  /** Every N cycles, e.g. every 2 months. Ignored by the fixed-day cycles. */
   every: number;
-  /** First billing date; every future date is derived from this. */
+  /**
+   * First billing date. For the interval cycles every future date is derived
+   * from this one; for a twice-a-month subscription it is only the start, and
+   * `daysOfMonth` says which dates it lands on.
+   */
   firstBilled: DateKey;
+  /**
+   * Which days of the month it charges on, for the fixed-date cycles. Values
+   * are clamped to the month's length, so 31 means "the last day" and lands on
+   * the 28th in February - the same rule income uses.
+   */
+  daysOfMonth?: number[];
   category?: string;
   notes: string;
   /**

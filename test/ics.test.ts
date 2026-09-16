@@ -189,6 +189,37 @@ describe('every-2-weeks subscriptions in the calendar', () => {
 });
 
 
+describe('twice-a-month subscriptions in the calendar', () => {
+  const twice = (days: number[]) =>
+    sub({ cycle: 'semimonthly', every: 1, daysOfMonth: days, firstBilled: '2026-01-01' });
+
+  it('repeats on the dates themselves, not on an interval', () => {
+    // FREQ=MONTHLY;INTERVAL=1 from a single start date would give 12 charges a
+    // year in the phone's calendar where the app says 24.
+    expect(build([], [twice([1, 15])])).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=1,15');
+  });
+
+  it('writes the last day as -1, since a calendar has no clamping', () => {
+    // BYMONTHDAY=31 simply produces nothing in the months without a 31st.
+    const ics = build([], [twice([15, 31])]);
+    expect(ics).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=15,-1');
+    expect(ics).not.toContain('BYMONTHDAY=15,31');
+  });
+
+  it('starts on the next charge rather than on the start date', () => {
+    // Built on 15 September 2026, so the next one of the 1st and the 15th is
+    // that same day.
+    expect(build([], [twice([1, 15])])).toContain('DTSTART;VALUE=DATE:20260915');
+  });
+
+  it('names the dates even when none were recorded', () => {
+    expect(build([], [sub({ cycle: 'semimonthly', every: 1 })])).toContain(
+      'RRULE:FREQ=MONTHLY;BYMONTHDAY=1,15',
+    );
+  });
+});
+
+
 describe('paydays in the calendar', () => {
   const at = Date.UTC(2026, 0, 5, 10, 0, 0);
   const job = (partial: Partial<IncomeSource> = {}): IncomeSource => ({

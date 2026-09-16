@@ -1,6 +1,7 @@
 import type { DateKey, HolidayId, IncomeSource, PayFrequency, WeekendShift } from '../types';
 import { holidaysOf, isHoliday } from './holidays';
-import { addDays, daysBetween, fromDateKey, toDateKey, todayKey } from './time';
+import { describeDays, monthDays, normaliseDays } from './monthdays';
+import { addDays, daysBetween, fromDateKey, todayKey } from './time';
 
 /**
  * When you actually get paid.
@@ -39,34 +40,21 @@ function intervalDays(frequency: PayFrequency): number {
   return frequency === 'weekly' ? 7 : 14;
 }
 
-function lastDayOfMonth(year: number, monthIndex: number): number {
-  return new Date(year, monthIndex + 1, 0).getDate();
-}
-
 /**
- * A day-of-month anchor resolved against a real month.
+ * The month's paydays, in order, for a fixed-date schedule.
  *
- * Clamping is what makes "the last day of the month" need no special case: 31
- * lands on the 28th in February and the 30th in April, the same rule `addMonths`
- * already uses. A sentinel value for "last day" would be one more thing to get
- * wrong.
+ * Unlike a billing schedule, two clamped days landing on the same date are
+ * merged: "the 30th and the 31st" is one February payday, because no employer
+ * runs payroll twice in one day.
  */
-function dayInMonth(year: number, monthIndex: number, day: number): DateKey {
-  const clamped = Math.min(Math.max(1, Math.floor(day)), lastDayOfMonth(year, monthIndex));
-  return toDateKey(new Date(year, monthIndex, clamped));
-}
-
-/** The month's paydays, in order, for a fixed-date schedule. */
 function paydaysInMonth(days: number[], year: number, monthIndex: number): DateKey[] {
-  return [...new Set(days.map((d) => dayInMonth(year, monthIndex, d)))].sort();
+  return [...new Set(monthDays(days, year, monthIndex))];
 }
 
 function anchorDays(source: IncomeSource): number[] {
-  const days = source.daysOfMonth?.filter((d) => Number.isFinite(d)) ?? [];
-  if (days.length > 0) return days;
   // A sensible default rather than nothing: the 15th and the last day is the
   // most common US twice-a-month schedule.
-  return source.frequency === 'semimonthly' ? [15, 31] : [1];
+  return normaliseDays(source.daysOfMonth, source.frequency === 'semimonthly' ? [15, 31] : [1]);
 }
 
 /**
@@ -196,15 +184,7 @@ export const WEEKEND_SHIFT_LABELS: Record<WeekendShift, string> = {
 export function describeFrequency(source: IncomeSource): string {
   const base = FREQUENCY_LABELS[source.frequency].toLowerCase();
   if (isIntervalFrequency(source.frequency)) return base;
-
-  const days = anchorDays(source).slice().sort((a, b) => a - b);
-  const names = days.map((d) => (d >= 29 ? 'the last day' : `the ${ordinal(d)}`));
-  return `${base}, on ${names.join(' and ')}`;
-}
-
-function ordinal(n: number): string {
-  const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
-  return `${n}${suffix}`;
+  return `${base}, on ${describeDays(anchorDays(source))}`;
 }
 
 export function isActiveIncome(source: IncomeSource): boolean {

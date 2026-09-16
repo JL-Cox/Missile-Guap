@@ -247,6 +247,61 @@ await page.screenshot({ path: `${OUT}/fortnightly.png`, fullPage: true });
 await page.click('button:has-text("Done")');
 await page.waitForTimeout(300);
 
+// --- a twice-a-month subscription -----------------------------------------
+// The other half of the same distinction, and the one that is invisible by eye:
+// £15 twice a month is £360 a year, not the £390 the fortnightly one above
+// costs. Two charges a year is exactly what separates them.
+await page.click('button:has-text("Add a subscription")');
+await page.waitForSelector('#sub-name');
+await page.fill('#sub-name', 'Cleaner');
+await page.fill('#sub-amount', '15.00');
+await page.click('form.card button:has-text("Twice a month")');
+await page.waitForSelector('#sub-days');
+check(
+  'twice a month is the highlighted rhythm',
+  await page.getAttribute('form.card button:text-is("Twice a month")', 'aria-pressed'),
+  'true',
+);
+check(
+  'and monthly, the default, is no longer highlighted',
+  await page.getAttribute('form.card button:text-is("Monthly")', 'aria-pressed'),
+  'false',
+);
+check(
+  'picking twice a month asks which days, rather than hiding them',
+  await page.inputValue('#sub-days'),
+  '1, 15',
+);
+// Typed one character at a time: .fill() would pass even against a box that
+// rewrites its own value on every keystroke, which is the bug this guards.
+await page.fill('#sub-days', '');
+await page.locator('#sub-days').pressSequentially('15, 31');
+check('the days box keeps what you type', await page.inputValue('#sub-days'), '15, 31');
+await page.click('button:has-text("More options")');
+check(
+  'and no interval is asked for, because twice a month has none',
+  await page.locator('#sub-every').count(),
+  0,
+);
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(500);
+
+const twiceMonthly = await page.textContent('.main');
+check('the confirmation counts 24 charges a year', twiceMonthly.includes('360.00'), true);
+check(
+  'the card names the actual dates',
+  twiceMonthly.includes('twice a month, on the 15th and the last day'),
+  true,
+);
+await page.screenshot({ path: `${OUT}/twice-a-month.png`, fullPage: true });
+await page.click('button:has-text("Change something")');
+await page.waitForSelector('#sub-days');
+check('reopening shows the days it charges on', await page.inputValue('#sub-days'), '15, 31');
+// Exact text: has-text() matches substrings, and "More options (how to cancel,
+// notes, every N cycles)" contains the word too.
+await page.click('form.card button:text-is("Cancel")');
+await page.waitForTimeout(300);
+
 // A rhythm no button covers must survive a round-trip through the form. If
 // picking presets clobbered `every`, an every-2-months bill would silently
 // become monthly - doubling its yearly cost and changing its charge dates.

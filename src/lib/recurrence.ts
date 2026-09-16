@@ -1,14 +1,40 @@
-import type { BillingCycle, DateKey, Recurrence, Subscription } from '../types';
+import type { BillingCycle, DateKey, FixedDayCycle, IntervalCycle, Recurrence, Subscription } from '../types';
+import { describeDays, monthsBetween, normaliseDays, nthMonthDay } from './monthdays';
 import { addDays, addMonths, daysBetween, fromDateKey, toDateKey, todayKey } from './time';
 
-const CYCLE_MONTHS: Partial<Record<BillingCycle, number>> = {
+const CYCLE_MONTHS: Partial<Record<IntervalCycle, number>> = {
   monthly: 1,
   quarterly: 3,
   yearly: 12,
 };
 
-/** Advance one billing period from `key`. */
-export function advanceCycle(key: DateKey, cycle: BillingCycle, every: number): DateKey {
+/** Where a twice-a-month subscription charges if it has never been told. */
+export const DEFAULT_BILLING_DAYS = [1, 15];
+
+/**
+ * Whether this cycle is a pair of dates rather than an interval.
+ *
+ * Twice a month is 24 charges a year on set days; every 2 weeks is 26 on a
+ * 14-day interval. Anything that steps by a period has to ask this first, or it
+ * will quietly answer one question with the other.
+ */
+export function isFixedDayCycle(cycle: BillingCycle): cycle is FixedDayCycle {
+  return cycle === 'semimonthly';
+}
+
+/** The days of the month a fixed-day subscription charges on. */
+export function billingDays(sub: Pick<Subscription, 'daysOfMonth'>): number[] {
+  return normaliseDays(sub.daysOfMonth, DEFAULT_BILLING_DAYS);
+}
+
+/**
+ * Advance one billing period from `key`.
+ *
+ * Interval cycles only, and the type says so: "one period later" has no answer
+ * for twice a month, which is two dates a month rather than a step of any
+ * length. `occurrence` is the definition that covers every cycle.
+ */
+export function advanceCycle(key: DateKey, cycle: IntervalCycle, every: number): DateKey {
   const step = Math.max(1, Math.floor(every));
   if (cycle === 'weekly') return addDays(key, 7 * step);
   return addMonths(key, (CYCLE_MONTHS[cycle] ?? 1) * step);
@@ -19,8 +45,13 @@ export function advanceCycle(key: DateKey, cycle: BillingCycle, every: number): 
  * stepping one period at a time. That matters for month-end dates: stepping
  * 31 Jan -> 28 Feb -> 28 Mar loses the 31st forever, whereas anchoring gives
  * 28 Feb then 31 Mar, which is what the card actually gets charged on.
+ *
+ * A twice-a-month subscription is anchored the same way, except the dates come
+ * from the days of the month it charges on; `firstBilled` only says when the
+ * run starts.
  */
 export function occurrence(sub: Subscription, n: number): DateKey {
+  if (isFixedDayCycle(sub.cycle)) return nthMonthDay(billingDays(sub), sub.firstBilled, n);
   const every = Math.max(1, Math.floor(sub.every));
   if (sub.cycle === 'weekly') return addDays(sub.firstBilled, n * 7 * every);
   return addMonths(sub.firstBilled, n * (CYCLE_MONTHS[sub.cycle] ?? 1) * every);
@@ -36,20 +67,22 @@ export function billingIndexOnOrAfter(sub: Subscription, from: DateKey): number 
   const every = Math.max(1, Math.floor(sub.every));
 
   let n: number;
-  if (sub.cycle === 'weekly') {
+  if (isFixedDayCycle(sub.cycle)) {
+    // Within a month either way, which the nudges below then settle exactly.
+    n = Math.max(0, monthsBetween(sub.firstBilled, from) * billingDays(sub).length);
+  } else if (sub.cycle === 'weekly') {
     n = Math.floor(daysBetween(sub.firstBilled, from) / (7 * every));
   } else {
     const months = (CYCLE_MONTHS[sub.cycle] ?? 1) * every;
-    const a = fromDateKey(sub.firstBilled);
-    const b = fromDateKey(from);
-    const elapsedMonths = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
-    n = Math.max(0, Math.floor(elapsedMonths / months));
+    n = Math.max(0, Math.floor(monthsBetween(sub.firstBilled, from) / months));
   }
 
+  // A month of a fixed-day schedule can be several charges wide, so the bound
+  // is well clear of any list of days someone could actually type.
   let guard = 0;
-  while (n > 0 && daysBetween(occurrence(sub, n - 1), from) <= 0 && guard++ < 64) n--;
+  while (n > 0 && daysBetween(occurrence(sub, n - 1), from) <= 0 && guard++ < 200) n--;
   guard = 0;
-  while (daysBetween(occurrence(sub, n), from) > 0 && guard++ < 64) n++;
+  while (daysBetween(occurrence(sub, n), from) > 0 && guard++ < 200) n++;
   return n;
 }
 
@@ -119,10 +152,23 @@ export function describeRecurrence(rec: Recurrence): string {
   return n === 1 ? `Every ${unit}` : `Every ${n} ${unit}s`;
 }
 
-export function describeCycle(cycle: BillingCycle, every: number): string {
+/**
+ * How often it charges, in words. A twice-a-month subscription names its actual
+ * dates: "twice a month" alone would leave you counting, and the two dates are
+ * the whole difference between this and every 2 weeks.
+ */
+export function describeCycle(cycle: BillingCycle, every: number, days?: number[]): string {
+  if (isFixedDayCycle(cycle)) {
+    return `twice a month, on ${describeDays(normaliseDays(days, DEFAULT_BILLING_DAYS))}`;
+  }
   const n = Math.max(1, Math.floor(every));
   const unit = { weekly: 'week', monthly: 'month', quarterly: 'quarter', yearly: 'year' }[cycle];
   return n === 1 ? `every ${unit}` : `every ${n} ${unit}s`;
+}
+
+/** The same, read straight off a saved subscription. */
+export function describeBilling(sub: Subscription): string {
+  return describeCycle(sub.cycle, sub.every, sub.daysOfMonth);
 }
 
 /** Utility for tests and seeding: today's key, re-exported so callers need one import. */

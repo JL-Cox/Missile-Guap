@@ -1,6 +1,6 @@
 import type { IncomeSource, Subscription, Task } from '../types';
 import { isIntervalFrequency, nextPayday, paydaysBetween, weekendShiftOf } from './pay';
-import { advanceCycle, nextBilling } from './recurrence';
+import { advanceCycle, billingDays, isFixedDayCycle, nextBilling } from './recurrence';
 import { addDays, atTime, fromDateKey, todayKey } from './time';
 
 /**
@@ -127,13 +127,29 @@ function taskEvent(task: Task, now: number): IcsEvent | null {
   return base;
 }
 
+/**
+ * A list of days of the month as RFC5545 sees them.
+ *
+ * A calendar has no concept of "clamped to the month's length", so the last day
+ * is written as -1 - which is exactly what 29, 30 and 31 mean here. Everything
+ * else is held at 28 or below, because BYMONTHDAY=31 simply produces nothing in
+ * the months that have no 31st, silently dropping charges.
+ */
+function byMonthDay(days: number[]): string {
+  return days.map((d) => (d >= 29 ? '-1' : String(Math.min(28, Math.max(1, Math.floor(d)))))).join(',');
+}
+
 function subscriptionEvent(sub: Subscription, amountLabel: string, now: number): IcsEvent | null {
   const next = nextBilling(sub, todayKey(new Date(now)));
   if (!next) return null;
   const cycleRrule =
     sub.cycle === 'weekly'
       ? `FREQ=WEEKLY;INTERVAL=${sub.every}`
-      : `FREQ=MONTHLY;INTERVAL=${sub.every * (sub.cycle === 'quarterly' ? 3 : sub.cycle === 'yearly' ? 12 : 1)}`;
+      : isFixedDayCycle(sub.cycle)
+        ? // Twice a month is two dates, not an interval, so it is written as the
+          // dates. An every-other-week approximation would drift two charges a year.
+          `FREQ=MONTHLY;BYMONTHDAY=${byMonthDay(billingDays(sub))}`
+        : `FREQ=MONTHLY;INTERVAL=${sub.every * (sub.cycle === 'quarterly' ? 3 : sub.cycle === 'yearly' ? 12 : 1)}`;
   return {
     uid: `sub-${sub.id}@steady.local`,
     summary: `${sub.name} - ${amountLabel}`,
@@ -192,10 +208,7 @@ function paydayEvent(source: IncomeSource, amountLabel: string, now: number): Ic
   if (isIntervalFrequency(source.frequency)) {
     rrule = `FREQ=WEEKLY;INTERVAL=${source.frequency === 'weekly' ? 1 : 2}`;
   } else {
-    const days = (source.daysOfMonth ?? [1])
-      .map((d) => (d >= 29 ? '-1' : String(Math.min(28, Math.max(1, Math.floor(d))))))
-      .join(',');
-    rrule = `FREQ=MONTHLY;BYMONTHDAY=${days}`;
+    rrule = `FREQ=MONTHLY;BYMONTHDAY=${byMonthDay(source.daysOfMonth ?? [1])}`;
   }
 
   return {

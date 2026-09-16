@@ -1,9 +1,11 @@
 import type { BillingCycle, IncomeSource, Subscription } from '../types';
 import { isActiveIncome, PERIODS_PER_YEAR as PAY_PERIODS_PER_YEAR } from './pay';
+import { isFixedDayCycle } from './recurrence';
 
 /** Average number of billing periods in a year, for normalising costs. */
 const PERIODS_PER_YEAR: Record<BillingCycle, number> = {
   weekly: 52,
+  semimonthly: 24,
   monthly: 12,
   quarterly: 4,
   yearly: 1,
@@ -15,10 +17,17 @@ export function isActive(sub: Subscription): boolean {
 
 /**
  * What this subscription costs per year, in minor units.
- * Weekly is 52 weeks rather than 365/7, which is how people actually budget.
+ *
+ * Weekly is 52 weeks rather than 365/7, which is how people actually budget,
+ * and twice a month is 24 rather than 26 - the two-charge gap between that and
+ * every 2 weeks is precisely why they are separate options.
+ *
+ * "Every N" is an interval idea, so the fixed-day cycles ignore it. Dividing by
+ * a stale `every: 2` left behind by a previous choice would halve the cost
+ * while the dates carried on twice a month.
  */
 export function yearlyMinor(sub: Subscription): number {
-  const every = Math.max(1, Math.floor(sub.every));
+  const every = isFixedDayCycle(sub.cycle) ? 1 : Math.max(1, Math.floor(sub.every));
   return Math.round((sub.amountMinor * PERIODS_PER_YEAR[sub.cycle]) / every);
 }
 
