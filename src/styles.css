@@ -1,121 +1,569 @@
 /*
-  Design rules this file encodes, all of them deliberate:
+  ============================================================================
+  THE PRODUCT RULES
+  ============================================================================
+  These are commitments to the person who uses this app, not styling opinions.
+  Sharpen them if you can. Never weaken them.
 
-  1. Nothing shouts. No red "OVERDUE", no streak counters, no guilt mechanics.
-     Colour carries at most a hint; the words carry the meaning.
-  2. Warm off-white / warm dark rather than pure #fff or #000, which glare.
-  3. One column. Same things in the same places, every screen, every time.
-  4. Touch targets are >= 44px and never rely on a gesture you have to know.
-  5. Motion is small by default and removable entirely.
-  6. Everything is labelled in words. No icon-only controls.
+  1. Nothing shouts. No red, no "OVERDUE", no streak counters, no guilt. Colour
+     carries at most a hint; the words carry the meaning. A task whose day has
+     passed is still here, not late.
+  2. Nothing glares. Warm off-white or warm dark, never pure #fff on #000. The
+     one theme that is deliberately maximal is `contrast`, and it is an
+     accessibility tool, not a look.
+  3. One column. The same things in the same places, every screen, every time.
+     An empty screen is a ready screen, not a broken one.
+  4. Touch targets are at least 44px, and nothing is behind a gesture you have
+     to know about. If a control looks smaller than 44px, its *hit area* is not.
+  5. Motion is small, under 200ms, and removable entirely. Nothing ever depends
+     on an animation to be understood.
+  6. Everything is labelled in words. No icon-only controls, ever. A glyph may
+     sit beside a label; it may never replace one.
+
+  ============================================================================
+  HOW THIS FILE IS BUILT
+  ============================================================================
+  The design opinions - as opposed to the commitments above - come down to one
+  idea: this should read like a well-set page, not like an interface.
+
+  * SPACE SEPARATES; LINES ONLY WHERE SPACE CANNOT.
+    Every border is one more thing the eye has to resolve before it reaches the
+    words. Sections are separated by a large step of space, rows inside them by
+    a small one. That single ratio does most of the work here.
+
+  * HIERARCHY COMES FROM SIZE, COLOUR AND SPACE - NOT WEIGHT.
+    Headings are medium weight. Bold is spent only on the two or three numbers
+    that have to anchor a screen. A page whose headings do not shout is a page
+    you can scan while tired, which is the whole point.
+
+  * THE ACCENT MEANS EXACTLY TWO THINGS: where you are, and what you are about
+    to press. Nothing else in the app is allowed colour. This is why a selected
+    filter chip and the Save button do NOT look alike - see the button section.
+
+  * MATERIAL: PAPER UNDER A LAMP. Elevation is a tonal step plus a hairline.
+    There is exactly one shadow in this app, on the toast, because the toast is
+    the only thing that genuinely floats. A drop shadow on an OLED phone at 2am
+    is just noise.
+
+  * EVERY COLOUR HERE IS A LITERAL VALUE. Nothing is computed with color-mix(),
+    so `test/theme.test.ts` can read this file and hold every theme to WCAG AA,
+    and so a person can audit it by eye. That test is the reason you can trust
+    any of these palettes; it checks 34 pairs per theme.
+
+  Adding a theme means adding it here AND to BUILT_IN_THEMES in src/types.ts.
+  The test fails if you do only one.
 */
 
-:root {
-  --bg: #f7f5f0;
-  --surface: #fffdf8;
-  --surface-sunk: #efece4;
-  --border: #ddd8cc;
-  --border-strong: #c3bcab;
-  --text: #2b2823;
-  --text-soft: #5f594e;
-  --text-faint: #857e70;
-  --accent: #4a6b5d;
-  --accent-soft: #e2ebe5;
-  --accent-text: #2f4a3e;
-  --warn-soft: #f4ecd9;
-  --warn-text: #6b5a2e;
-  --done: #7c9885;
+/* ==========================================================================
+   SYSTEM TOKENS + THE DEFAULT (CALM) PALETTE
+   On `html` rather than `:root` on purpose: an element selector is weaker than
+   the `[data-theme]` attribute selectors below, so a theme always wins without
+   depending on the order rules happen to appear in.
+   ========================================================================== */
 
-  --radius: 12px;
-  --gap: 12px;
-  --pad: 16px;
+html {
+  /* ---- type -------------------------------------------------------------
+     A modest 1.125 ratio. Big jumps shout, and six roles is as many as anyone
+     can hold in their head. Everything is in rem so the whole scale moves with
+     the text-size setting; --base-size is the only place px appears. */
+  --fs-micro: 0.8rem;     /* nav labels, tags, counts */
+  --fs-meta: 0.89rem;     /* metadata, field labels, supporting prose */
+  --fs-body: 1rem;        /* body text, item titles, inputs */
+  --fs-lead: 1.125rem;    /* section headings */
+  --fs-head: 1.27rem;     /* the screen title */
+  --fs-display: 1.42rem;  /* the one figure that has to land */
+
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-body: 1.55;
+
+  /* Three real weights. 550 and 650 are not weights Roboto has: depending on
+     whether the phone carries the variable cut they either interpolate or snap
+     to 700, so the app looked different on different Androids for no reason. */
+  --w-normal: 400;
+  --w-medium: 500;
+  --w-strong: 700;
+
+  /* The platform font, chosen rather than defaulted to. A self-hosted face
+     would mean a reflow on open - and this app is opened in ten-second glances,
+     many times a day, where a jump is exactly the wrong thing. Using the
+     phone's own typeface also makes Steady read as part of the device. */
+  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+
   --text-scale: 1;
   --base-size: calc(17px * var(--text-scale));
-  --motion: 140ms;
 
-  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* ---- space ------------------------------------------------------------
+     Two families, both on a 4px grid.
 
+     Structural space is fixed px: it relates to the device - the page gutter,
+     the nav, the safe areas - and should not grow when text does.
+
+     Rhythm space is rem, clamped: it relates to the text, so it grows when the
+     text does, but it is capped because padding that swells to 27px on a 360px
+     screen steals a quarter of every line. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --gutter: var(--space-4);
+  --pad: clamp(13px, 0.82rem, 20px);          /* inside a sheet */
+  /* Repeating elements get tighter padding than singular ones, because their
+     cost multiplies: sixteen pixels inside one panel is generous, and inside
+     twelve stacked rows it is a screenful of nothing. */
+  --pad-tight: clamp(11px, 0.7rem, 17px);
+  --gap: clamp(10px, 0.65rem, 16px);          /* siblings in a stack */
+  /* The 8px floor is not cosmetic: it is the smallest gap that still leaves
+     dead space between two expanded hit areas (see .btn-sm::after). */
+  --gap-sm: clamp(8px, 0.42rem, 10px);        /* tight rows */
+  --gap-section: clamp(20px, 1.4rem, 32px);   /* between sections - the big step */
+  /* Wrapped button rows need more space between LINES than between neighbours,
+     because the hit areas below are taller than the buttons look. */
+  --gap-row: 12px;
+
+  /* ---- radius -----------------------------------------------------------
+     Radius tracks the size of the thing. 12px on a 28px chip reads as a bean. */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* ---- elevation --------------------------------------------------------
+     0 page: --bg, nothing drawn.
+     1 sheet: --surface plus a hairline. The tonal step *is* the elevation.
+     2 floating: only what actually overlays. One shadow, on the toast. */
+  --shadow-float: 0 6px 24px rgba(0, 0, 0, 0.14);
+  --shadow-nav: 0 -1px 12px rgba(0, 0, 0, 0.05);
+
+  /* ---- motion -----------------------------------------------------------
+     Entrances ease out. Nothing runs long enough to wait for. */
+  --motion-fast: 120ms;
+  --motion: 180ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Pressed nudges by a pixel - but pressed also darkens, so turning motion off
+     never costs you the feedback. See the reduce-motion block. */
+  --press-shift: 1px;
+
+  /* ---- the nav's own budget --------------------------------------------
+     Six slots on a 412px phone is 68px each. At 1.6x text a 0.8rem label is
+     21.8px, and "Settings" needs about 85px - it clips.
+
+     So the label is the ONE piece of text in this app that is capped. The nav
+     is six fixed landmarks you find by position; the text-size setting exists
+     for reading, and everything you actually read still scales. In exchange the
+     glyph gives up its space as the text grows: full size to 1.25x, gone by
+     1.35x, so at large sizes the words get the whole slot. */
+  --nav-label: clamp(11px, 0.72rem, 15px);
+  --nav-glyph: clamp(0px, calc((1.35 - var(--text-scale)) * 10rem), 1rem);
+  --nav-gap: clamp(0px, calc((1.35 - var(--text-scale)) * 2rem), 3px);
+
+  /* ---- the default palette (Calm) --------------------------------------- */
+  --bg: #f4f1ea;
+  --surface: #fffdf8;
+  --surface-sunk: #e9e5db;
+  --surface-alt: #eeeae0;
+  --surface-disabled: #eeeae0;
+  --border: #e0dacd;
+  --border-strong: #8d8676;
+  --text: #2b2823;
+  --text-soft: #5c5649;
+  --text-faint: #696251;
+  --text-disabled: #8b8474;
+  --accent: #46685a;
+  --accent-soft: #e2eae4;
+  --accent-text: #2e4a3d;
+  --accent-on: #ffffff;
+  --warn-soft: #f5eeda;
+  --warn-text: #655423;
+  --done: #4a7159;
+  --bar-fill: #6c8377;
+  --prio-critical-bg: #ddd5c2;
+  --prio-critical-text: #453e2c;
+  --prio-high-bg: #eeeae0;
+  --prio-high-text: #554c38;
+  --prio-medium-text: #5c5649;
+  --prio-low-text: #696251;
+
+  color-scheme: light;
+  accent-color: var(--accent);
+}
+
+/*
+  The first paint, before the saved theme is known.
+
+  Settings live in IndexedDB and load asynchronously, so the very first frames
+  happen before we know which theme to use. On a phone set to dark that was a
+  flash of cream at 2am, which is precisely the kind of jolt this app exists to
+  avoid. The usual fix is an inline bootstrap script, and this app's CSP
+  (`script-src 'self'`, no 'unsafe-inline') rightly forbids one - so the OS
+  preference carries those few frames instead, and App.tsx sets data-theme only
+  once the real setting has loaded.
+
+  These values are a copy of the `dark` theme's. test/theme.test.ts asserts they
+  stay identical, so the copy cannot drift.
+*/
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #1b1a18;
+    --surface: #242220;
+    --surface-sunk: #2e2b28;
+    --surface-alt: #322f2b;
+    --border: #3a3733;
+    --border-strong: #807c74;
+    --text: #ece7de;
+    --text-soft: #bdb6aa;
+    --text-faint: #a09889;
+    color-scheme: dark;
+  }
+}
+
+/* ==========================================================================
+   THEMES
+   Each has a job, not a hue. They are also applied to the small preview
+   swatches in Settings, which is why these are plain attribute selectors and
+   not `:root[...]` - a swatch carrying data-theme paints itself in that theme's
+   real colours, with no second copy of any palette anywhere.
+   ========================================================================== */
+
+/* Daylight paper. Warm off-white, sage. The default, and the one for most days. */
+[data-theme='calm'] {
+  --bg: #f4f1ea;
+  --surface: #fffdf8;
+  --surface-sunk: #e9e5db;
+  --surface-alt: #eeeae0;
+  --surface-disabled: #eeeae0;
+  --border: #e0dacd;
+  --border-strong: #8d8676;
+  --text: #2b2823;
+  --text-soft: #5c5649;
+  --text-faint: #696251;
+  --text-disabled: #8b8474;
+  --accent: #46685a;
+  --accent-soft: #e2eae4;
+  --accent-text: #2e4a3d;
+  --accent-on: #ffffff;
+  --warn-soft: #f5eeda;
+  --warn-text: #655423;
+  --done: #4a7159;
+  --bar-fill: #6c8377;
+  --prio-critical-bg: #ddd5c2;
+  --prio-critical-text: #453e2c;
+  --prio-high-bg: #eeeae0;
+  --prio-high-text: #554c38;
+  --prio-medium-text: #5c5649;
+  --prio-low-text: #696251;
   color-scheme: light;
 }
 
+/* Winding down without going dark. Warm and low in blue light, still a light
+   theme, for the hours when a bright screen is too much but black is too far. */
+[data-theme='amber'] {
+  --bg: #f6ecd9;
+  --surface: #fdf6e8;
+  --surface-sunk: #ebdfc7;
+  --surface-alt: #f1e7d2;
+  --surface-disabled: #f1e7d2;
+  --border: #e5d8bc;
+  --border-strong: #8f8160;
+  --text: #33291a;
+  --text-soft: #5f5134;
+  --text-faint: #6f6040;
+  --text-disabled: #8d7e5c;
+  --accent: #7a5a2a;
+  --accent-soft: #f0e5cf;
+  --accent-text: #5c4420;
+  --accent-on: #ffffff;
+  --warn-soft: #f2e2c0;
+  --warn-text: #66511d;
+  --done: #4f6b34;
+  --bar-fill: #887a54;
+  --prio-critical-bg: #e0d0ad;
+  --prio-critical-text: #453820;
+  --prio-high-bg: #f1e7d2;
+  --prio-high-text: #564726;
+  --prio-medium-text: #5f5134;
+  --prio-low-text: #6f6040;
+  color-scheme: light;
+}
+
+/* Flat northern daylight - no warmth at all. For when the cream reads as dingy,
+   or when the phone's own warm-light filter is on and turns Calm orange. */
+[data-theme='overcast'] {
+  --bg: #f0f1f3;
+  --surface: #fbfcfd;
+  --surface-sunk: #e3e5ea;
+  --surface-alt: #e9ebef;
+  --surface-disabled: #e9ebef;
+  --border: #dcdfe4;
+  --border-strong: #80858e;
+  --text: #23262b;
+  --text-soft: #51565e;
+  --text-faint: #5e636c;
+  --text-disabled: #7d828c;
+  --accent: #3f5a72;
+  --accent-soft: #e1e7ed;
+  --accent-text: #2b4256;
+  --accent-on: #ffffff;
+  --warn-soft: #eee7d6;
+  --warn-text: #5c5029;
+  --done: #3d6b52;
+  --bar-fill: #717f91;
+  --prio-critical-bg: #d3d7de;
+  --prio-critical-text: #33373e;
+  --prio-high-bg: #e9ebef;
+  --prio-high-text: #454a53;
+  --prio-medium-text: #51565e;
+  --prio-low-text: #5e636c;
+  color-scheme: light;
+}
+
+/* A lamp at night. Warm dark, not black - the evening theme. */
 [data-theme='dark'] {
   --bg: #1b1a18;
   --surface: #242220;
   --surface-sunk: #2e2b28;
+  --surface-alt: #322f2b;
+  --surface-disabled: #2a2825;
   --border: #3a3733;
-  --border-strong: #514c45;
+  --border-strong: #807c74;
   --text: #ece7de;
-  --text-soft: #b8b1a5;
-  --text-faint: #8d867a;
+  --text-soft: #bdb6aa;
+  --text-faint: #a09889;
+  --text-disabled: #7c776d;
   --accent: #8fb3a1;
   --accent-soft: #2c3a33;
-  --accent-text: #b6d4c3;
+  --accent-text: #b0d0be;
+  --accent-on: #16201a;
   --warn-soft: #3a3320;
-  --warn-text: #d8c48a;
-  --done: #7c9885;
+  --warn-text: #dcc68d;
+  --done: #7fa98d;
+  --bar-fill: #6e8578;
+  --prio-critical-bg: #453f37;
+  --prio-critical-text: #ece2cf;
+  --prio-high-bg: #322f2b;
+  --prio-high-text: #d6cbb9;
+  --prio-medium-text: #bdb6aa;
+  --prio-low-text: #a09889;
   color-scheme: dark;
 }
 
-/* Maximum legibility for days when the calm palette isn't enough. */
+/* The 3am theme. Near-black so an OLED panel emits almost nothing, and text
+   held well below white on purpose: white on black haloes and smears for a lot
+   of people, so this tops out around #c9c7c2. Still comfortably past AA. */
+[data-theme='midnight'] {
+  --bg: #07080a;
+  --surface: #101216;
+  --surface-sunk: #171a1f;
+  --surface-alt: #1b1e24;
+  --surface-disabled: #15181d;
+  --border: #23272e;
+  --border-strong: #686d76;
+  --text: #c9c7c2;
+  --text-soft: #a0a0a7;
+  --text-faint: #8a8a92;
+  --text-disabled: #6a6a73;
+  --accent: #8aa8c4;
+  --accent-soft: #1e2a36;
+  --accent-text: #aac4dc;
+  --accent-on: #0c151d;
+  --warn-soft: #2a2418;
+  --warn-text: #c9b587;
+  --done: #6f9a80;
+  --bar-fill: #5d7288;
+  --prio-critical-bg: #2d323b;
+  --prio-critical-text: #d2d5da;
+  --prio-high-bg: #1b1e24;
+  --prio-high-text: #b4b7bd;
+  --prio-medium-text: #a0a0a7;
+  --prio-low-text: #8a8a92;
+  color-scheme: dark;
+}
+
+/* Maximum legibility, for days when the calm palettes are not enough.
+   This one is an accessibility tool and not a style: do not soften it, do not
+   round it off, do not take its borders away. */
 [data-theme='contrast'] {
   --bg: #ffffff;
   --surface: #ffffff;
   --surface-sunk: #f0f0f0;
+  --surface-alt: #eaeaea;
+  --surface-disabled: #eaeaea;
   --border: #000000;
   --border-strong: #000000;
   --text: #000000;
-  --text-soft: #1a1a1a;
-  --text-faint: #333333;
+  --text-soft: #141414;
+  --text-faint: #262626;
+  --text-disabled: #595959;
   --accent: #00407a;
-  --accent-soft: #dceaf7;
+  --accent-soft: #dbe9f7;
   --accent-text: #00305c;
+  --accent-on: #ffffff;
   --warn-soft: #fff4cc;
-  --warn-text: #4a3800;
-  --done: #005c2e;
+  --warn-text: #443300;
+  --done: #00542a;
+  --bar-fill: #00407a;
+  --prio-critical-bg: #000000;
+  --prio-critical-text: #ffffff;
+  --prio-high-bg: #eaeaea;
+  --prio-high-text: #000000;
+  --prio-medium-text: #000000;
+  --prio-low-text: #262626;
   color-scheme: light;
+
+  /* It also gives up the soft-material tricks: no shadow, and no hairline
+     versus strong distinction, because here every edge is the strong one. */
+  --shadow-float: 0 0 0 2px #000000;
+  --shadow-nav: none;
 }
 
 [data-theme='contrast'] .card,
+[data-theme='contrast'] .item,
 [data-theme='contrast'] .btn,
+[data-theme='contrast'] .capture,
+[data-theme='contrast'] .notice,
+[data-theme='contrast'] .swatch,
 [data-theme='contrast'] input,
 [data-theme='contrast'] textarea,
 [data-theme='contrast'] select {
   border-width: 2px;
+  border-style: solid;
 }
 
-[data-reduce-motion='true'] * {
+/* The empty state is a margin note everywhere else; here it needs a real edge. */
+[data-theme='contrast'] .empty {
+  border-left-width: 5px;
+  border-left-color: var(--accent);
+}
+
+[data-theme='contrast'] h1,
+[data-theme='contrast'] h2,
+[data-theme='contrast'] h3 {
+  font-weight: var(--w-strong);
+}
+
+/* ==========================================================================
+   MOTION
+   Two switches, because they mean different things: the OS-level preference,
+   and this app's own setting for someone whose phone is not set that way.
+   ========================================================================== */
+
+[data-reduce-motion='true'] {
+  --press-shift: 0px;
+}
+
+[data-reduce-motion='true'] *,
+[data-reduce-motion='true'] *::before,
+[data-reduce-motion='true'] *::after {
   animation-duration: 0s !important;
+  animation-delay: 0s !important;
   transition-duration: 0s !important;
 }
 
-* { box-sizing: border-box; }
+@media (prefers-reduced-motion: reduce) {
+  html {
+    --press-shift: 0px;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition-duration: 0s !important;
+  }
+}
 
-html, body {
+/* ==========================================================================
+   BASE
+   ========================================================================== */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
   margin: 0;
   padding: 0;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: var(--base-size);
-  line-height: 1.55;
+  font-weight: var(--w-normal);
+  line-height: var(--lh-body);
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
 }
 
-body { overflow-wrap: break-word; }
+body {
+  overflow-wrap: break-word;
+}
 
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/*
+  A two-tone focus ring: the accent outline, and a gap in the page colour so it
+  stays visible on an accent-filled button as well as on plain paper. No
+  border-radius override here - the old one squared off every pill it touched;
+  outlines follow the element's own radius.
+*/
 :focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  box-shadow: 0 0 0 2px var(--bg);
 }
 
-h1, h2, h3 { line-height: 1.25; margin: 0; font-weight: 650; }
-h1 { font-size: 1.45rem; }
-h2 { font-size: 1.15rem; }
-h3 { font-size: 1rem; }
-p { margin: 0; }
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: var(--lh-tight);
+  font-weight: var(--w-medium);
+  letter-spacing: -0.011em;
+  text-wrap: balance;
+}
 
-/* ---------- layout ---------- */
+h1 {
+  font-size: var(--fs-head);
+}
+
+h2 {
+  font-size: var(--fs-lead);
+}
+
+h3 {
+  font-size: var(--fs-body);
+  color: var(--text-soft);
+}
+
+p {
+  margin: 0;
+}
+
+strong,
+b {
+  font-weight: var(--w-strong);
+}
+
+code {
+  font-family: ui-monospace, 'Roboto Mono', monospace;
+  font-size: 0.92em;
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+
+/* ==========================================================================
+   LAYOUT
+   ========================================================================== */
 
 .app {
   min-height: 100dvh;
@@ -129,33 +577,137 @@ p { margin: 0; }
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
-  padding: var(--pad);
-  /* Room for the fixed bottom nav plus the phone's own gesture bar. */
-  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  padding: var(--space-5) var(--gutter) 0;
+  /* Left and right insets matter in landscape, where the notch eats the gutter. */
+  padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
+  /* Room for the fixed nav plus the phone's own gesture bar. */
+  padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  /* The big rhythm step. This one value does most of the separating in the app,
+     which is why so few things below need a border. */
+  gap: var(--gap-section);
 }
 
-.stack { display: flex; flex-direction: column; gap: var(--gap); }
-.stack-sm { display: flex; flex-direction: column; gap: 8px; }
-.row { display: flex; align-items: center; gap: var(--gap); flex-wrap: wrap; }
-.row-tight { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); flex-wrap: wrap; }
-.grow { flex: 1; min-width: 0; }
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  column-gap: var(--gap);
+  row-gap: var(--gap-row);
+  flex-wrap: wrap;
+}
+
+.row-tight {
+  display: flex;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: var(--gap-row);
+  flex-wrap: wrap;
+}
+
+.spread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: var(--gap);
+  row-gap: var(--gap-row);
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
 
 .section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--gap);
+  column-gap: var(--gap);
+  row-gap: var(--gap-row);
+  flex-wrap: wrap;
 }
 
-.muted { color: var(--text-soft); }
-.faint { color: var(--text-faint); font-size: 0.85rem; }
-.small { font-size: 0.88rem; }
+/* ==========================================================================
+   TEXT ROLES
+   ========================================================================== */
 
-/* ---------- cards ---------- */
+.muted {
+  color: var(--text-soft);
+}
+
+.faint {
+  color: var(--text-faint);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+
+.small {
+  font-size: var(--fs-meta);
+}
+
+/* Prose has a measure. On a phone this changes nothing; on anything wider it is
+   the difference between reading and scanning back for the start of the line. */
+.small,
+.faint,
+.note-body {
+  max-width: 68ch;
+}
+
+.note-body {
+  white-space: pre-wrap;
+  color: var(--text-soft);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-body);
+}
+
+.amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--w-strong);
+  letter-spacing: -0.01em;
+}
+
+/* Blurred until tapped, for days when seeing the number is too much. It stays a
+   real button, so it keeps a hit area and a focus ring. */
+.blurred {
+  filter: blur(7px);
+  cursor: pointer;
+  user-select: none;
+  transition: filter var(--motion) var(--ease-out);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ==========================================================================
+   SHEETS
+   Level 1 elevation: a tonal step from the page, plus a hairline. --border is
+   deliberately faint - about 1.2:1 against its own surface. It gives an edge
+   definition without drawing a box. --border-strong, which is held to 3:1, is
+   for things you can actually press.
+   ========================================================================== */
 
 .card {
   background: var(--surface);
@@ -164,98 +716,332 @@ p { margin: 0; }
   padding: var(--pad);
 }
 
-.card-tight { padding: 12px; }
-
-.card-quiet {
-  background: transparent;
-  border-style: dashed;
+.card-tight {
+  padding: var(--pad-tight);
 }
 
-/* ---------- buttons ---------- */
+/* A container that holds nothing of its own - a note about the thing beside it. */
+.card-quiet {
+  background: transparent;
+  border-style: solid;
+  border-color: var(--border);
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: none;
+  margin: var(--space-1) 0;
+}
+
+/* ==========================================================================
+   BUTTONS
+
+   Three roles, and the difference between the first two is the single most
+   important thing in this file:
+
+     .btn-primary               THE ACTION. Solid accent. One per screen, ideally.
+     .btn-primary[aria-pressed] A SELECTION. Tinted, outlined, accent text.
+     .btn                       everything else
+     .btn-quiet                 an action that should not draw the eye at all
+
+   Before this, a selected filter chip and the Save button were the same style,
+   which spent the loudest treatment in the system on a chip and left nothing
+   louder for the actual action.
+   ========================================================================== */
 
 .btn {
+  position: relative;
   min-height: 44px;
-  padding: 10px 16px;
+  padding: 10px var(--space-4);
   font: inherit;
-  font-weight: 550;
+  font-size: var(--fs-body);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-snug);
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: background var(--motion) ease, transform var(--motion) ease;
   text-align: center;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
-.btn:hover { background: var(--surface-sunk); }
-.btn:active { transform: translateY(1px); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/*
+  Hover is pointer-only. On Android :hover sticks after a tap, so every button
+  you touched stayed looking pressed until you touched another one.
+*/
+@media (hover: hover) {
+  .btn:hover {
+    background: var(--surface-alt);
+    border-color: var(--text-faint);
+  }
+}
+
+.btn:active {
+  background: var(--surface-sunk);
+  transform: translateY(var(--press-shift));
+}
+
+/* Disabled is a real colour pair, not opacity. opacity: .5 put the capture
+   bar's own Save button at about 2:1 - unreadable, and it is the disabled
+   control in this app that people see most. */
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  color: var(--text-disabled);
+  background: var(--surface-disabled);
+  border-color: var(--border);
+  cursor: not-allowed;
+  transform: none;
+}
 
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-on);
 }
-.btn-primary:hover { background: var(--accent-text); }
-[data-theme='dark'] .btn-primary { color: #17201b; }
 
+@media (hover: hover) {
+  .btn-primary:hover {
+    background: var(--accent-text);
+    border-color: var(--accent-text);
+    color: var(--accent-on);
+  }
+}
+
+.btn-primary:active {
+  background: var(--accent-text);
+}
+
+.btn-primary:disabled,
+.btn-primary[aria-disabled='true'] {
+  color: var(--text-disabled);
+  background: var(--surface-disabled);
+  border-color: var(--border);
+}
+
+/*
+  A primary button that is also a toggle is a SELECTION, not an action. Pressed
+  state is carried by fill, border and weight together - never by colour alone,
+  and the aria-pressed attribute says it out loud for anyone not looking.
+*/
+.btn-primary[aria-pressed='true'],
+.btn-primary[aria-current] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: var(--w-strong);
+}
+
+@media (hover: hover) {
+  .btn-primary[aria-pressed='true']:hover,
+  .btn-primary[aria-current]:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent-text);
+    color: var(--accent-text);
+  }
+}
+
+.btn-primary[aria-pressed='true']:active,
+.btn-primary[aria-current]:active {
+  background: var(--accent-soft);
+}
+
+/*
+  Quiet, but still visibly a button.
+
+  This used to have a transparent border, which made "Move to today", "Edit" and
+  the header's own Settings button read as plain text. Product rule 2 says that
+  if an action exists it is a labelled button you can SEE - a control you have to
+  guess at is the same problem as a hidden gesture, just less obvious. So it
+  keeps the faint hairline: enough to be a button, not enough to compete.
+*/
 .btn-quiet {
-  border-color: transparent;
+  border-color: var(--border);
   background: transparent;
   color: var(--text-soft);
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   min-height: 40px;
 }
-.btn-quiet:hover { background: var(--surface-sunk); }
 
-.btn-sm { min-height: 38px; padding: 6px 12px; font-size: 0.9rem; }
+@media (hover: hover) {
+  .btn-quiet:hover {
+    background: var(--surface-alt);
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+}
 
-.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-quiet:disabled {
+  background: transparent;
+  border-color: var(--border);
+}
 
-/* ---------- inputs ---------- */
+.btn-sm {
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-meta);
+}
+
+/*
+  Rule 4 says 44px. A row of seven duration chips at 44px each is a wall, so the
+  small buttons stay 40px to look at and grow their HIT AREA instead: 3px top and
+  bottom, which is 46px to a finger.
+
+  Two neighbours must never both claim the same pixel. The expansion is vertical
+  only - side-by-side chips are 8px apart and there is nothing to borrow - and it
+  takes 6px of any vertical gap, against a smallest gap in the system of 8px
+  (--gap-sm) and 12px between wrapped button rows (--gap-row). So there is always
+  at least 2px of dead space between adjacent targets, and a tap that lands
+  between two chips does nothing at all.
+
+  That is the right failure. For someone who needs to trust what they just
+  pressed, the wrong action is far worse than a missed one.
+*/
+.btn-sm::after,
+.btn-quiet::after {
+  content: '';
+  position: absolute;
+  inset: -3px 0;
+}
+
+.btn-row {
+  display: flex;
+  column-gap: var(--space-2);
+  row-gap: var(--gap-row);
+  flex-wrap: wrap;
+}
+
+/* A primary action that should never have to be hunted for. */
+.btn-wide {
+  width: 100%;
+}
+
+/* ==========================================================================
+   INPUTS
+   A control you type into is recessed; a control you press stands on the page.
+   That is the only reliable way to tell them apart at a glance, since both are
+   rounded rectangles with a border.
+   ========================================================================== */
 
 input[type='text'],
 input[type='number'],
 input[type='date'],
 input[type='time'],
 input[type='search'],
+input[type='file'],
 textarea,
 select {
   width: 100%;
   min-height: 44px;
-  padding: 10px 12px;
+  padding: 10px var(--space-3);
   font: inherit;
+  font-size: var(--fs-body);
   color: var(--text);
-  background: var(--surface);
+  background: var(--surface-alt);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
 }
 
-textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
+input[type='text']:focus,
+input[type='number']:focus,
+input[type='date']:focus,
+input[type='time']:focus,
+input[type='search']:focus,
+textarea:focus,
+select:focus {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  color: var(--text-disabled);
+  background: var(--surface-disabled);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+::placeholder {
+  color: var(--text-faint);
+  opacity: 1; /* Firefox dims it again otherwise, well past readable. */
+}
+
+textarea {
+  min-height: 88px;
+  resize: vertical;
+  line-height: var(--lh-body);
+}
+
+input[type='file'] {
+  padding: var(--space-2);
+  line-height: var(--lh-snug);
+}
+
+/*
+  The select keeps the platform's own arrow deliberately.
+
+  Drawing our own would mean a colour baked into a data: URI, and a baked colour
+  cannot follow six themes plus forty custom ones without a second copy of every
+  palette - exactly the drift this file is built to avoid. The native arrow
+  already tracks `color-scheme`, which each theme sets, and it is the control the
+  person's whole phone already uses. Same argument as the typeface.
+*/
+select {
+  padding-right: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+}
 
 label {
   display: block;
-  font-size: 0.9rem;
-  font-weight: 550;
+  font-size: var(--fs-meta);
+  font-weight: var(--w-medium);
   color: var(--text-soft);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
+  line-height: var(--lh-snug);
 }
 
-.field { display: flex; flex-direction: column; }
-.field-row { display: flex; gap: var(--gap); flex-wrap: wrap; }
-.field-row > .field { flex: 1 1 140px; }
+.field-row {
+  display: flex;
+  column-gap: var(--gap);
+  row-gap: var(--gap);
+  flex-wrap: wrap;
+}
+
+.field-row > .field {
+  flex: 1 1 140px;
+}
+
+/* A field's own helper text sits closer to it than the next field does. */
+.field > .faint,
+.field > .btn-row,
+.field > .stack-sm {
+  margin-top: var(--space-2);
+}
 
 .check {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-3);
   min-height: 44px;
-  padding: 6px 0;
+  padding: var(--space-1) 0;
   cursor: pointer;
-  font-weight: 450;
+  font-weight: var(--w-normal);
+  font-size: var(--fs-body);
   color: var(--text);
   margin: 0;
-  font-size: 1rem;
+  line-height: var(--lh-body);
 }
 
 .check input[type='checkbox'] {
@@ -264,91 +1050,293 @@ label {
   margin: 3px 0 0;
   flex: none;
   accent-color: var(--accent);
+  cursor: pointer;
 }
 
-/* ---------- capture bar ---------- */
+/*
+  Range inputs were completely unstyled, and two of them - text size and the
+  lookahead window - are among the most-used controls in the app. The track is
+  recessed, the thumb is a real 28px target with a strong edge, and the whole
+  control keeps a 44px row so it can be dragged with a thumb.
+*/
+input[type='range'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 44px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+input[type='range']::-moz-range-track {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+}
+
+@media (hover: hover) {
+  input[type='range']:hover::-webkit-slider-thumb {
+    transform: scale(1.06);
+  }
+}
+
+input[type='range']:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+input[type='range']:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   THE CAPTURE BAR
+   The most important control in the app, and the front door to it. Tinted so it
+   reads as its own surface rather than another card, with white paper inside to
+   say "write here".
+   ========================================================================== */
 
 .capture {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
   background: var(--accent-soft);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px;
+  border-radius: var(--radius-lg);
+  padding: var(--pad);
+}
+
+.capture label {
+  color: var(--accent-text);
+  font-weight: var(--w-strong);
+  margin-bottom: 0;
 }
 
 .capture textarea {
   background: var(--surface);
+  border-color: var(--border-strong);
   min-height: 56px;
 }
 
-/* ---------- list items ---------- */
+.capture textarea:focus {
+  border-color: var(--accent);
+}
+
+.capture .faint {
+  color: var(--accent-text);
+}
+
+/* ==========================================================================
+   LIST ROWS
+   ========================================================================== */
 
 .item {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: flex-start;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 12px;
+  padding: var(--pad-tight);
 }
 
-.item-done .item-title { color: var(--text-faint); text-decoration: line-through; }
+.item-title {
+  font-weight: var(--w-medium);
+  line-height: var(--lh-snug);
+}
 
-.item-title { font-weight: 550; }
+/*
+  A finished task. --done is the one colour in the app that is not the accent:
+  the accent means "where you are" and "what to press", and a completed tick is
+  neither. Colour is never the only signal here - the box is checked and the
+  text is struck through as well.
+*/
+.item-done .item-title {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.item-check {
+  width: 26px;
+  height: 26px;
+  margin-top: 2px;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/*
+  A ticked box is settled, not an action, so it takes --done rather than the
+  accent. That is also what keeps the accent meaning only two things.
+*/
+.item-done .item-check,
+.check input[type='checkbox']:checked {
+  accent-color: var(--done);
+}
 
 .time-chip {
   flex: none;
   min-width: 62px;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: var(--w-strong);
   color: var(--accent-text);
 }
 
+/* ==========================================================================
+   TAGS, PILLS, BADGES, NOTICES
+   ========================================================================== */
+
 .tag {
   display: inline-block;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: var(--surface-sunk);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-alt);
   border: 1px solid var(--border);
-  font-size: 0.8rem;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
   color: var(--text-soft);
 }
 
 .pill {
   display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
+  padding: 3px var(--space-3);
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-size: 0.8rem;
-  font-weight: 550;
+  font-size: var(--fs-micro);
+  font-weight: var(--w-medium);
+  line-height: 1.6;
 }
 
-.pill-warn { background: var(--warn-soft); color: var(--warn-text); }
-
-.amount { font-variant-numeric: tabular-nums; font-weight: 600; }
-
-.blurred {
-  filter: blur(7px);
-  cursor: pointer;
-  user-select: none;
+.pill-warn {
+  background: var(--warn-soft);
+  color: var(--warn-text);
 }
 
-/* ---------- empty states ---------- */
-/* Empty is a valid state, not a failure. These never say "you have nothing". */
+/*
+  Something that needs saying, which is still not an alarm. There is no red in
+  this app and there is not going to be: an error here is "that did not work",
+  not "you did something wrong".
+*/
+.notice {
+  border: 1px solid var(--warn-text);
+  border-left-width: 3px;
+  background: var(--warn-soft);
+  color: var(--warn-text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--pad);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-body);
+}
+
+/*
+  PRIORITY, for the Backlog screen.
+
+  Critical and High are told apart by FILL versus OUTLINE, not by hue, so they
+  survive greyscale, colour blindness and a sunlit screen. Medium and Low get no
+  chrome at all - they are quiet text, because most things are medium and a list
+  where every row wears a badge has no hierarchy left.
+
+  The badge always carries the word. Rule 6, and rule 1: "Critical" earns its
+  presence from a solid ground, never from red.
+*/
+.badge {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-strong);
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+
+.badge-critical {
+  background: var(--prio-critical-bg);
+  color: var(--prio-critical-text);
+  border-color: var(--prio-critical-bg);
+}
+
+.badge-high {
+  background: transparent;
+  color: var(--prio-high-text);
+  border-color: var(--prio-high-text);
+}
+
+.prio-text {
+  font-size: var(--fs-meta);
+  color: var(--prio-medium-text);
+}
+
+.prio-text-low {
+  color: var(--prio-low-text);
+}
+
+/* ==========================================================================
+   EMPTY STATES
+   Empty is a valid state, not a failure, and these never say "you have nothing".
+
+   The dashed box is gone: a dashed border reads as missing, or as a drop target,
+   which is the opposite of what an empty screen here means. An empty section is
+   a margin note instead - a rule in the accent, set in from the edge, at normal
+   reading size rather than faint. It says "this space is ready", which is what
+   rule 3 actually asks for.
+   ========================================================================== */
 
 .empty {
-  padding: 20px var(--pad);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
+  /* --border-strong, not --accent-soft: the rule is a structural mark rather
+     than an action, and it is the only token guaranteed to clear 3:1 against
+     the page in all forty-six palettes. An accent tint would be prettier in
+     Calm and invisible in two of the custom ones. */
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  padding: var(--space-1) 0 var(--space-1) var(--pad);
   color: var(--text-soft);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   text-align: left;
+  max-width: 62ch;
 }
 
-/* ---------- nav ---------- */
+/* ==========================================================================
+   THE NAV
+   Six slots have to survive 1.6x text. See --nav-label above for the one place
+   in this app where a user setting is deliberately capped, and why.
+   ========================================================================== */
 
 .nav {
   position: fixed;
@@ -359,43 +1347,83 @@ label {
   display: flex;
   background: var(--surface);
   border-top: 1px solid var(--border);
+  box-shadow: var(--shadow-nav);
   padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 .nav-btn {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 60px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 6px 2px;
+  gap: var(--nav-gap);
+  padding: var(--space-2) 2px;
   border: none;
+  border-top: 3px solid transparent;
   background: transparent;
   color: var(--text-soft);
   font: inherit;
-  font-size: 0.75rem;
-  font-weight: 550;
+  font-size: var(--nav-label);
+  font-weight: var(--w-medium);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  text-align: center;
   cursor: pointer;
-  border-top: 3px solid transparent;
+  /* Wrap rather than clip, as a last resort if a font runs wide. */
+  overflow-wrap: anywhere;
+  transition: color var(--motion-fast) var(--ease-out);
 }
 
+@media (hover: hover) {
+  .nav-btn:hover {
+    color: var(--text);
+    background: var(--surface-alt);
+  }
+}
+
+/*
+  Where you are. Three signals at once - the rule on top, the tint, and the
+  weight - because this is the single most important piece of orientation in the
+  app and it must not depend on colour alone.
+*/
 .nav-btn[aria-current='page'] {
   color: var(--accent-text);
   border-top-color: var(--accent);
   background: var(--accent-soft);
+  font-weight: var(--w-strong);
 }
 
-.nav-glyph { font-size: 1.1rem; line-height: 1; }
+.nav-glyph {
+  font-size: var(--nav-glyph);
+  line-height: 1;
+}
 
 .nav-count {
-  font-size: 0.7rem;
-  font-weight: 700;
+  /* Capped with the label, and for the same reason: it lives in the nav's fixed
+     six-slot budget. At 1.6x an uncapped 0.8rem badge became a 22px disc that
+     pushed the Inbox label out of line with its neighbours. */
+  font-size: clamp(10px, 0.62rem, 13px);
+  font-weight: var(--w-strong);
+  font-variant-numeric: tabular-nums;
   color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: var(--radius-pill);
+  padding: 0 6px;
+  line-height: 1.5;
 }
 
-/* ---------- header ---------- */
+.nav-btn[aria-current='page'] .nav-count {
+  background: var(--surface);
+}
+
+/* ==========================================================================
+   THE HEADER
+   ========================================================================== */
 
 .header {
   position: sticky;
@@ -403,7 +1431,9 @@ label {
   z-index: 10;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  padding: 12px var(--pad);
+  padding: var(--space-3) var(--gutter);
+  padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
 }
 
 .header-inner {
@@ -412,67 +1442,156 @@ label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--gap);
+  column-gap: var(--gap);
+  row-gap: var(--space-1);
+  flex-wrap: wrap;
 }
 
-/* ---------- toast ---------- */
+.header h1 {
+  font-weight: var(--w-strong);
+}
 
-.toast .btn { flex: none; }
+/* ==========================================================================
+   THE TOAST
+   The one thing in this app that genuinely floats, and so the one thing with a
+   shadow. It rises 6px on entry; if motion is off it simply appears, and it was
+   always readable either way.
+   ========================================================================== */
 
 .toast {
   position: fixed;
-  left: 16px;
-  right: 16px;
-  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
   max-width: 560px;
   margin: 0 auto;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
-  animation: rise var(--motion) ease-out;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--pad);
+  box-shadow: var(--shadow-float);
+  animation: rise var(--motion) var(--ease-out);
+}
+
+.toast .btn {
+  flex: none;
 }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-/* ---------- misc ---------- */
+/* ==========================================================================
+   BARS
+   A breakdown of where money goes is information, not an action, so it does not
+   get the accent. --bar-fill is a quieter relative of it, held to 3:1 against
+   the track so the shortest bar is still visible.
+   ========================================================================== */
 
-.divider { height: 1px; background: var(--border); border: none; margin: 4px 0; }
-
-.note-body {
-  white-space: pre-wrap;
-  color: var(--text-soft);
-  font-size: 0.95rem;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
+.bar-track {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
   overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 .bar {
-  height: 10px;
-  border-radius: 999px;
-  background: var(--accent);
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--bar-fill);
   min-width: 3px;
 }
 
-.bar-track {
-  height: 10px;
-  border-radius: 999px;
-  background: var(--surface-sunk);
+/* ==========================================================================
+   THE THEME PICKER
+   Each swatch carries its own data-theme, so it paints itself in that theme's
+   real tokens. There is no second copy of any palette anywhere - change a theme
+   above and every preview follows.
+   ========================================================================== */
+
+.theme-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: left;
+}
+
+/* A slice of the theme: its page, its paper, its one colour. Decorative only -
+   the name is right beside it, per rule 6. */
+.swatch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 34px;
+  height: 22px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
   overflow: hidden;
 }
 
-/* A primary action that should never have to be hunted for. */
-.btn-wide { width: 100%; }
+.swatch::before {
+  content: '';
+  flex: 1;
+  align-self: stretch;
+  margin-right: 3px;
+  border-radius: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.swatch::after {
+  content: '';
+  flex: none;
+  width: 8px;
+  align-self: stretch;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* In the colour picker the accent is the subject rather than a detail, so the
+   proportions flip: an 8px stripe is not enough to tell Plum from Clay. */
+.swatch-accent::before {
+  flex: none;
+  width: 7px;
+}
+
+.swatch-accent::after {
+  flex: 1;
+  width: auto;
+}
+
+/* ==========================================================================
+   PRINT
+   Someone will want a paper copy of a note or a cancellation procedure. The app
+   furniture is not part of that.
+   ========================================================================== */
+
+@media print {
+  .nav,
+  .toast,
+  .capture,
+  .header button {
+    display: none !important;
+  }
+
+  .main {
+    padding-bottom: 0;
+  }
+
+  .card,
+  .item {
+    break-inside: avoid;
+  }
+}

@@ -510,12 +510,45 @@ await page.screenshot({ path: `${OUT}/today.png`, fullPage: true });
 // --- appearance settings really apply ------------------------------------
 await page.click('.header button:has-text("Settings")');
 await page.waitForTimeout(300);
-await page.click('button:has-text("Dark")');
+// :text-is(), not :has-text(). has-text() is a case-insensitive SUBSTRING match,
+// so "Dark" would also pick up a "Warm dark" swatch in the custom-theme editor,
+// and Playwright would not complain - it would just click the wrong control and
+// leave the next step to time out mysteriously. Exact text, every time.
+await page.click('button:text-is("Dark")');
 await page.waitForTimeout(300);
 check('the dark theme applies', await page.getAttribute('html', 'data-theme'), 'dark');
 await page.screenshot({ path: `${OUT}/settings-dark.png`, fullPage: true });
-await page.click('button:has-text("Calm")');
+
+// Every theme in the picker must actually apply, not just the two below.
+for (const [label, expected] of [
+  ['Midnight', 'midnight'],
+  ['Amber', 'amber'],
+  ['Custom', 'custom'],
+]) {
+  await page.click(`button:text-is("${label}")`);
+  await page.waitForTimeout(200);
+  check(`the ${expected} theme applies`, await page.getAttribute('html', 'data-theme'), expected);
+}
+
+// The custom theme is assembled in JavaScript rather than by a CSS block, so
+// check it really did put tokens on the element, and that they survive a change.
+check(
+  'a custom theme writes its own tokens',
+  await page.evaluate(() => document.documentElement.style.getPropertyValue('--bg').trim().length > 0),
+  true,
+);
+await page.click('button:text-is("True black")');
 await page.waitForTimeout(200);
+check(
+  'and changing the paper changes them',
+  await page.evaluate(() => document.documentElement.style.getPropertyValue('--bg').trim()),
+  '#07080a',
+);
+await page.screenshot({ path: `${OUT}/settings-custom.png`, fullPage: true });
+
+await page.click('button:text-is("Calm")');
+await page.waitForTimeout(200);
+check('and switching back to a CSS theme clears them', await page.evaluate(() => document.documentElement.style.getPropertyValue('--bg')), '');
 
 // --- the privacy claim ---------------------------------------------------
 // The whole promise is that this page cannot send your data anywhere. Prove it

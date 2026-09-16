@@ -201,11 +201,46 @@ export interface IncomeSource {
   updatedAt: number;
 }
 
-export type ThemeName = 'calm' | 'dark' | 'contrast';
+/**
+ * The themes that ship as token blocks in `src/styles.css`.
+ *
+ * This list is the contract: `test/theme.test.ts` reads the stylesheet and fails
+ * if a name here has no block, or a block exists that is not named here. Adding a
+ * theme means adding it in both places, on purpose.
+ *
+ * Nothing is ever renamed or removed. A theme name is a saved preference on
+ * somebody's phone, and a preference that silently stops existing is a bug.
+ */
+export const BUILT_IN_THEMES = ['calm', 'amber', 'overcast', 'dark', 'midnight', 'contrast'] as const;
+export type BuiltInTheme = (typeof BUILT_IN_THEMES)[number];
+
+/** 'custom' has no CSS block - its tokens are assembled in src/lib/theme.ts. */
+export type ThemeName = BuiltInTheme | 'custom';
+
+/**
+ * A custom theme is two named picks, never a colour wheel. The ground carries the
+ * whole neutral ramp, so the part that decides whether text is readable is not
+ * adjustable; the accent is the one colour the app is allowed to use. Every
+ * combination is contrast-checked in the tests, which is why there is no warning
+ * anywhere in the UI - an unreadable pair cannot be expressed.
+ */
+export type GroundId = 'warmWhite' | 'coolWhite' | 'sepia' | 'warmNight' | 'trueBlack';
+export type AccentId = 'sage' | 'teal' | 'slate' | 'indigo' | 'plum' | 'clay' | 'ochre' | 'ink';
+
+export interface CustomTheme {
+  ground: GroundId;
+  accent: AccentId;
+}
 
 export interface Settings {
   id: 'settings';
   theme: ThemeName;
+  /**
+   * The colours behind `theme: 'custom'`. Optional with no default: settings are
+   * merged over DEFAULT_SETTINGS, so an absent field needs no database migration,
+   * and someone who has never opened the custom editor stores nothing at all.
+   */
+  customTheme?: CustomTheme;
   /** 0.9 - 1.6, multiplies the base font size. */
   textScale: number;
   reduceMotion: boolean;

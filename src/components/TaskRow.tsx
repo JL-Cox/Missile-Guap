@@ -27,11 +27,14 @@ export default function TaskRow({
 
   return (
     <div className={`item${done ? ' item-done' : ''}`}>
+      {/* Styled in styles.css rather than inline: an inline accent-color wins
+          over the stylesheet, which meant a finished task could never take the
+          --done colour. */}
       <input
         type="checkbox"
+        className="item-check"
         checked={done}
         aria-label={done ? `Mark "${task.title}" as not done` : `Mark "${task.title}" as done`}
-        style={{ width: 26, height: 26, marginTop: 2, flex: 'none', accentColor: 'var(--accent)' }}
         onChange={() => void (done ? uncompleteTask(task) : completeTask(task))}
       />
 

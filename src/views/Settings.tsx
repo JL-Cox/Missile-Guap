@@ -1,6 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { db, getSettings, saveSettings } from '../db';
-import type { Settings as SettingsType, ThemeName } from '../types';
+import type { CustomTheme, Settings as SettingsType, ThemeName } from '../types';
+import {
+  ACCENTS,
+  ACCENT_IDS,
+  DEFAULT_CUSTOM,
+  GROUNDS,
+  GROUND_IDS,
+  resolveCustom,
+} from '../lib/theme';
 import { BackupError, backupFilename, downloadFile, exportBackup, importBackup, parseBackup, type ImportMode } from '../lib/backup';
 import { buildCalendar } from '../lib/ics';
 import { formatMoney } from '../lib/money';
@@ -8,11 +16,35 @@ import { notificationSupport, requestPermission, type PermissionState } from '..
 import { formatBytes, requestPersistence, storageOrigin, storageStatus, type StorageStatus } from '../lib/storage';
 import { ConfirmButton, Section } from '../components/ui';
 
+/**
+ * Each theme says what it is FOR, not what colour it is. "Warm off-white" tells
+ * you nothing about when to reach for it; "easier at night" does.
+ */
 const THEMES: { id: ThemeName; label: string; hint: string }[] = [
-  { id: 'calm', label: 'Calm', hint: 'Warm off-white. The default.' },
+  { id: 'calm', label: 'Calm', hint: 'Warm off-white. The default, and the one for most days.' },
+  { id: 'amber', label: 'Amber', hint: 'Warm and low in blue light, for winding down without going dark.' },
+  { id: 'overcast', label: 'Overcast', hint: 'Flat daylight with no warmth, if the off-white reads yellow to you.' },
   { id: 'dark', label: 'Dark', hint: 'Warm dark, not black. Easier at night.' },
-  { id: 'contrast', label: 'High contrast', hint: 'Black on white, heavier borders.' },
+  { id: 'midnight', label: 'Midnight', hint: 'Nearly black, so the screen gives off as little light as it can.' },
+  { id: 'contrast', label: 'High contrast', hint: 'Black on white, heavier borders. For when nothing else is clear enough.' },
+  { id: 'custom', label: 'Custom', hint: 'Your own paper and your own colour. Set them just below.' },
 ];
+
+/**
+ * The swatch reuses the `.swatch` rule in styles.css by handing it the same
+ * token names that rule reads. Built-in themes get theirs from the stylesheet
+ * via data-theme; these are for the custom pickers, where the values only exist
+ * in JavaScript. Either way there is no second copy of a palette.
+ */
+function swatchStyle(tokens: Record<string, string>): CSSProperties {
+  return {
+    '--bg': tokens.bg,
+    '--surface': tokens.surface,
+    '--border': tokens.border,
+    '--border-strong': tokens['border-strong'],
+    '--accent': tokens.accent,
+  } as CSSProperties;
+}
 
 export default function Settings({
   settings,
@@ -119,15 +151,38 @@ export default function Settings({
                 key={t.id}
                 type="button"
                 aria-pressed={settings.theme === t.id}
-                className={`btn btn-sm${settings.theme === t.id ? ' btn-primary' : ''}`}
-                onClick={() => void patch({ theme: t.id })}
+                className={`btn btn-sm theme-btn${settings.theme === t.id ? ' btn-primary' : ''}`}
+                onClick={() =>
+                  void patch(
+                    // Choosing Custom for the first time needs something to show,
+                    // so it starts on the Calm pair rather than on nothing.
+                    t.id === 'custom'
+                      ? { theme: 'custom', customTheme: settings.customTheme ?? DEFAULT_CUSTOM }
+                      : { theme: t.id },
+                  )
+                }
               >
+                {/* A slice of the theme, next to its name - never instead of it. */}
+                <span
+                  className="swatch"
+                  aria-hidden="true"
+                  {...(t.id === 'custom'
+                    ? { style: swatchStyle(resolveCustom(settings.customTheme).tokens) }
+                    : { 'data-theme': t.id })}
+                />
                 {t.label}
               </button>
             ))}
           </div>
           <p className="faint">{THEMES.find((t) => t.id === settings.theme)?.hint}</p>
         </div>
+
+        {settings.theme === 'custom' && (
+          <CustomThemeEditor
+            custom={settings.customTheme ?? DEFAULT_CUSTOM}
+            onChange={(customTheme) => void patch({ customTheme })}
+          />
+        )}
 
         <div className="field">
           <label htmlFor="text-scale">Text size ({Math.round(settings.textScale * 100)}%)</label>
@@ -408,5 +463,92 @@ export default function Settings({
         </div>
       </Section>
     </>
+  );
+}
+
+/**
+ * The custom theme: two picks, and deliberately not a colour wheel.
+ *
+ * The paper carries the whole neutral ramp - page, card, borders, and all three
+ * weights of text - and it is not adjustable, because that is the part that
+ * decides whether anything is readable. The colour is the one hue the app is
+ * allowed to use, and it comes in a light cut and a dark cut so it never has to
+ * work on a ground it was not drawn for.
+ *
+ * Every one of the forty combinations is contrast-checked in test/theme.test.ts.
+ * That is why there is no warning here and nothing to dismiss: a combination
+ * that came out hard to read would be a failing test, not a caution message
+ * handed to someone who is already having a difficult day.
+ */
+function CustomThemeEditor({
+  custom,
+  onChange,
+}: {
+  custom: CustomTheme;
+  onChange: (custom: CustomTheme) => void;
+}) {
+  const ground = GROUNDS[custom.ground];
+
+  return (
+    <div className="card stack">
+      <div className="field">
+        <label>Paper</label>
+        <div className="btn-row">
+          {GROUND_IDS.map((id) => {
+            const option = GROUNDS[id];
+            const accent = option.dark ? ACCENTS[custom.accent].onDark : ACCENTS[custom.accent].onLight;
+            const on = custom.ground === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={on}
+                className={`btn btn-sm theme-btn${on ? ' btn-primary' : ''}`}
+                onClick={() => onChange({ ...custom, ground: id })}
+              >
+                <span className="swatch" aria-hidden="true" style={swatchStyle({ ...option.tokens, ...accent })} />
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="faint">{ground.hint}</p>
+      </div>
+
+      <div className="field">
+        <label>One colour</label>
+        <div className="btn-row">
+          {ACCENT_IDS.map((id) => {
+            const accent = ground.dark ? ACCENTS[id].onDark : ACCENTS[id].onLight;
+            const on = custom.accent === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={on}
+                className={`btn btn-sm theme-btn${on ? ' btn-primary' : ''}`}
+                onClick={() => onChange({ ...custom, accent: id })}
+              >
+                <span
+                  className="swatch swatch-accent"
+                  aria-hidden="true"
+                  style={swatchStyle({ ...ground.tokens, ...accent })}
+                />
+                {ACCENTS[id].label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="faint">
+          Used for the tab you are on and the button you are about to press. Nothing else in the app is coloured,
+          which is what keeps it quiet.
+        </p>
+      </div>
+
+      <p className="faint">
+        Every pair on this screen has been checked for readability, so there is no combination here that comes out
+        hard to read. That is why it offers paper and a colour rather than a colour wheel.
+      </p>
+    </div>
   );
 }

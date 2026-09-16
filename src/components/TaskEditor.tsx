@@ -128,6 +128,7 @@ export default function TaskEditor({
                 <button
                   key={d}
                   type="button"
+                  aria-pressed={draft.durationMin === d}
                   className={`btn btn-sm${draft.durationMin === d ? ' btn-primary' : ''}`}
                   onClick={() => patch({ durationMin: draft.durationMin === d ? undefined : d })}
                 >
@@ -143,6 +144,7 @@ export default function TaskEditor({
             <div className="btn-row">
               <button
                 type="button"
+                aria-pressed={offset === null}
                 className={`btn btn-sm${offset === null ? ' btn-primary' : ''}`}
                 onClick={() => setRemindOffset(null)}
               >
@@ -152,6 +154,7 @@ export default function TaskEditor({
                 <button
                   key={m}
                   type="button"
+                  aria-pressed={offset === m}
                   className={`btn btn-sm${offset === m ? ' btn-primary' : ''}`}
                   onClick={() => setRemindOffset(m)}
                 >

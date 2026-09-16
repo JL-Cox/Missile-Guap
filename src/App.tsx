@@ -4,6 +4,7 @@ import { db, getSettings, saveSettings } from './db';
 import { DEFAULT_SETTINGS, type Settings as SettingsType, type Task } from './types';
 import { startScheduler } from './lib/notify';
 import { requestPersistence } from './lib/storage';
+import { THEME_TOKENS, resolveCustom } from './lib/theme';
 import { updateNotice } from './lib/version';
 import CaptureBar from './components/CaptureBar';
 import { Toast } from './components/ui';
@@ -55,6 +56,8 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [missed, setMissed] = useState<Task[]>([]);
   const [updated, setUpdated] = useState(false);
+  /** Whether the saved settings have arrived. See the appearance effect below. */
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -68,6 +71,7 @@ export default function App() {
         setSettings(await saveSettings({ lastSeenBuild: notice.next }));
       }
       setUpdated(notice.show);
+      setSettingsLoaded(true);
     })();
     // Ask the browser not to treat this data as disposable. Chrome decides
     // silently from heuristics (being installed is the big one), so asking on
@@ -75,14 +79,52 @@ export default function App() {
     void requestPersistence();
   }, []);
 
-  // Appearance is applied to <html> so it covers everything, including the
-  // browser's own form controls via color-scheme.
+  /*
+    Appearance is applied to <html> so it covers everything, including the
+    browser's own form controls via color-scheme.
+
+    Nothing is set until the saved settings have actually arrived. Settings live
+    in IndexedDB, which is asynchronous, so writing the default theme first and
+    correcting it a moment later meant a flash of the light theme on every
+    single launch - at 2am, for someone who chose Midnight, that is the opposite
+    of what this app is for. While `settingsLoaded` is false the stylesheet's
+    `prefers-color-scheme` block carries the first paint instead, which is the
+    only route left: the CSP forbids the inline bootstrap script that would
+    normally do this, and rightly so.
+  */
   useEffect(() => {
+    if (!settingsLoaded) return;
     const root = document.documentElement;
     root.dataset.theme = settings.theme;
     root.dataset.reduceMotion = String(settings.reduceMotion);
     root.style.setProperty('--text-scale', String(settings.textScale));
-  }, [settings.theme, settings.reduceMotion, settings.textScale]);
+
+    /*
+      A custom theme is the same token mechanism, just written from JavaScript:
+      the identical custom-property names, set inline on the same element, so
+      every rule in styles.css applies unchanged. Switching away removes them
+      again rather than leaving a half-applied palette behind.
+    */
+    if (settings.theme === 'custom') {
+      const { tokens, dark } = resolveCustom(settings.customTheme);
+      for (const token of THEME_TOKENS) root.style.setProperty(`--${token}`, tokens[token]);
+      root.style.setProperty('color-scheme', dark ? 'dark' : 'light');
+    } else {
+      for (const token of THEME_TOKENS) root.style.removeProperty(`--${token}`);
+      root.style.removeProperty('color-scheme');
+    }
+
+    // The Android status bar and task-switcher card take their colour from this
+    // tag. Left static it stayed cream behind a near-black app.
+    setThemeColour(getComputedStyle(root).getPropertyValue('--bg').trim());
+  }, [
+    settingsLoaded,
+    settings.theme,
+    settings.customTheme?.ground,
+    settings.customTheme?.accent,
+    settings.reduceMotion,
+    settings.textScale,
+  ]);
 
   useEffect(() => {
     return startScheduler((tick) => {
@@ -204,4 +246,21 @@ export default function App() {
 
 function longDate(): string {
   return new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+/**
+ * Replaces every theme-color tag with a single unconditional one.
+ *
+ * index.html ships a pair of them behind prefers-color-scheme so the status bar
+ * is right before any JavaScript runs. A media-scoped tag outranks a plain one,
+ * so those have to go rather than be added to, or a phone set to dark would
+ * keep showing the dark bar over the Amber theme.
+ */
+function setThemeColour(colour: string): void {
+  if (!colour) return;
+  document.querySelectorAll('meta[name="theme-color"]').forEach((tag) => tag.remove());
+  const meta = document.createElement('meta');
+  meta.name = 'theme-color';
+  meta.content = colour;
+  document.head.appendChild(meta);
 }

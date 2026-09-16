@@ -23,7 +23,16 @@
     <title>Steady</title>
     <meta name="description" content="Notes, day plan, reminders and subscriptions. Stored only on this device." />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#f7f5f0" />
+
+    <!--
+      The Android status bar and task-switcher card. A pair of these, so the bar
+      is already right on the very first frame, before any JavaScript has run
+      and before the saved theme has been read out of IndexedDB. App.tsx then
+      replaces both with a single tag carrying the active theme's own --bg.
+      Values are the Calm and Dark page colours from src/styles.css.
+    -->
+    <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1b1a18" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
   </head>
