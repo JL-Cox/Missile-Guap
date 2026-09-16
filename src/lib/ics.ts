@@ -1,4 +1,5 @@
-import type { Subscription, Task } from '../types';
+import type { IncomeSource, Subscription, Task } from '../types';
+import { isIntervalFrequency, nextPayday } from './pay';
 import { advanceCycle, nextBilling } from './recurrence';
 import { atTime, fromDateKey, todayKey } from './time';
 
@@ -154,15 +155,56 @@ function wrapCalendar(events: IcsEvent[], now: number, name: string): string {
   return lines.map(fold).join('\r\n') + '\r\n';
 }
 
+/**
+ * A payday as a repeating all-day entry.
+ *
+ * Interval schedules map cleanly onto WEEKLY rules. Twice-a-month does not -
+ * "the 15th and the last day" is BYMONTHDAY=15,-1 - so that is expressed
+ * directly rather than approximated as every-other-week, which would drift two
+ * paydays a year.
+ */
+function paydayEvent(source: IncomeSource, amountLabel: string, now: number): IcsEvent | null {
+  const next = nextPayday(source, todayKey(new Date(now)));
+  if (!next) return null;
+
+  let rrule: string;
+  if (isIntervalFrequency(source.frequency)) {
+    rrule = `FREQ=WEEKLY;INTERVAL=${source.frequency === 'weekly' ? 1 : 2}`;
+  } else {
+    const days = (source.daysOfMonth ?? [1])
+      .map((d) => (d >= 29 ? '-1' : String(Math.min(28, Math.max(1, Math.floor(d))))))
+      .join(',');
+    rrule = `FREQ=MONTHLY;BYMONTHDAY=${days}`;
+  }
+
+  return {
+    uid: `income-${source.id}@steady.local`,
+    summary: `${source.name} - ${amountLabel}`,
+    description: source.notes || undefined,
+    allDay: next,
+    rrule,
+  };
+}
+
 export interface CalendarInput {
   tasks: Task[];
   subscriptions: Subscription[];
+  incomes?: IncomeSource[];
   /** Formats a subscription amount for its event title. */
   formatAmount: (sub: Subscription) => string;
+  /** Formats a paycheque amount for its event title. */
+  formatPay?: (source: IncomeSource) => string;
   now?: number;
 }
 
-export function buildCalendar({ tasks, subscriptions, formatAmount, now = Date.now() }: CalendarInput): string {
+export function buildCalendar({
+  tasks,
+  subscriptions,
+  incomes = [],
+  formatAmount,
+  formatPay,
+  now = Date.now(),
+}: CalendarInput): string {
   const events: IcsEvent[] = [];
   for (const task of tasks) {
     if (task.doneAt && !task.recurrence) continue;
@@ -174,7 +216,22 @@ export function buildCalendar({ tasks, subscriptions, formatAmount, now = Date.n
     const ev = subscriptionEvent(sub, formatAmount(sub), now);
     if (ev) events.push(ev);
   }
+  for (const source of incomes) {
+    if (source.endedOn) continue;
+    const ev = paydayEvent(source, formatPay?.(source) ?? 'Payday', now);
+    if (ev) events.push(ev);
+  }
   return wrapCalendar(events, now, 'Steady');
+}
+
+/** A calendar containing just one income source's paydays. */
+export function calendarForIncome(
+  source: IncomeSource,
+  amountLabel: string,
+  now: number = Date.now(),
+): string | null {
+  const ev = paydayEvent(source, amountLabel, now);
+  return ev ? wrapCalendar([ev], now, source.name) : null;
 }
 
 /**

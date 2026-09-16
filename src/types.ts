@@ -105,6 +105,56 @@ export interface Subscription {
   updatedAt: number;
 }
 
+/**
+ * How often you are paid. US payroll distinguishes two that sound alike and are
+ * not: every 2 weeks is 26 cheques a year on a 14-day interval, twice a month
+ * is 24 on fixed dates. Conflating them misstates annual income by two whole
+ * paycheques.
+ */
+export type PayFrequency = 'weekly' | 'biweekly' | 'semimonthly' | 'monthly';
+
+/** One line off a paystub between gross and net. */
+export interface Deduction {
+  id: Id;
+  label: string;
+  amountMinor: number;
+}
+
+export interface IncomeSource {
+  id: Id;
+  name: string;
+  frequency: PayFrequency;
+  /**
+   * Any past payday, for the interval frequencies. Every other payday is
+   * counted from here, so it only has to be right once.
+   */
+  firstPaid?: DateKey;
+  /**
+   * Which days of the month you are paid, for the fixed-date frequencies.
+   * Values are clamped to the month's length, so 31 means "the last day" and
+   * lands on the 28th in February - no special case needed.
+   */
+  daysOfMonth?: number[];
+
+  /**
+   * Both taken straight off the stub rather than calculated. This app does not
+   * estimate anyone's tax: rates vary by state and filing status and change
+   * yearly, and a plausible wrong number in your budget is worse than no
+   * number. Typed in, they are right by construction.
+   */
+  grossMinor: number;
+  netMinor: number;
+  /** The lines explaining the gap. Partial lists are fine - see unitemisedMinor. */
+  deductions: Deduction[];
+
+  currency: string;
+  notes: string;
+  /** Kept rather than deleted, like a cancelled subscription. */
+  endedOn?: DateKey;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export type ThemeName = 'calm' | 'dark' | 'contrast';
 
 export interface Settings {

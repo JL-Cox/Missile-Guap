@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { byCategoryYearly, formatMoney, monthlyMinor, parseMoney, totalMonthlyMinor, totalYearlyMinor, yearlyMinor } from '../src/lib/money';
-import type { Subscription } from '../src/types';
+import {
+  byCategoryYearly,
+  deductionsByLabel,
+  formatMoney,
+  grossYearlyMinor,
+  itemisedDeductionsMinor,
+  leftoverMonthlyMinor,
+  monthlyMinor,
+  netMonthlyMinor,
+  netYearlyMinor,
+  parseMoney,
+  totalGrossYearlyMinor,
+  totalMonthlyMinor,
+  totalNetMonthlyMinor,
+  totalYearlyMinor,
+  unitemisedMinor,
+  yearlyMinor,
+} from '../src/lib/money';
+import type { IncomeSource, Subscription } from '../src/types';
 
 function sub(partial: Partial<Subscription> = {}): Subscription {
   return {
@@ -122,5 +139,105 @@ describe('every-2-weeks subscriptions', () => {
 
   it('adds into the totals like any other rhythm', () => {
     expect(totalYearlyMinor([fortnightly])).toBe(1500 * 26);
+  });
+});
+
+
+function income(partial: Partial<IncomeSource> = {}): IncomeSource {
+  return {
+    id: Math.random().toString(36).slice(2),
+    name: 'Main job',
+    frequency: 'semimonthly',
+    daysOfMonth: [15, 31],
+    grossMinor: 250_000,   // $2,500.00
+    netMinor: 185_000,     // $1,850.00
+    deductions: [],
+    currency: 'USD',
+    notes: '',
+    createdAt: 0,
+    updatedAt: 0,
+    ...partial,
+  };
+}
+
+describe('annualising a paystub', () => {
+  it('multiplies by the right number of paycheques', () => {
+    expect(grossYearlyMinor(income({ frequency: 'semimonthly' }))).toBe(250_000 * 24);
+    expect(grossYearlyMinor(income({ frequency: 'biweekly' }))).toBe(250_000 * 26);
+    expect(grossYearlyMinor(income({ frequency: 'weekly' }))).toBe(250_000 * 52);
+    expect(grossYearlyMinor(income({ frequency: 'monthly' }))).toBe(250_000 * 12);
+  });
+
+  it('keeps twice-a-month and every-2-weeks apart', () => {
+    // Two whole paycheques of difference on the same stub.
+    const twice = netYearlyMinor(income({ frequency: 'semimonthly' }));
+    const fortnightly = netYearlyMinor(income({ frequency: 'biweekly' }));
+    expect(fortnightly - twice).toBe(185_000 * 2);
+  });
+
+  it('gives take-home a month', () => {
+    expect(netMonthlyMinor(income())).toBe(Math.round((185_000 * 24) / 12));
+    expect(netMonthlyMinor(income())).toBe(370_000);
+  });
+});
+
+describe('deductions', () => {
+  const withLines = income({
+    deductions: [
+      { id: 'a', label: 'Federal income tax', amountMinor: 32_000 },
+      { id: 'b', label: 'Social Security', amountMinor: 15_500 },
+      { id: 'c', label: 'Medicare', amountMinor: 3_600 },
+    ],
+  });
+
+  it('adds up the lines you wrote down', () => {
+    expect(itemisedDeductionsMinor(withLines)).toBe(32_000 + 15_500 + 3_600);
+  });
+
+  it('reports the rest as not itemised rather than complaining', () => {
+    // Gross - net is 65,000; the lines cover 51,100.
+    expect(unitemisedMinor(withLines)).toBe(65_000 - 51_100);
+  });
+
+  it('is zero when the lines add up exactly', () => {
+    const exact = income({ deductions: [{ id: 'a', label: 'All of it', amountMinor: 65_000 }] });
+    expect(unitemisedMinor(exact)).toBe(0);
+  });
+
+  it('never goes negative when you write down more than the gap', () => {
+    // A typo should not produce a negative deduction that corrupts the totals.
+    const over = income({ deductions: [{ id: 'a', label: 'Oops', amountMinor: 999_999 }] });
+    expect(unitemisedMinor(over)).toBe(0);
+  });
+
+  it('groups by label across sources, biggest first, and annualises', () => {
+    const rows = deductionsByLabel([withLines]);
+    expect(rows[0]).toEqual({ label: 'Federal income tax', minor: 32_000 * 24 });
+    expect(rows.map((r) => r.label)).toContain('Not itemised');
+    for (let i = 1; i < rows.length; i++) expect(rows[i - 1].minor).toBeGreaterThanOrEqual(rows[i].minor);
+  });
+
+  it('leaves ended jobs out of the totals', () => {
+    const ended = income({ endedOn: '2026-01-01' });
+    expect(totalNetMonthlyMinor([income(), ended])).toBe(netMonthlyMinor(income()));
+    expect(totalGrossYearlyMinor([income(), ended])).toBe(grossYearlyMinor(income()));
+  });
+});
+
+describe('income against expenses', () => {
+  it('is take-home minus the subscriptions', () => {
+    const subs = [sub({ amountMinor: 1_299, cycle: 'monthly' })];
+    expect(leftoverMonthlyMinor([income()], subs)).toBe(370_000 - totalMonthlyMinor(subs));
+  });
+
+  it('can go negative, and says so rather than clamping', () => {
+    // Being told you are over is the entire point; hiding it would be a lie.
+    const expensive = [sub({ amountMinor: 500_000, cycle: 'monthly' })];
+    expect(leftoverMonthlyMinor([income()], expensive)).toBeLessThan(0);
+  });
+
+  it('is just the negative of expenses when there is no income yet', () => {
+    const subs = [sub({ amountMinor: 1_000, cycle: 'monthly' })];
+    expect(leftoverMonthlyMinor([], subs)).toBe(-totalMonthlyMinor(subs));
   });
 });

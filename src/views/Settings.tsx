@@ -70,11 +70,17 @@ export default function Settings({
   };
 
   const doCalendar = async () => {
-    const [tasks, subscriptions] = await Promise.all([db.tasks.toArray(), db.subscriptions.toArray()]);
+    const [tasks, subscriptions, incomes] = await Promise.all([
+      db.tasks.toArray(),
+      db.subscriptions.toArray(),
+      db.incomes.toArray(),
+    ]);
     const ics = buildCalendar({
       tasks,
       subscriptions,
+      incomes,
       formatAmount: (sub) => formatMoney(sub.amountMinor, sub.currency),
+      formatPay: (src) => formatMoney(src.netMinor, src.currency),
     });
     downloadFile('steady.ics', ics, 'text/calendar');
     onToast('Calendar file saved. Open it to add everything to your phone calendar.');

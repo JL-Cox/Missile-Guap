@@ -1,6 +1,6 @@
 import type { Table } from 'dexie';
 import { db, getSettings, saveSettings } from '../db';
-import type { Capture, Note, Settings, Subscription, Task } from '../types';
+import type { Capture, IncomeSource, Note, Settings, Subscription, Task } from '../types';
 
 /**
  * Your data, in a plain readable file, on demand. This is the difference
@@ -8,7 +8,7 @@ import type { Capture, Note, Settings, Subscription, Task } from '../types';
  */
 
 export const BACKUP_FORMAT = 'steady-backup';
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
 export interface Backup {
   format: typeof BACKUP_FORMAT;
@@ -18,15 +18,17 @@ export interface Backup {
   tasks: Task[];
   notes: Note[];
   subscriptions: Subscription[];
+  incomes: IncomeSource[];
   settings: Record<string, unknown>;
 }
 
 export async function exportBackup(): Promise<Backup> {
-  const [captures, tasks, notes, subscriptions, settings] = await Promise.all([
+  const [captures, tasks, notes, subscriptions, incomes, settings] = await Promise.all([
     db.captures.toArray(),
     db.tasks.toArray(),
     db.notes.toArray(),
     db.subscriptions.toArray(),
+    db.incomes.toArray(),
     getSettings(),
   ]);
   return {
@@ -37,6 +39,7 @@ export async function exportBackup(): Promise<Backup> {
     tasks,
     notes,
     subscriptions,
+    incomes,
     settings: settings as unknown as Record<string, unknown>,
   };
 }
@@ -66,6 +69,8 @@ export function parseBackup(raw: string): Backup {
     tasks: candidate.tasks ?? [],
     notes: candidate.notes ?? [],
     subscriptions: candidate.subscriptions ?? [],
+    // Absent from a v1 backup, which is fine - it simply had no income.
+    incomes: candidate.incomes ?? [],
     settings: candidate.settings ?? {},
   };
 }
@@ -77,6 +82,7 @@ export interface ImportResult {
   tasks: number;
   notes: number;
   subscriptions: number;
+  incomes: number;
 }
 
 /**
@@ -85,7 +91,7 @@ export interface ImportResult {
  * `replace` is the deliberate "wipe and restore" and says so in the UI.
  */
 export async function importBackup(backup: Backup, mode: ImportMode): Promise<ImportResult> {
-  const result: ImportResult = { captures: 0, tasks: 0, notes: 0, subscriptions: 0 };
+  const result: ImportResult = { captures: 0, tasks: 0, notes: 0, subscriptions: 0, incomes: 0 };
 
   /** Restores one table and reports how many rows it actually wrote. */
   async function restore<T extends { id: string }>(table: Table<T, string>, rows: unknown[]): Promise<number> {
@@ -101,14 +107,21 @@ export async function importBackup(backup: Backup, mode: ImportMode): Promise<Im
     return fresh.length;
   }
 
-  await db.transaction('rw', [db.captures, db.tasks, db.notes, db.subscriptions], async () => {
+  await db.transaction('rw', [db.captures, db.tasks, db.notes, db.subscriptions, db.incomes], async () => {
     if (mode === 'replace') {
-      await Promise.all([db.captures.clear(), db.tasks.clear(), db.notes.clear(), db.subscriptions.clear()]);
+      await Promise.all([
+        db.captures.clear(),
+        db.tasks.clear(),
+        db.notes.clear(),
+        db.subscriptions.clear(),
+        db.incomes.clear(),
+      ]);
     }
     result.captures = await restore(db.captures, backup.captures);
     result.tasks = await restore(db.tasks, backup.tasks);
     result.notes = await restore(db.notes, backup.notes);
     result.subscriptions = await restore(db.subscriptions, backup.subscriptions);
+    result.incomes = await restore(db.incomes, backup.incomes);
   });
 
   if (mode === 'replace' && backup.settings && typeof backup.settings === 'object') {

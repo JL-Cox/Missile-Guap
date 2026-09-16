@@ -1,10 +1,16 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { blankSubscription, db, saveSubscription } from '../db';
-import type { Settings, Subscription } from '../types';
+import { blankIncome, blankSubscription, db, saveSubscription } from '../db';
+import type { IncomeSource, Settings, Subscription } from '../types';
 import {
   byCategoryYearly,
+  deductionsByLabel,
   formatMoney,
+  leftoverMonthlyMinor,
+  netMonthlyMinor,
+  totalGrossYearlyMinor,
+  totalNetMonthlyMinor,
+  totalNetYearlyMinor,
   monthlyMinor,
   parseMoney,
   totalMonthlyMinor,
@@ -15,6 +21,8 @@ import { describeCycle, nextBilling } from '../lib/recurrence';
 import { upcomingBills } from '../lib/agenda';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
+import IncomeEditor from '../components/IncomeEditor';
+import { describeFrequency, isActiveIncome, nextPayday } from '../lib/pay';
 import {
   categoryChoices,
   cycleUnit,
@@ -39,11 +47,13 @@ import { Amount, ConfirmButton, Empty, Section, useAutoFocus } from '../componen
  */
 export default function Money({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<Subscription | null>(null);
+  const [editingIncome, setEditingIncome] = useState<IncomeSource | null>(null);
   const [justSaved, setJustSaved] = useState<Subscription | null>(null);
   const [showEnded, setShowEnded] = useState(false);
   const today = todayKey();
 
   const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], [] as Subscription[]) ?? [];
+  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], [] as IncomeSource[]) ?? [];
   const active = subs.filter((s) => !s.endedOn).sort((a, b) => yearlyMinor(b) - yearlyMinor(a));
   const ended = subs.filter((s) => s.endedOn);
 
@@ -51,6 +61,20 @@ export default function Money({ settings }: { settings: Settings }) {
     setJustSaved(null);
     setEditing(blankSubscription({ currency: settings.currency, firstBilled: today }));
   };
+
+  if (editingIncome) {
+    return (
+      <IncomeEditor
+        source={editingIncome}
+        onSaved={() => setEditingIncome(null)}
+        onCancel={() => setEditingIncome(null)}
+        onDelete={async (s) => {
+          await db.incomes.delete(s.id);
+          setEditingIncome(null);
+        }}
+      />
+    );
+  }
 
   if (editing) {
     return (
@@ -91,8 +115,114 @@ export default function Money({ settings }: { settings: Settings }) {
   const maxCategory = categories[0]?.minor ?? 1;
   const soon = upcomingBills(subs, settings.lookaheadDays, today);
 
+  const activeIncomes = incomes.filter(isActiveIncome);
+  const netMonthly = totalNetMonthlyMinor(incomes);
+  const leftover = leftoverMonthlyMinor(incomes, subs);
+  const grossYearly = totalGrossYearlyMinor(incomes);
+  const netYearly = totalNetYearlyMinor(incomes);
+  const deductionRows = deductionsByLabel(incomes);
+  const maxDeduction = deductionRows[0]?.minor ?? 1;
+
   return (
     <>
+      <Section title="Income">
+        <button
+          type="button"
+          className="btn btn-primary btn-wide"
+          onClick={() => setEditingIncome(blankIncome({ currency: settings.currency }))}
+        >
+          Add income
+        </button>
+
+        {activeIncomes.length === 0 ? (
+          <Empty>
+            Add a paycheque and the figures below stop being half a picture. You type gross and net straight off
+            the stub - nothing here tries to work out your tax.
+          </Empty>
+        ) : (
+          <div className="stack-sm">
+            {activeIncomes.map((src) => {
+              const payday = nextPayday(src, today);
+              return (
+                <div key={src.id} className="card card-tight stack-sm">
+                  <div className="spread">
+                    <span className="item-title grow">{src.name}</span>
+                    <Amount text={formatMoney(src.netMinor, src.currency)} blur={settings.blurAmounts} />
+                  </div>
+                  <div className="row-tight faint">
+                    <span>{describeFrequency(src)}</span>
+                    {payday && <span>Next: {describeDate(payday, today)}</span>}
+                    <span>{formatMoney(netMonthlyMinor(src), src.currency)} a month</span>
+                  </div>
+                  <div className="btn-row">
+                    <button type="button" className="btn btn-quiet btn-sm" onClick={() => setEditingIncome(src)}>
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+
+      {activeIncomes.length > 0 && (
+        <Section title="Income against expenses">
+          <div className="card stack-sm">
+            <div className="spread">
+              <span className="muted">Take-home each month</span>
+              <Amount text={formatMoney(netMonthly, settings.currency)} blur={settings.blurAmounts} />
+            </div>
+            <div className="spread">
+              <span className="muted">Subscriptions each month</span>
+              <Amount text={`- ${formatMoney(totalMonthlyMinor(subs), settings.currency)}`} blur={settings.blurAmounts} />
+            </div>
+            <hr className="divider" />
+            <div className="spread">
+              <strong>Left for everything else</strong>
+              <Amount text={formatMoney(leftover, settings.currency)} blur={settings.blurAmounts} />
+            </div>
+            <p className="faint">
+              This app only knows about subscriptions, so that remainder still has to cover rent, food and
+              everything else. It is what is left over, not spare money.
+            </p>
+          </div>
+
+          <div className="card stack-sm">
+            <div className="spread">
+              <span className="muted">You earn, a year</span>
+              <Amount text={formatMoney(grossYearly, settings.currency)} blur={settings.blurAmounts} />
+            </div>
+            <div className="spread">
+              <span className="muted">You keep</span>
+              <Amount text={formatMoney(netYearly, settings.currency)} blur={settings.blurAmounts} />
+            </div>
+            <p className="faint">
+              {grossYearly > 0
+                ? `${Math.round(((grossYearly - netYearly) / grossYearly) * 100)}% comes out before you ever see it.`
+                : ''}
+            </p>
+          </div>
+
+          {deductionRows.length > 0 && (
+            <div className="stack-sm">
+              <h3 className="muted">What comes out, a year</h3>
+              {deductionRows.map((row) => (
+                <div key={row.label} className="stack-sm">
+                  <div className="spread">
+                    <span className="small">{row.label}</span>
+                    <Amount text={formatMoney(row.minor, settings.currency)} blur={settings.blurAmounts} />
+                  </div>
+                  <div className="bar-track">
+                    <div className="bar" style={{ width: `${Math.max(3, (row.minor / maxDeduction) * 100)}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
+
       <Section title="Subscriptions">
         {/* The primary action is a full-width button, not a small one tucked
             into the heading. Adding one should never be a thing you hunt for. */}

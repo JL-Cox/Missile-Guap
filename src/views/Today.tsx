@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, blankTask } from '../db';
-import type { Settings, Task } from '../types';
+import type { IncomeSource, Settings, Task } from '../types';
+import { isActiveIncome, nextPayday } from '../lib/pay';
+import { netMonthlyMinor } from '../lib/money';
 import { agendaFor, stillOpen, unscheduled, upcomingBills } from '../lib/agenda';
 import { describeDate, describeDuration, todayKey } from '../lib/time';
 import { formatMoney } from '../lib/money';
@@ -22,6 +24,7 @@ export default function Today({ settings }: { settings: Settings }) {
 
   const tasks = useLiveQuery(() => db.tasks.toArray(), [settings.rev], [] as Task[]) ?? [];
   const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], []) ?? [];
+  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], [] as IncomeSource[]) ?? [];
 
   const agenda = agendaFor(today, tasks, subs);
   const openToday = agenda.filter((i) => i.kind !== 'task' || !i.task?.doneAt);
@@ -29,6 +32,15 @@ export default function Today({ settings }: { settings: Settings }) {
   const waiting = stillOpen(tasks, today);
   const loose = unscheduled(tasks).slice(0, 5);
   const bills = upcomingBills(subs, settings.lookaheadDays, today).filter((b) => b.inDays > 0);
+
+  // "Can this wait until I get paid?" is only answerable if payday is on screen.
+  const paydays = incomes
+    .filter(isActiveIncome)
+    .map((src) => ({ src, date: nextPayday(src, today) }))
+    .filter((p): p is { src: IncomeSource; date: string } => p.date !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const paidToday = paydays.filter((p) => p.date === today);
+  const paidSoon = paydays.filter((p) => p.date !== today);
 
   if (editing) {
     return (
@@ -111,6 +123,23 @@ export default function Today({ settings }: { settings: Settings }) {
         </Section>
       )}
 
+      {paidToday.length > 0 && (
+        <Section title="Payday">
+          <div className="stack-sm">
+            {paidToday.map(({ src }) => (
+              <div key={src.id} className="item">
+                <span className="pill">Today</span>
+                <div className="grow">
+                  <div className="item-title">{src.name}</div>
+                  <div className="faint">Should land today</div>
+                </div>
+                <Amount text={formatMoney(src.netMinor, src.currency)} blur={settings.blurAmounts} />
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {bills.length > 0 && (
         <Section title={`Money leaving soon (next ${settings.lookaheadDays} days)`}>
           <div className="stack-sm">
@@ -124,6 +153,30 @@ export default function Today({ settings }: { settings: Settings }) {
               </div>
             ))}
           </div>
+        </Section>
+      )}
+
+      {paidSoon.length > 0 && (
+        <Section title="Next payday">
+          <div className="stack-sm">
+            {paidSoon.map(({ src, date }) => (
+              <div key={src.id} className="item">
+                <div className="grow">
+                  <div className="item-title">{src.name}</div>
+                  <div className="faint">{describeDate(date, today)}</div>
+                </div>
+                <Amount text={formatMoney(src.netMinor, src.currency)} blur={settings.blurAmounts} />
+              </div>
+            ))}
+          </div>
+          <p className="faint">
+            Scheduled dates. If your employer moves a weekend payday to the Friday, this will not know.
+            {paidSoon.length > 0 &&
+              ` About ${formatMoney(
+                paidSoon.reduce((sum, p) => sum + netMonthlyMinor(p.src), 0),
+                settings.currency,
+              )} a month between them.`}
+          </p>
         </Section>
       )}
 

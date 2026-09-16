@@ -1,5 +1,13 @@
 import Dexie, { type Table } from 'dexie';
-import { DEFAULT_SETTINGS, type Capture, type Note, type Settings, type Subscription, type Task } from './types';
+import {
+  DEFAULT_SETTINGS,
+  type Capture,
+  type IncomeSource,
+  type Note,
+  type Settings,
+  type Subscription,
+  type Task,
+} from './types';
 
 /**
  * IndexedDB, on this device, in this browser profile. There is no server
@@ -11,6 +19,7 @@ class SteadyDb extends Dexie {
   tasks!: Table<Task, string>;
   notes!: Table<Note, string>;
   subscriptions!: Table<Subscription, string>;
+  incomes!: Table<IncomeSource, string>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -21,6 +30,11 @@ class SteadyDb extends Dexie {
       notes: 'id, updatedAt, pinned, *tags',
       subscriptions: 'id, name, endedOn, updatedAt',
       settings: 'id',
+    });
+    // Adding a store only. Dexie upgrades in place and nothing already saved
+    // is touched, so notes, tasks and subscriptions survive the bump.
+    this.version(2).stores({
+      incomes: 'id, name, endedOn, updatedAt',
     });
   }
 }
@@ -113,5 +127,29 @@ export function blankSubscription(partial: Partial<Subscription> = {}): Subscrip
 export async function saveSubscription(sub: Subscription): Promise<Subscription> {
   const next = { ...sub, updatedAt: now() };
   await db.subscriptions.put(next);
+  return next;
+}
+
+export function blankIncome(partial: Partial<IncomeSource> = {}): IncomeSource {
+  const ts = now();
+  return {
+    id: newId(),
+    name: '',
+    frequency: 'biweekly',
+    daysOfMonth: [15, 31],
+    grossMinor: 0,
+    netMinor: 0,
+    deductions: [],
+    currency: DEFAULT_SETTINGS.currency,
+    notes: '',
+    createdAt: ts,
+    updatedAt: ts,
+    ...partial,
+  };
+}
+
+export async function saveIncome(source: IncomeSource): Promise<IncomeSource> {
+  const next = { ...source, updatedAt: now() };
+  await db.incomes.put(next);
   return next;
 }

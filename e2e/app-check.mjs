@@ -278,6 +278,34 @@ check('reopening shows the custom interval without digging', await page.inputVal
 await page.click('form.card button:has-text("Cancel")');
 await page.waitForTimeout(300);
 
+// --- income, and the numbers nobody checks by hand ------------------------
+// $2,500 gross / $1,850 net, twice a month. That is 24 paycheques a year, not
+// 26 - take-home is $3,700 a month. Getting the frequency wrong here would
+// overstate income by two whole paycheques.
+await page.click('.nav-btn:has-text("Money")');
+await page.click('button:has-text("Add income")');
+await page.waitForSelector('#income-name');
+await page.fill('#income-name', 'Main job');
+await page.click('button:has-text("Twice a month")');
+await page.click('button:has-text("15th and last day")');
+await page.fill('#income-gross', '2500.00');
+await page.fill('#income-net', '1850.00');
+await page.click('button:has-text("+ Federal income tax")');
+await page.click('button:has-text("+ Social Security")');
+const dedAmounts = page.locator('input[aria-label^="Amount for"]');
+await dedAmounts.nth(0).fill('420.00');
+await dedAmounts.nth(1).fill('155.00');
+await page.waitForTimeout(150);
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(500);
+
+const moneyText = await page.textContent('.main');
+check('take-home is 24 paycheques a year, not 26', moneyText.includes('3,700.00'), true);
+check('gross is annualised the same way', moneyText.includes('60,000.00'), true);
+check('the deduction breakdown appears', moneyText.includes('Federal income tax'), true);
+check('the unexplained gap is named, not hidden', moneyText.includes('Not itemised'), true);
+await page.screenshot({ path: `${OUT}/income.png`, fullPage: true });
+
 // --- a note --------------------------------------------------------------
 await page.click('.nav-btn:has-text("Notes")');
 await page.click('button:has-text("New note")');

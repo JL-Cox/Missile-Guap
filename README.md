@@ -47,7 +47,7 @@ opposite on all three counts.
 | **Inbox** | Everything you typed into the capture box. Three buttons per item, always the same three: make it a task, keep it as a note, done with it. |
 | **Tasks** | All tasks, grouped by day, searchable across titles, notes, steps and tags. Optional times, durations, reminders, repeats and an energy level. |
 | **Notes** | Plain text you will want to look up again. Reference numbers, phone scripts, what the nurse actually said. Pin the important ones. |
-| **Money** | Subscriptions, with the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
+| **Money** | Your income and your subscriptions, and what one leaves of the other. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
 | **Settings** | Appearance, notifications, backup and restore, calendar export, and a plain-English account of what happens to your data. |
 
 There are four buckets, not five: **a reminder is a property of a task**, not a
@@ -116,6 +116,32 @@ catching up on old ones. Turn the whole thing off in Settings.
 There is no network call in any of this, and nothing to call. `connect-src
 'none'` is untouched — the browser check proves it by still failing to
 exfiltrate data with the feature switched on.
+
+### Income, from the paystub
+
+Add a paycheque and the expense figures stop being half a picture.
+
+**It does not calculate your tax.** Gross and net are typed straight off the
+stub, so they are right by construction. Tax rates vary by state and filing
+status and change every year; a confident wrong number in your budget is worse
+than no number.
+
+- **Every 2 weeks and twice a month are not the same thing** — 26 paycheques a
+  year against 24, a difference of two whole paycheques. The app keeps them
+  apart, and twice-a-month pays on real dates: "the 15th and the last day"
+  lands on the 28th in February and the 30th in April by itself.
+- **Deductions are lines you copy across** — federal, Social Security, Medicare,
+  state, 401(k), health insurance — offered as one-tap chips. Whatever you
+  haven't written down shows as *"not itemised"*, never as an error. A partial
+  list is fine.
+- **You see gross against net**: what you earn, what you keep, and the share
+  taken before you ever see it — a number paystubs make oddly hard to read.
+- **Take-home minus subscriptions** gives what's left. Stated honestly: this app
+  only knows about subscriptions, so that remainder still has to cover rent,
+  food and everything else.
+- **Paydays appear on Today** and export to your calendar. These are scheduled
+  dates — if your employer moves a weekend payday to the Friday, the app does
+  not know that.
 
 ## Privacy, stated precisely
 
@@ -204,7 +230,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-136 unit tests cover the parts where a quiet wrong answer would make the app
+189 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation
@@ -234,7 +260,8 @@ src/
     time.ts           Local-time date maths (never UTC - it shifts the day)
     version.ts        Notices when the app has updated under you
     recurrence.ts     Repeats, and billing dates anchored to the first charge
-    money.ts          Minor units only; cost normalised to a year
+    money.ts          Minor units only; cost and pay normalised to a year
+    pay.ts            Pay schedules: intervals and fixed days of the month
     classify.ts       Naive Bayes tag suggestions, trained on your own notes
     subscriptions.ts  Billing rhythms, categories, name autocomplete (no lookups)
     share.ts          Hands a file to the phone's share sheet, not the network

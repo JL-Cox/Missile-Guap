@@ -3,7 +3,7 @@ import { BACKUP_FORMAT, BackupError, backupFilename, parseBackup } from '../src/
 
 const good = JSON.stringify({
   format: BACKUP_FORMAT,
-  version: 1,
+  version: 2,
   exportedAt: '2026-09-15T10:00:00.000Z',
   tasks: [{ id: 't1', title: 'Ring the dentist' }],
   notes: [],
@@ -54,5 +54,32 @@ describe('backupFilename', () => {
   it('sorts chronologically in a file manager', () => {
     expect(backupFilename(new Date(2026, 8, 5))).toBe('steady-backup-2026-09-05.json');
     expect(backupFilename(new Date(2026, 11, 31))).toBe('steady-backup-2026-12-31.json');
+  });
+});
+
+
+describe('income in backups', () => {
+  it('round-trips income sources', () => {
+    const withIncome = JSON.stringify({
+      format: BACKUP_FORMAT,
+      version: 2,
+      incomes: [{ id: 'i1', name: 'Main job', frequency: 'semimonthly', grossMinor: 250_000, netMinor: 185_000 }],
+    });
+    expect(parseBackup(withIncome).incomes).toHaveLength(1);
+    expect(parseBackup(withIncome).incomes[0].name).toBe('Main job');
+  });
+
+  it('still restores a backup written before income existed', () => {
+    // Someone's v1 backup from last week must not become unreadable because a
+    // feature was added afterwards.
+    const v1 = JSON.stringify({ format: BACKUP_FORMAT, version: 1, notes: [{ id: 'n1' }] });
+    const parsed = parseBackup(v1);
+    expect(parsed.notes).toHaveLength(1);
+    expect(parsed.incomes).toEqual([]);
+  });
+
+  it('refuses a backup from a future version rather than losing what it cannot read', () => {
+    const v3 = JSON.stringify({ format: BACKUP_FORMAT, version: 3 });
+    expect(() => parseBackup(v3)).toThrow(/newer version/);
   });
 });

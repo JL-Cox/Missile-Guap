@@ -198,3 +198,25 @@ describe('every-2-weeks billing dates', () => {
     }
   });
 });
+
+
+describe('a subscription with an end date', () => {
+  // These two guard an inverted comparison that shipped: it hid a charge still
+  // due before a cancellation took effect, and kept showing charges after one.
+  // Both directions are money errors, in opposite directions.
+  it('still reports a charge due before the cancellation takes effect', () => {
+    expect(nextBilling(sub({ endedOn: '2026-02-20' }), '2026-02-01')).toBe('2026-02-15');
+  });
+
+  it('reports nothing once the last charge is past the end date', () => {
+    expect(nextBilling(sub({ endedOn: '2026-02-01' }), '2026-01-20')).toBeNull();
+  });
+
+  it('lists only the charges that fall on or before the end date', () => {
+    expect(billingDatesBetween(sub({ endedOn: '2026-03-20' }), '2026-01-01', '2026-12-31')).toEqual([
+      '2026-01-15',
+      '2026-02-15',
+      '2026-03-15',
+    ]);
+  });
+});

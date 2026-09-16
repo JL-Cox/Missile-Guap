@@ -60,7 +60,9 @@ export function billingIndexOnOrAfter(sub: Subscription, from: DateKey): number 
 export function nextBilling(sub: Subscription, from: DateKey = todayKey()): DateKey | null {
   if (sub.endedOn && daysBetween(sub.endedOn, from) > 0) return null;
   const date = occurrence(sub, billingIndexOnOrAfter(sub, from));
-  if (sub.endedOn && daysBetween(sub.endedOn, date) < 0) return null;
+  // After the end date, not before it. Inverted, this both hid a charge still
+  // due before a cancellation took effect and kept showing charges after one.
+  if (sub.endedOn && daysBetween(sub.endedOn, date) > 0) return null;
   return date;
 }
 
@@ -73,7 +75,7 @@ export function billingDatesBetween(sub: Subscription, from: DateKey, to: DateKe
   while (guard++ < 1000) {
     const date = occurrence(sub, n);
     if (daysBetween(date, to) < 0) break;
-    if (sub.endedOn && daysBetween(sub.endedOn, date) < 0) break;
+    if (sub.endedOn && daysBetween(sub.endedOn, date) > 0) break;
     out.push(date);
     n++;
   }

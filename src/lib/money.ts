@@ -1,4 +1,5 @@
-import type { BillingCycle, Subscription } from '../types';
+import type { BillingCycle, IncomeSource, Subscription } from '../types';
+import { isActiveIncome, PERIODS_PER_YEAR as PAY_PERIODS_PER_YEAR } from './pay';
 
 /** Average number of billing periods in a year, for normalising costs. */
 const PERIODS_PER_YEAR: Record<BillingCycle, number> = {
@@ -61,4 +62,83 @@ export function parseMoney(input: string): number | null {
   const value = Number(cleaned);
   if (!Number.isFinite(value)) return null;
   return Math.round(value * 100);
+}
+
+/* ---------------------------------------------------------------------------
+   Income
+   -------------------------------------------------------------------------- */
+
+/**
+ * Gross and net are transcribed from the paystub rather than calculated, so
+ * annualising them is just multiplication. Nothing here estimates tax: rates
+ * vary by state and filing status and change yearly, and a plausible-looking
+ * wrong number in someone's budget is the exact failure this app exists to
+ * avoid.
+ */
+export function grossYearlyMinor(source: IncomeSource): number {
+  return source.grossMinor * PAY_PERIODS_PER_YEAR[source.frequency];
+}
+
+export function netYearlyMinor(source: IncomeSource): number {
+  return source.netMinor * PAY_PERIODS_PER_YEAR[source.frequency];
+}
+
+export function netMonthlyMinor(source: IncomeSource): number {
+  return Math.round(netYearlyMinor(source) / 12);
+}
+
+/** What the itemised lines add up to, per pay period. */
+export function itemisedDeductionsMinor(source: IncomeSource): number {
+  return source.deductions.reduce((sum, d) => sum + d.amountMinor, 0);
+}
+
+/**
+ * The part of the gap between gross and net that has not been written down.
+ *
+ * A positive number means lines are missing, which is allowed and common - a
+ * stub has a dozen rows and nobody wants to type them all. It is reported as
+ * "not itemised", never as an error, and never blocks saving.
+ */
+export function unitemisedMinor(source: IncomeSource): number {
+  return Math.max(0, source.grossMinor - source.netMinor - itemisedDeductionsMinor(source));
+}
+
+export function totalNetYearlyMinor(sources: IncomeSource[]): number {
+  return sources.filter(isActiveIncome).reduce((sum, s) => sum + netYearlyMinor(s), 0);
+}
+
+export function totalNetMonthlyMinor(sources: IncomeSource[]): number {
+  return Math.round(totalNetYearlyMinor(sources) / 12);
+}
+
+export function totalGrossYearlyMinor(sources: IncomeSource[]): number {
+  return sources.filter(isActiveIncome).reduce((sum, s) => sum + grossYearlyMinor(s), 0);
+}
+
+/** Yearly deductions grouped by the label on the stub, biggest first. */
+export function deductionsByLabel(sources: IncomeSource[]): { label: string; minor: number }[] {
+  const map = new Map<string, number>();
+  for (const source of sources.filter(isActiveIncome)) {
+    const periods = PAY_PERIODS_PER_YEAR[source.frequency];
+    for (const d of source.deductions) {
+      const key = d.label.trim() || 'Unlabelled';
+      map.set(key, (map.get(key) ?? 0) + d.amountMinor * periods);
+    }
+    const rest = unitemisedMinor(source) * periods;
+    if (rest > 0) map.set('Not itemised', (map.get('Not itemised') ?? 0) + rest);
+  }
+  return [...map.entries()]
+    .map(([label, minor]) => ({ label, minor }))
+    .sort((a, b) => b.minor - a.minor);
+}
+
+/**
+ * What is left each month once the tracked subscriptions come out.
+ *
+ * Honest about its own limits: this app only knows about subscriptions, so the
+ * remainder covers rent, food and everything else too. It is "what is left for
+ * everything else", not "spare money".
+ */
+export function leftoverMonthlyMinor(sources: IncomeSource[], subs: Subscription[]): number {
+  return totalNetMonthlyMinor(sources) - totalMonthlyMinor(subs);
 }
