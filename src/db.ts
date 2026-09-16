@@ -137,6 +137,7 @@ export function blankIncome(partial: Partial<IncomeSource> = {}): IncomeSource {
     name: '',
     frequency: 'biweekly',
     daysOfMonth: [15, 31],
+    weekendShift: 'friday',
     grossMinor: 0,
     netMinor: 0,
     deductions: [],

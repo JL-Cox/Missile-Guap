@@ -1,4 +1,4 @@
-import type { DateKey, IncomeSource, PayFrequency } from '../types';
+import type { DateKey, IncomeSource, PayFrequency, WeekendShift } from '../types';
 import { addDays, daysBetween, fromDateKey, toDateKey, todayKey } from './time';
 
 /**
@@ -69,6 +69,99 @@ function anchorDays(source: IncomeSource): number[] {
 }
 
 /**
+ * Weekend handling.
+ *
+ * Most US employers move a payday that lands on a weekend rather than paying
+ * late - usually to the Friday before, since a late wage is a problem and an
+ * early one is not. Some pay the Monday after instead.
+ *
+ * Bank holidays shift paydays too, and are deliberately not modelled: the
+ * federal list moves each year, states differ, and a stale holiday table would
+ * produce confidently wrong dates - the exact failure this app avoids
+ * elsewhere by not calculating tax.
+ */
+function shiftOffWeekend(date: DateKey, shift: WeekendShift): DateKey {
+  if (shift === 'none') return date;
+  const day = fromDateKey(date).getDay(); // 0 Sunday .. 6 Saturday
+  if (day !== 0 && day !== 6) return date;
+  if (shift === 'friday') return addDays(date, day === 6 ? -1 : -2);
+  return addDays(date, day === 6 ? 2 : 1);
+}
+
+/** Records saved before this option existed follow the commonest US practice. */
+export function weekendShiftOf(source: IncomeSource): WeekendShift {
+  return source.weekendShift ?? 'friday';
+}
+
+/** The furthest a shift can move a date, used to size the search window. */
+const MAX_SHIFT_DAYS = 3;
+
+/**
+ * The schedule's own dates, before any weekend adjustment.
+ *
+ * Kept separate on purpose: the cycle must always be measured from the nominal
+ * date. Feeding a shifted date back into the schedule would compound the
+ * shifts, so an every-2-weeks job anchored on a Saturday would creep a day
+ * earlier every payday until it had drifted off the calendar entirely.
+ */
+function nominalPaydays(source: IncomeSource, from: DateKey, to: DateKey): DateKey[] {
+  const out: DateKey[] = [];
+
+  if (isIntervalFrequency(source.frequency)) {
+    if (!source.firstPaid) return [];
+    const step = intervalDays(source.frequency);
+    const gap = daysBetween(source.firstPaid, from);
+    const firstPeriod = gap <= 0 ? 0 : Math.ceil(gap / step);
+    let guard = 0;
+    for (let n = firstPeriod; guard++ < 500; n++) {
+      const date = addDays(source.firstPaid, n * step);
+      if (daysBetween(date, to) < 0) break;
+      out.push(date);
+    }
+    return out;
+  }
+
+  const days = anchorDays(source);
+  const start = fromDateKey(from);
+  let guard = 0;
+  for (let monthOffset = 0; guard++ < 400; monthOffset++) {
+    const probe = new Date(start.getFullYear(), start.getMonth() + monthOffset, 1);
+    const inMonth = paydaysInMonth(days, probe.getFullYear(), probe.getMonth());
+    if (inMonth.length > 0 && daysBetween(inMonth[0], to) < 0) break;
+    for (const date of inMonth) {
+      if (daysBetween(from, date) >= 0 && daysBetween(date, to) >= 0) out.push(date);
+    }
+  }
+  return out;
+}
+
+/**
+ * Every payday in [from, to], weekend adjustment applied, in order.
+ *
+ * The window is widened at both ends before shifting, because a Saturday the
+ * 1st moves back to the Friday of the previous month - a payday genuinely
+ * outside the nominal range.
+ */
+export function paydaysBetween(source: IncomeSource, from: DateKey, to: DateKey): DateKey[] {
+  if (source.endedOn && daysBetween(source.endedOn, from) > 0) return [];
+
+  const shift = weekendShiftOf(source);
+  const nominal = nominalPaydays(
+    source,
+    addDays(from, -MAX_SHIFT_DAYS),
+    addDays(to, MAX_SHIFT_DAYS),
+  );
+
+  return nominal
+    .map((date) => shiftOffWeekend(date, shift))
+    // Two adjacent nominal paydays can land on the same Friday. Both are real
+    // deposits, so both are kept - collapsing them would undercount the year.
+    .filter((date) => daysBetween(from, date) >= 0 && daysBetween(date, to) >= 0)
+    .filter((date) => !source.endedOn || daysBetween(source.endedOn, date) <= 0)
+    .sort();
+}
+
+/**
  * The next payday on or after `from`, or null when the schedule cannot be
  * worked out (no anchor date yet) or the source has ended.
  *
@@ -76,44 +169,15 @@ function anchorDays(source: IncomeSource): number[] {
  * screen is worse than an empty space.
  */
 export function nextPayday(source: IncomeSource, from: DateKey = todayKey()): DateKey | null {
-  if (source.endedOn && daysBetween(source.endedOn, from) > 0) return null;
-
-  let date: DateKey | null = null;
-
-  if (isIntervalFrequency(source.frequency)) {
-    if (!source.firstPaid) return null;
-    const step = intervalDays(source.frequency);
-    const gap = daysBetween(source.firstPaid, from);
-    // Jump straight to the right period instead of stepping a year of Fridays.
-    const periods = gap <= 0 ? 0 : Math.ceil(gap / step);
-    date = addDays(source.firstPaid, periods * step);
-  } else {
-    const days = anchorDays(source);
-    const start = fromDateKey(from);
-    // This month, then next: a fixed-date schedule always pays within 31 days.
-    for (let monthOffset = 0; monthOffset <= 1 && !date; monthOffset++) {
-      const probe = new Date(start.getFullYear(), start.getMonth() + monthOffset, 1);
-      const candidates = paydaysInMonth(days, probe.getFullYear(), probe.getMonth());
-      date = candidates.find((d) => daysBetween(d, from) <= 0) ?? null;
-    }
-  }
-
-  if (!date) return null;
-  if (source.endedOn && daysBetween(source.endedOn, date) > 0) return null;
-  return date;
+  // 45 days clears the longest gap any supported schedule can produce.
+  return paydaysBetween(source, from, addDays(from, 45))[0] ?? null;
 }
 
-/** Every payday in [from, to], in order. */
-export function paydaysBetween(source: IncomeSource, from: DateKey, to: DateKey): DateKey[] {
-  const out: DateKey[] = [];
-  let cursor = nextPayday(source, from);
-  let guard = 0;
-  while (cursor && daysBetween(cursor, to) >= 0 && guard++ < 400) {
-    out.push(cursor);
-    cursor = nextPayday(source, addDays(cursor, 1));
-  }
-  return out;
-}
+export const WEEKEND_SHIFT_LABELS: Record<WeekendShift, string> = {
+  none: 'Paid on the date, weekend or not',
+  friday: 'The Friday before',
+  monday: 'The Monday after',
+};
 
 export function describeFrequency(source: IncomeSource): string {
   const base = FREQUENCY_LABELS[source.frequency].toLowerCase();

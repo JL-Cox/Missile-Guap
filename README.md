@@ -139,9 +139,17 @@ than no number.
 - **Take-home minus subscriptions** gives what's left. Stated honestly: this app
   only knows about subscriptions, so that remainder still has to cover rent,
   food and everything else.
-- **Paydays appear on Today** and export to your calendar. These are scheduled
-  dates — if your employer moves a weekend payday to the Friday, the app does
-  not know that.
+- **Weekend paydays move the way yours actually do.** Per job: the Friday
+  before (the usual US practice, and the default), the Monday after, or not at
+  all. The shift applies to the date shown, never to the schedule itself — if a
+  shifted Friday fed back into the cycle, an every-2-weeks job anchored on a
+  Saturday would creep a day earlier every payday until it had drifted off the
+  calendar.
+- **Paydays appear on Today** and export to your calendar. A recurrence rule
+  cannot express "the Friday before", so a shifted schedule exports two years of
+  explicit dates instead of a rule that would be wrong a fifth of the time.
+  Bank holidays are **not** accounted for — the dates move yearly and differ by
+  state, so the app would be guessing.
 
 ## Privacy, stated precisely
 
@@ -230,7 +238,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-189 unit tests cover the parts where a quiet wrong answer would make the app
+205 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation

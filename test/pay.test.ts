@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeFrequency,
+  weekendShiftOf,
   nextPayday,
   paydaysBetween,
   PERIODS_PER_YEAR,
@@ -19,6 +20,9 @@ function income(partial: Partial<IncomeSource> = {}): IncomeSource {
     deductions: [],
     currency: 'USD',
     notes: '',
+    // These tests are about the schedule itself, so weekend adjustment is off
+    // unless a test turns it on. The app's own default is 'friday'.
+    weekendShift: 'none',
     createdAt: 0,
     updatedAt: 0,
     ...partial,
@@ -177,5 +181,94 @@ describe('describeFrequency', () => {
     expect(describeFrequency(income({ frequency: 'monthly', daysOfMonth: [3] }))).toContain('3rd');
     expect(describeFrequency(income({ frequency: 'monthly', daysOfMonth: [11] }))).toContain('11th');
     expect(describeFrequency(income({ frequency: 'monthly', daysOfMonth: [21] }))).toContain('21st');
+  });
+});
+
+
+describe('weekend paydays', () => {
+  // Most US employers pay early rather than late when payday lands on a
+  // weekend. These dates are real: 31 May 2026 is a Sunday, 28 Feb 2026 a
+  // Saturday, 15 Mar 2026 a Sunday.
+  const twice = (weekendShift: 'none' | 'friday' | 'monday') =>
+    income({ frequency: 'semimonthly', firstPaid: undefined, daysOfMonth: [15, 31], weekendShift });
+
+  it('moves a Sunday payday back to the Friday', () => {
+    expect(nextPayday(twice('friday'), '2026-05-16')).toBe('2026-05-29');
+  });
+
+  it('moves a Saturday payday back to the Friday', () => {
+    expect(nextPayday(twice('friday'), '2026-02-16')).toBe('2026-02-27');
+  });
+
+  it('can move forward to the Monday instead', () => {
+    expect(nextPayday(twice('monday'), '2026-05-16')).toBe('2026-06-01');
+    expect(nextPayday(twice('monday'), '2026-02-17')).toBe('2026-03-02');
+  });
+
+  it('finds a payday that shifted forward into today', () => {
+    // 15 Feb 2026 is a Sunday, so under "Monday after" that payday IS the 16th.
+    // Searching only from today forward would miss it and report the next one,
+    // telling you payday is a fortnight away on the morning it arrives.
+    expect(nextPayday(twice('monday'), '2026-02-16')).toBe('2026-02-16');
+  });
+
+  it('finds a payday that shifted backward into today', () => {
+    // The mirror case: 31 May 2026 is a Sunday, so under "Friday before" that
+    // payday is the 29th.
+    expect(nextPayday(twice('friday'), '2026-05-29')).toBe('2026-05-29');
+  });
+
+  it('leaves a weekday payday alone', () => {
+    // 15 May 2026 is a Friday already.
+    expect(nextPayday(twice('friday'), '2026-05-01')).toBe('2026-05-15');
+  });
+
+  it('does nothing at all when set to none', () => {
+    expect(nextPayday(twice('none'), '2026-05-16')).toBe('2026-05-31');
+  });
+
+  it('can pull a payday back into the previous month', () => {
+    // 1 Aug 2026 is a Saturday, so that payday is really 31 July.
+    const firstOfMonth = income({
+      frequency: 'monthly', firstPaid: undefined, daysOfMonth: [1], weekendShift: 'friday',
+    });
+    expect(nextPayday(firstOfMonth, '2026-07-20')).toBe('2026-07-31');
+  });
+
+  it('never lands on a weekend once shifting is on', () => {
+    for (const shift of ['friday', 'monday'] as const) {
+      const dates = paydaysBetween(twice(shift), '2026-01-01', '2026-12-31');
+      for (const d of dates) {
+        const day = new Date(`${d}T12:00:00`).getDay();
+        expect([0, 6]).not.toContain(day);
+      }
+    }
+  });
+
+  it('still counts the right number of paycheques a year', () => {
+    // Shifting moves dates; it must never add or drop a payday.
+    expect(paydaysBetween(twice('friday'), '2026-01-01', '2026-12-31')).toHaveLength(24);
+    expect(paydaysBetween(twice('monday'), '2026-01-01', '2026-12-31')).toHaveLength(24);
+  });
+
+  it('does not let shifts compound on an interval schedule', () => {
+    // The cycle is measured from the nominal date. If a shifted Friday fed back
+    // into the schedule, an every-2-weeks job anchored on a Saturday would creep
+    // a day earlier every payday until it had drifted off the calendar.
+    const saturdayAnchored = income({
+      frequency: 'biweekly', firstPaid: '2026-01-03', weekendShift: 'friday',
+    });
+    const dates = paydaysBetween(saturdayAnchored, '2026-01-01', '2026-12-31');
+    expect(dates).toHaveLength(26);
+    // Every one is the Friday before its nominal Saturday, so they stay 14 apart.
+    for (let i = 1; i < dates.length; i++) {
+      expect(daysBetween(dates[i - 1], dates[i])).toBe(14);
+    }
+    expect(dates[0]).toBe('2026-01-02');
+  });
+
+  it('defaults to the Friday before for records saved before the option existed', () => {
+    const legacy = income({ weekendShift: undefined });
+    expect(weekendShiftOf(legacy)).toBe('friday');
   });
 });

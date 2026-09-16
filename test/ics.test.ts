@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCalendar, calendarForSubscription, calendarForTask, icsFilename } from '../src/lib/ics';
-import type { Subscription, Task } from '../src/types';
+import type { IncomeSource, Subscription, Task } from '../src/types';
 
 function task(partial: Partial<Task> = {}): Task {
   return { id: 't1', title: 'Ring the dentist', notes: '', steps: [], tags: [], createdAt: 0, updatedAt: 0, ...partial };
@@ -185,5 +185,43 @@ describe('every-2-weeks subscriptions in the calendar', () => {
   it('repeats fortnightly, not weekly', () => {
     const ics = build([], [sub({ cycle: 'weekly', every: 2 })]);
     expect(ics).toContain('RRULE:FREQ=WEEKLY;INTERVAL=2');
+  });
+});
+
+
+describe('paydays in the calendar', () => {
+  const at = Date.UTC(2026, 0, 5, 10, 0, 0);
+  const job = (partial: Partial<IncomeSource> = {}): IncomeSource => ({
+    id: 'i1', name: 'Main job', frequency: 'semimonthly', daysOfMonth: [15, 31],
+    grossMinor: 250_000, netMinor: 185_000, deductions: [], currency: 'USD', notes: '',
+    weekendShift: 'none', createdAt: 0, updatedAt: 0, ...partial,
+  });
+  const cal = (incomes: IncomeSource[]) =>
+    buildCalendar({ tasks: [], subscriptions: [], incomes, formatAmount: () => '', formatPay: () => '$1,850.00', now: at });
+
+  it('uses a recurrence rule when nothing shifts', () => {
+    const ics = cal([job()]);
+    expect(ics).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=15,-1');
+    expect(ics).not.toContain('RDATE');
+  });
+
+  it('writes explicit dates when paydays shift, because no rule can say it', () => {
+    const ics = cal([job({ weekendShift: 'friday' })]);
+    expect(ics).toContain('RDATE;VALUE=DATE:');
+    expect(ics).not.toContain('RRULE');
+  });
+
+  it('puts no shifted payday on a weekend', () => {
+    const ics = cal([job({ weekendShift: 'friday' })]).replace(/\r\n /g, '');
+    const dates = /RDATE;VALUE=DATE:([\d,]+)/.exec(ics)![1].split(',');
+    expect(dates.length).toBeGreaterThan(40); // two years of twice-monthly pay
+    for (const d of dates) {
+      const iso = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+      expect([0, 6]).not.toContain(new Date(`${iso}T12:00:00`).getDay());
+    }
+  });
+
+  it('leaves an ended job out', () => {
+    expect(cal([job({ endedOn: '2025-12-01' })])).not.toContain('Main job');
   });
 });

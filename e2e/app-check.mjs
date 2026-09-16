@@ -288,6 +288,7 @@ await page.waitForSelector('#income-name');
 await page.fill('#income-name', 'Main job');
 await page.click('button:has-text("Twice a month")');
 await page.click('button:has-text("15th and last day")');
+await page.click('button:has-text("The Friday before")');
 await page.fill('#income-gross', '2500.00');
 await page.fill('#income-net', '1850.00');
 await page.click('button:has-text("+ Federal income tax")');
@@ -304,6 +305,14 @@ check('take-home is 24 paycheques a year, not 26', moneyText.includes('3,700.00'
 check('gross is annualised the same way', moneyText.includes('60,000.00'), true);
 check('the deduction breakdown appears', moneyText.includes('Federal income tax'), true);
 check('the unexplained gap is named, not hidden', moneyText.includes('Not itemised'), true);
+
+// The next payday shown must never be a Saturday or Sunday once shifting is on.
+const shownPayday = /Next: ([A-Z][a-z]{2} \d{1,2}, \d{4})/.exec(moneyText)?.[1];
+check('a next payday is shown at all', Boolean(shownPayday), true);
+if (shownPayday) {
+  const day = new Date(`${shownPayday} 12:00:00`).getDay();
+  check('and it is not on a weekend', [0, 6].includes(day), false);
+}
 await page.screenshot({ path: `${OUT}/income.png`, fullPage: true });
 
 // --- a note --------------------------------------------------------------

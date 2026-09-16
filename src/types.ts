@@ -113,6 +113,12 @@ export interface Subscription {
  */
 export type PayFrequency = 'weekly' | 'biweekly' | 'semimonthly' | 'monthly';
 
+/**
+ * What happens when a payday lands on a weekend. Most US employers pay the
+ * Friday before rather than late; some pay the Monday after.
+ */
+export type WeekendShift = 'none' | 'friday' | 'monday';
+
 /** One line off a paystub between gross and net. */
 export interface Deduction {
   id: Id;
@@ -135,6 +141,8 @@ export interface IncomeSource {
    * lands on the 28th in February - no special case needed.
    */
   daysOfMonth?: number[];
+  /** Absent on records saved before this existed; treated as 'friday'. */
+  weekendShift?: WeekendShift;
 
   /**
    * Both taken straight off the stub rather than calculated. This app does not

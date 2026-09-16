@@ -170,7 +170,7 @@ export default function Today({ settings }: { settings: Settings }) {
             ))}
           </div>
           <p className="faint">
-            Scheduled dates. If your employer moves a weekend payday to the Friday, this will not know.
+            Weekend paydays are moved the way you set for each job. Bank holidays are not accounted for.
             {paidSoon.length > 0 &&
               ` About ${formatMoney(
                 paidSoon.reduce((sum, p) => sum + netMonthlyMinor(p.src), 0),

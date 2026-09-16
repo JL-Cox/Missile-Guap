@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { newId, saveIncome } from '../db';
-import type { Deduction, IncomeSource, PayFrequency } from '../types';
-import { FREQUENCY_LABELS, isIntervalFrequency } from '../lib/pay';
+import type { Deduction, IncomeSource, PayFrequency, WeekendShift } from '../types';
+import { FREQUENCY_LABELS, isIntervalFrequency, WEEKEND_SHIFT_LABELS, weekendShiftOf } from '../lib/pay';
 import { formatMoney, parseMoney, unitemisedMinor } from '../lib/money';
 import { describeDate, todayKey } from '../lib/time';
 import { ConfirmButton, useAutoFocus } from './ui';
@@ -165,6 +165,27 @@ export default function IncomeEditor({
           </p>
         </div>
       )}
+
+      <div className="field">
+        <label>If payday lands on a weekend</label>
+        <div className="btn-row">
+          {(['friday', 'monday', 'none'] as WeekendShift[]).map((shift) => (
+            <button
+              key={shift}
+              type="button"
+              aria-pressed={weekendShiftOf(draft) === shift}
+              className={`btn btn-sm${weekendShiftOf(draft) === shift ? ' btn-primary' : ''}`}
+              onClick={() => patch({ weekendShift: shift })}
+            >
+              {WEEKEND_SHIFT_LABELS[shift]}
+            </button>
+          ))}
+        </div>
+        <p className="faint">
+          Bank holidays can move a payday too. This does not know about those - the dates change every year and
+          differ by state, so it would be guessing.
+        </p>
+      </div>
 
       <div className="field-row">
         <div className="field">

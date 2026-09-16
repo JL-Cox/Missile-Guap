@@ -1,7 +1,7 @@
 import type { IncomeSource, Subscription, Task } from '../types';
-import { isIntervalFrequency, nextPayday } from './pay';
+import { isIntervalFrequency, nextPayday, paydaysBetween, weekendShiftOf } from './pay';
 import { advanceCycle, nextBilling } from './recurrence';
-import { atTime, fromDateKey, todayKey } from './time';
+import { addDays, atTime, fromDateKey, todayKey } from './time';
 
 /**
  * A browser tab cannot be trusted to wake up and remind you - it only fires
@@ -55,6 +55,8 @@ interface IcsEvent {
   /** Minutes before the start to alarm. */
   alarmMinutesBefore?: number;
   rrule?: string;
+  /** Explicit extra dates, for schedules no recurrence rule can express. */
+  rdates?: string[];
 }
 
 function renderEvent(ev: IcsEvent, now: number): string[] {
@@ -69,6 +71,7 @@ function renderEvent(ev: IcsEvent, now: number): string[] {
   lines.push(`SUMMARY:${escapeText(ev.summary)}`);
   if (ev.description) lines.push(`DESCRIPTION:${escapeText(ev.description)}`);
   if (ev.rrule) lines.push(`RRULE:${ev.rrule}`);
+  if (ev.rdates?.length) lines.push(`RDATE;VALUE=DATE:${ev.rdates.map(dateOnly).join(',')}`);
   if (ev.alarmMinutesBefore !== undefined) {
     lines.push(
       'BEGIN:VALARM',
@@ -166,6 +169,24 @@ function wrapCalendar(events: IcsEvent[], now: number, name: string): string {
 function paydayEvent(source: IncomeSource, amountLabel: string, now: number): IcsEvent | null {
   const next = nextPayday(source, todayKey(new Date(now)));
   if (!next) return null;
+
+  /*
+    A recurrence rule cannot say "the Friday before, if this lands on a
+    weekend" - RRULE has no such operator. So a shifted schedule is written out
+    as explicit dates instead. Two years of them is a few hundred bytes and
+    always right, where a rule that ignored the shift would put a fifth of the
+    paydays on the wrong day.
+  */
+  if (weekendShiftOf(source) !== 'none') {
+    const dates = paydaysBetween(source, next, addDays(next, 730));
+    return {
+      uid: `income-${source.id}@steady.local`,
+      summary: `${source.name} - ${amountLabel}`,
+      description: source.notes || undefined,
+      allDay: dates[0] ?? next,
+      rdates: dates.slice(1),
+    };
+  }
 
   let rrule: string;
   if (isIntervalFrequency(source.frequency)) {
