@@ -119,6 +119,17 @@ export type PayFrequency = 'weekly' | 'biweekly' | 'semimonthly' | 'monthly';
  */
 export type WeekendShift = 'none' | 'friday' | 'monday';
 
+/** Re-exported so IncomeSource does not drag a lib import into the type file. */
+export type HolidayId =
+  | 'newYear'
+  | 'goodFriday'
+  | 'memorial'
+  | 'independence'
+  | 'labor'
+  | 'thanksgiving'
+  | 'thanksgivingFriday'
+  | 'christmas';
+
 /** One line off a paystub between gross and net. */
 export interface Deduction {
   id: Id;
@@ -143,6 +154,11 @@ export interface IncomeSource {
   daysOfMonth?: number[];
   /** Absent on records saved before this existed; treated as 'friday'. */
   weekendShift?: WeekendShift;
+  /**
+   * Which holidays this employer closes for. Absent means the default set; an
+   * explicit empty array means none, and the two are not the same thing.
+   */
+  holidays?: HolidayId[];
 
   /**
    * Both taken straight off the stub rather than calculated. This app does not

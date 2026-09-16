@@ -170,7 +170,7 @@ export default function Today({ settings }: { settings: Settings }) {
             ))}
           </div>
           <p className="faint">
-            Weekend paydays are moved the way you set for each job. Bank holidays are not accounted for.
+            Weekends and the holidays you set for each job are already accounted for.
             {paidSoon.length > 0 &&
               ` About ${formatMoney(
                 paidSoon.reduce((sum, p) => sum + netMonthlyMinor(p.src), 0),

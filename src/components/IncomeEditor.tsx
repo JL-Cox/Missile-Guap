@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { newId, saveIncome } from '../db';
 import type { Deduction, IncomeSource, PayFrequency, WeekendShift } from '../types';
 import { FREQUENCY_LABELS, isIntervalFrequency, WEEKEND_SHIFT_LABELS, weekendShiftOf } from '../lib/pay';
+import { ALL_HOLIDAYS, HOLIDAY_LABELS, holidaysOf } from '../lib/holidays';
 import { formatMoney, parseMoney, unitemisedMinor } from '../lib/money';
 import { describeDate, todayKey } from '../lib/time';
 import { ConfirmButton, useAutoFocus } from './ui';
@@ -182,10 +183,41 @@ export default function IncomeEditor({
           ))}
         </div>
         <p className="faint">
-          Bank holidays can move a payday too. This does not know about those - the dates change every year and
-          differ by state, so it would be guessing.
+          A payday on a day the office is shut moves the same way. It keeps stepping until it reaches a working
+          day, so a payday on Boxing Day weekend ends up before Christmas rather than on it.
         </p>
       </div>
+
+      {weekendShiftOf(draft) !== 'none' && (
+        <div className="field">
+          <label>Days this employer is closed</label>
+          <div className="stack-sm">
+            {ALL_HOLIDAYS.map((id) => {
+              const on = holidaysOf(draft).includes(id);
+              return (
+                <label key={id} className="check">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() =>
+                      patch({
+                        holidays: on
+                          ? holidaysOf(draft).filter((h) => h !== id)
+                          : [...holidaysOf(draft), id],
+                      })
+                    }
+                  />
+                  <span>{HOLIDAY_LABELS[id]}</span>
+                </label>
+              );
+            })}
+          </div>
+          <p className="faint">
+            When one of these falls on a weekend, the day off is taken on the nearest weekday - so New Year's Day
+            2028 being a Saturday makes Friday 31 December 2027 the day off, and a payday that day moves.
+          </p>
+        </div>
+      )}
 
       <div className="field-row">
         <div className="field">

@@ -7,6 +7,7 @@ import {
   PERIODS_PER_YEAR,
 } from '../src/lib/pay';
 import { daysBetween } from '../src/lib/time';
+import { isHoliday } from '../src/lib/holidays';
 import type { IncomeSource } from '../src/types';
 
 function income(partial: Partial<IncomeSource> = {}): IncomeSource {
@@ -255,20 +256,127 @@ describe('weekend paydays', () => {
     // The cycle is measured from the nominal date. If a shifted Friday fed back
     // into the schedule, an every-2-weeks job anchored on a Saturday would creep
     // a day earlier every payday until it had drifted off the calendar.
+    // Holidays are off here so this isolates the weekend rule: every payday is
+    // the Friday before its nominal Saturday, so they stay exactly 14 apart.
     const saturdayAnchored = income({
-      frequency: 'biweekly', firstPaid: '2026-01-03', weekendShift: 'friday',
+      frequency: 'biweekly', firstPaid: '2026-01-03', weekendShift: 'friday', holidays: [],
     });
     const dates = paydaysBetween(saturdayAnchored, '2026-01-01', '2026-12-31');
     expect(dates).toHaveLength(26);
-    // Every one is the Friday before its nominal Saturday, so they stay 14 apart.
     for (let i = 1; i < dates.length; i++) {
       expect(daysBetween(dates[i - 1], dates[i])).toBe(14);
     }
     expect(dates[0]).toBe('2026-01-02');
   });
 
+  it('still does not compound once holidays are shifting dates too', () => {
+    // With holidays on, consecutive paydays are no longer a flat 14 apart - a
+    // Christmas-week one rolls further back. What must hold is that the
+    // underlying cycle is untouched: same number of paydays, and each one
+    // within a few days of where the unshifted schedule put it.
+    // Measured mid-year on purpose. Across a year boundary the counts legitimately
+    // differ: a Saturday 2 Jan payday rolls back past New Year's Day into the
+    // previous December, so that calendar year really does receive an extra one.
+    const base = { frequency: 'biweekly' as const, firstPaid: '2026-01-03' };
+    const nominal = paydaysBetween(income({ ...base, weekendShift: 'none' }), '2026-02-01', '2026-11-30');
+    const shifted = paydaysBetween(income({ ...base, weekendShift: 'friday' }), '2026-02-01', '2026-11-30');
+
+    expect(shifted).toHaveLength(nominal.length);
+    for (let i = 0; i < shifted.length; i++) {
+      const moved = Math.abs(daysBetween(shifted[i], nominal[i]));
+      expect(moved).toBeLessThanOrEqual(6);
+    }
+  });
+
   it('defaults to the Friday before for records saved before the option existed', () => {
     const legacy = income({ weekendShift: undefined });
     expect(weekendShiftOf(legacy)).toBe('friday');
+  });
+});
+
+
+describe('paydays that land on a holiday', () => {
+  const lastDay = (partial = {}) =>
+    income({ frequency: 'semimonthly', firstPaid: undefined, daysOfMonth: [15, 31], weekendShift: 'friday', ...partial });
+
+  it('moves off the day the office is shut for the new year', () => {
+    // The case that prompted all this: 1 Jan 2028 is a Saturday, so Friday
+    // 31 Dec 2027 is the day off - and it is a payday.
+    expect(nextPayday(lastDay(), '2027-12-20')).toBe('2027-12-30');
+  });
+
+  it('rolls back more than one day when a weekend and a holiday sit together', () => {
+    // 26 Dec 2026 is a Saturday; the 25th is Christmas, a Friday.
+    const boxingWeek = income({
+      frequency: 'monthly', firstPaid: undefined, daysOfMonth: [26], weekendShift: 'friday',
+    });
+    expect(nextPayday(boxingWeek, '2026-12-20')).toBe('2026-12-24');
+  });
+
+  it('steps back past Thanksgiving when payday is the Friday after it', () => {
+    // 27 Nov 2026 is the day after Thanksgiving, itself a holiday, and the 26th
+    // is Thanksgiving - so it lands on the Wednesday.
+    const late = income({
+      frequency: 'monthly', firstPaid: undefined, daysOfMonth: [27], weekendShift: 'friday',
+    });
+    expect(nextPayday(late, '2026-11-20')).toBe('2026-11-25');
+  });
+
+  it('can move forward past a holiday instead', () => {
+    const forward = income({
+      frequency: 'monthly', firstPaid: undefined, daysOfMonth: [25], weekendShift: 'monday',
+    });
+    // 25 Dec 2026 is Christmas on a Friday; forward lands on the Monday.
+    expect(nextPayday(forward, '2026-12-01')).toBe('2026-12-28');
+  });
+
+  it('ignores holidays entirely when shifting is off', () => {
+    expect(nextPayday(lastDay({ weekendShift: 'none' }), '2027-12-20')).toBe('2027-12-31');
+  });
+
+  it('ignores holidays a job does not observe', () => {
+    // Same December, but this employer works through the new year.
+    expect(nextPayday(lastDay({ holidays: [] }), '2027-12-20')).toBe('2027-12-31');
+  });
+
+  it('never lands on a weekend or an observed holiday, across a whole year', () => {
+    const dates = paydaysBetween(lastDay(), '2027-01-01', '2027-12-31');
+    for (const d of dates) {
+      expect([0, 6]).not.toContain(new Date(`${d}T12:00:00`).getDay());
+      expect(isHoliday(d)).toBe(false);
+    }
+  });
+
+  it('still counts the right number of paycheques with holidays in play', () => {
+    // Rolling moves dates; it must never add or drop a payday.
+    expect(paydaysBetween(lastDay(), '2027-01-01', '2027-12-31')).toHaveLength(24);
+    const weekly = income({ frequency: 'weekly', firstPaid: '2027-01-01', weekendShift: 'friday' });
+    expect(paydaysBetween(weekly, '2027-01-01', '2027-12-31')).toHaveLength(52);
+  });
+});
+
+
+describe('a payday that rolls across a year boundary', () => {
+  it('is counted in the year it actually arrives', () => {
+    // 2 Jan 2027 is a Saturday and 1 Jan is New Year's Day, so that paycheque
+    // really lands on Thursday 31 Dec 2026. Reporting it in 2027 would put
+    // money in a month it was never in.
+    const fortnightly = income({ frequency: 'biweekly', firstPaid: '2026-01-03', weekendShift: 'friday' });
+    expect(paydaysBetween(fortnightly, '2026-12-01', '2026-12-31')).toContain('2026-12-31');
+    expect(paydaysBetween(fortnightly, '2027-01-01', '2027-01-31')).not.toContain('2027-01-02');
+  });
+});
+
+
+describe('income saved before holidays existed', () => {
+  it('picks up the default holiday set rather than losing holiday handling', () => {
+    // No weekendShift, no holidays - exactly the shape already on the phone.
+    const legacy = {
+      id: 'i1', name: 'Main job', frequency: 'semimonthly', daysOfMonth: [15, 31],
+      grossMinor: 250_000, netMinor: 185_000, deductions: [], currency: 'USD', notes: '',
+      createdAt: 0, updatedAt: 0,
+    } as IncomeSource;
+    // 31 Dec 2027 is the observed New Year holiday, so this must move to the 30th.
+    expect(nextPayday(legacy, '2027-12-20')).toBe('2027-12-30');
   });
 });

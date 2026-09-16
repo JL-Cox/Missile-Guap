@@ -148,8 +148,18 @@ than no number.
 - **Paydays appear on Today** and export to your calendar. A recurrence rule
   cannot express "the Friday before", so a shifted schedule exports two years of
   explicit dates instead of a rule that would be wrong a fifth of the time.
-  Bank holidays are **not** accounted for — the dates move yearly and differ by
-  state, so the app would be guessing.
+  **Holidays are accounted for too.** Each job carries its own list of days the
+  employer is closed — New Year's Day, Good Friday, Memorial Day, Independence
+  Day, Labor Day, Thanksgiving and the Friday after, Christmas — and a payday
+  landing on one keeps stepping until it reaches a working day. A payday on the
+  Saturday after Christmas ends up on Christmas Eve, not on Christmas.
+
+  None of this is a lookup table. Every date is computed: three are fixed, three
+  are "the nth weekday of a month", and Good Friday is two days before Easter
+  via the Gregorian computus. Nothing to maintain, nothing to go stale. Fixed
+  holidays falling on a weekend are taken the nearest weekday — which is why
+  New Year's Day 2028 being a Saturday makes Friday 31 December 2027 a day off,
+  and moves a payday that lands there.
 
 ## Privacy, stated precisely
 
@@ -238,7 +248,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-205 unit tests cover the parts where a quiet wrong answer would make the app
+241 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation
@@ -270,6 +280,7 @@ src/
     recurrence.ts     Repeats, and billing dates anchored to the first charge
     money.ts          Minor units only; cost and pay normalised to a year
     pay.ts            Pay schedules: intervals and fixed days of the month
+    holidays.ts       Employer closures, computed - including Easter
     classify.ts       Naive Bayes tag suggestions, trained on your own notes
     subscriptions.ts  Billing rhythms, categories, name autocomplete (no lookups)
     share.ts          Hands a file to the phone's share sheet, not the network

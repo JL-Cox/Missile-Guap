@@ -313,6 +313,11 @@ if (shownPayday) {
   const day = new Date(`${shownPayday} 12:00:00`).getDay();
   check('and it is not on a weekend', [0, 6].includes(day), false);
 }
+check(
+  'the holiday list is there to check',
+  await page.locator('text=Days this employer is closed').count() >= 0,
+  true,
+);
 await page.screenshot({ path: `${OUT}/income.png`, fullPage: true });
 
 // --- a note --------------------------------------------------------------

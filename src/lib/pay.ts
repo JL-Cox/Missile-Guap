@@ -1,4 +1,5 @@
-import type { DateKey, IncomeSource, PayFrequency, WeekendShift } from '../types';
+import type { DateKey, HolidayId, IncomeSource, PayFrequency, WeekendShift } from '../types';
+import { holidaysOf, isHoliday } from './holidays';
 import { addDays, daysBetween, fromDateKey, toDateKey, todayKey } from './time';
 
 /**
@@ -69,23 +70,30 @@ function anchorDays(source: IncomeSource): number[] {
 }
 
 /**
- * Weekend handling.
+ * Moving a payday off a day nobody is working.
  *
- * Most US employers move a payday that lands on a weekend rather than paying
- * late - usually to the Friday before, since a late wage is a problem and an
- * early one is not. Some pay the Monday after instead.
+ * Most US employers pay early rather than late when payday lands on a weekend
+ * or a shutdown day - a late wage is a problem, an early one is not. Some pay
+ * the next working day instead.
  *
- * Bank holidays shift paydays too, and are deliberately not modelled: the
- * federal list moves each year, states differ, and a stale holiday table would
- * produce confidently wrong dates - the exact failure this app avoids
- * elsewhere by not calculating tax.
+ * This steps rather than hops, because one move is often not enough: a payday
+ * on Saturday 26 December moves to Friday the 25th, which is Christmas, so it
+ * ends up on Thursday the 24th. A payday on the Friday after Thanksgiving has
+ * Thanksgiving itself behind it, so it lands on the Wednesday.
  */
-function shiftOffWeekend(date: DateKey, shift: WeekendShift): DateKey {
+function rollToWorkingDay(date: DateKey, shift: WeekendShift, holidays: HolidayId[]): DateKey {
   if (shift === 'none') return date;
-  const day = fromDateKey(date).getDay(); // 0 Sunday .. 6 Saturday
-  if (day !== 0 && day !== 6) return date;
-  if (shift === 'friday') return addDays(date, day === 6 ? -1 : -2);
-  return addDays(date, day === 6 ? 2 : 1);
+  const step = shift === 'friday' ? -1 : 1;
+  let cursor = date;
+  // A week is far more than any real run of closures; the bound just guarantees
+  // this can never spin if a future holiday set were pathological.
+  for (let guard = 0; guard < 10; guard++) {
+    const day = fromDateKey(cursor).getDay(); // 0 Sunday .. 6 Saturday
+    const closed = day === 0 || day === 6 || isHoliday(cursor, holidays);
+    if (!closed) return cursor;
+    cursor = addDays(cursor, step);
+  }
+  return cursor;
 }
 
 /** Records saved before this option existed follow the commonest US practice. */
@@ -93,8 +101,13 @@ export function weekendShiftOf(source: IncomeSource): WeekendShift {
   return source.weekendShift ?? 'friday';
 }
 
-/** The furthest a shift can move a date, used to size the search window. */
-const MAX_SHIFT_DAYS = 3;
+/**
+ * The furthest a shift can move a date, used to size the search window.
+ *
+ * Six rather than three now that holidays are in play: a Christmas-week payday
+ * can roll back past a weekend and two closures together.
+ */
+const MAX_SHIFT_DAYS = 6;
 
 /**
  * The schedule's own dates, before any weekend adjustment.
@@ -146,6 +159,7 @@ export function paydaysBetween(source: IncomeSource, from: DateKey, to: DateKey)
   if (source.endedOn && daysBetween(source.endedOn, from) > 0) return [];
 
   const shift = weekendShiftOf(source);
+  const holidays = holidaysOf(source);
   const nominal = nominalPaydays(
     source,
     addDays(from, -MAX_SHIFT_DAYS),
@@ -153,7 +167,7 @@ export function paydaysBetween(source: IncomeSource, from: DateKey, to: DateKey)
   );
 
   return nominal
-    .map((date) => shiftOffWeekend(date, shift))
+    .map((date) => rollToWorkingDay(date, shift, holidays))
     // Two adjacent nominal paydays can land on the same Friday. Both are real
     // deposits, so both are kept - collapsing them would undercount the year.
     .filter((date) => daysBetween(from, date) >= 0 && daysBetween(date, to) >= 0)

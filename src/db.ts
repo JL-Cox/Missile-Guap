@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { DEFAULT_HOLIDAYS } from './lib/holidays';
 import {
   DEFAULT_SETTINGS,
   type Capture,
@@ -138,6 +139,7 @@ export function blankIncome(partial: Partial<IncomeSource> = {}): IncomeSource {
     frequency: 'biweekly',
     daysOfMonth: [15, 31],
     weekendShift: 'friday',
+    holidays: [...DEFAULT_HOLIDAYS],
     grossMinor: 0,
     netMinor: 0,
     deductions: [],
