@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankSubscription, db, saveSubscription } from '../db';
-import type { BillingCycle, Settings, Subscription } from '../types';
+import type { Settings, Subscription } from '../types';
 import {
   byCategoryYearly,
   formatMoney,
@@ -15,16 +15,16 @@ import { describeCycle, nextBilling } from '../lib/recurrence';
 import { upcomingBills } from '../lib/agenda';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
-import { categoryChoices, findPreset, SERVICE_PRESETS } from '../lib/subscriptions';
+import {
+  categoryChoices,
+  cycleUnit,
+  CYCLE_PRESETS,
+  findCyclePreset,
+  findPreset,
+  SERVICE_PRESETS,
+} from '../lib/subscriptions';
 import { addDays, describeDate, todayKey } from '../lib/time';
 import { Amount, ConfirmButton, Empty, Section, useAutoFocus } from '../components/ui';
-
-const CYCLES: { id: BillingCycle; label: string }[] = [
-  { id: 'weekly', label: 'Weekly' },
-  { id: 'monthly', label: 'Monthly' },
-  { id: 'quarterly', label: 'Every 3 months' },
-  { id: 'yearly', label: 'Yearly' },
-];
 
 /**
  * Subscriptions are the classic forgetting tax: money leaving for something you
@@ -466,18 +466,29 @@ function SubscriptionEditor({
       <div className="field">
         <label>How often</label>
         <div className="btn-row">
-          {CYCLES.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              aria-pressed={draft.cycle === c.id}
-              className={`btn btn-sm${draft.cycle === c.id ? ' btn-primary' : ''}`}
-              onClick={() => patch({ cycle: c.id })}
-            >
-              {c.label}
-            </button>
-          ))}
+          {CYCLE_PRESETS.map((c) => {
+            const selected = findCyclePreset(draft.cycle, draft.every)?.id === c.id;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                aria-pressed={selected}
+                className={`btn btn-sm${selected ? ' btn-primary' : ''}`}
+                // A preset sets both fields, so picking one can never leave a
+                // stale "every 2" behind from a previous choice.
+                onClick={() => patch({ cycle: c.cycle, every: c.every })}
+              >
+                {c.label}
+              </button>
+            );
+          })}
         </div>
+        {!findCyclePreset(draft.cycle, draft.every) && (
+          <p className="faint">
+            Currently {describeCycle(draft.cycle, draft.every)}, which none of these cover. Picking one would
+            change when it charges; leave them alone to keep it as it is.
+          </p>
+        )}
       </div>
 
       <div className="field">
@@ -599,7 +610,7 @@ function SubscriptionEditor({
           </div>
 
           <div className="field">
-            <label htmlFor="sub-every">Bill every how many {CYCLES.find((c) => c.id === draft.cycle)?.label.toLowerCase()} periods?</label>
+            <label htmlFor="sub-every">Bill every how many {cycleUnit(draft.cycle)}?</label>
             <input
               id="sub-every"
               type="number"
@@ -608,7 +619,9 @@ function SubscriptionEditor({
               value={draft.every}
               onChange={(e) => patch({ every: Math.max(1, Number(e.target.value) || 1) })}
             />
-            <p className="faint">Leave this at 1 unless it is something odd like every 2 months.</p>
+            <p className="faint">
+              Only needed for a rhythm the buttons above do not cover, like every 2 months.
+            </p>
           </div>
 
           <div className="field">

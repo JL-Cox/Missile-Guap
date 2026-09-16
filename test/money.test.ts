@@ -100,3 +100,27 @@ describe('formatMoney', () => {
     expect(formatMoney(1299, 'NOTACURRENCY')).toContain('12.99');
   });
 });
+
+
+describe('every-2-weeks subscriptions', () => {
+  // 26 charges a year, not 24. Treating a fortnightly bill as twice-monthly
+  // understates the yearly cost by two whole payments, which is exactly the
+  // kind of quietly wrong number this app exists to avoid.
+  const fortnightly = sub({ amountMinor: 1500, cycle: 'weekly', every: 2 });
+
+  it('counts 26 charges a year', () => {
+    expect(yearlyMinor(fortnightly)).toBe(1500 * 26);
+  });
+
+  it('averages that over twelve months', () => {
+    expect(monthlyMinor(fortnightly)).toBe(Math.round((1500 * 26) / 12));
+  });
+
+  it('costs more per year than the same amount billed monthly', () => {
+    expect(yearlyMinor(fortnightly)).toBeGreaterThan(yearlyMinor(sub({ amountMinor: 1500, cycle: 'monthly' })));
+  });
+
+  it('adds into the totals like any other rhythm', () => {
+    expect(totalYearlyMinor([fortnightly])).toBe(1500 * 26);
+  });
+});

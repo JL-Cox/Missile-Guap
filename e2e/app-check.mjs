@@ -212,6 +212,63 @@ await page.click('button:has-text("Done")');
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${OUT}/money.png`, fullPage: true });
 
+// --- an every-2-weeks subscription ----------------------------------------
+// The yearly figure is the one that would be quietly wrong if any of the
+// fortnightly maths were wrong, and the one you would never spot by eye:
+// £15 every 2 weeks is £390 a year, not £180 as twice-monthly would imply.
+await page.click('.nav-btn:has-text("Money")');
+await page.click('button:has-text("Add a subscription")');
+await page.waitForSelector('#sub-name');
+await page.fill('#sub-name', 'Veg box');
+await page.fill('#sub-amount', '15.00');
+await page.click('button:has-text("Every 2 weeks")');
+await page.waitForTimeout(150);
+check(
+  'every 2 weeks is selectable without opening More options',
+  await page.getAttribute('button[aria-pressed="true"]:has-text("Every 2 weeks")', 'aria-pressed'),
+  'true',
+);
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(500);
+
+const fortnightly = await page.textContent('.main');
+check('the confirmation counts 26 charges a year', fortnightly.includes('390.00'), true);
+check('the card says how often in plain words', fortnightly.includes('every 2 weeks'), true);
+await page.screenshot({ path: `${OUT}/fortnightly.png`, fullPage: true });
+await page.click('button:has-text("Done")');
+await page.waitForTimeout(300);
+
+// A rhythm no button covers must survive a round-trip through the form. If
+// picking presets clobbered `every`, an every-2-months bill would silently
+// become monthly - doubling its yearly cost and changing its charge dates.
+await page.click('button:has-text("Add a subscription")');
+await page.waitForSelector('#sub-name');
+await page.fill('#sub-name', 'Odd one');
+await page.fill('#sub-amount', '20.00');
+await page.click('button:has-text("Monthly")');
+await page.click('button:has-text("More options")');
+await page.fill('#sub-every', '2');
+await page.waitForTimeout(150);
+check(
+  'an uncovered rhythm highlights no preset',
+  await page.locator('.btn-row button[aria-pressed="true"]:has-text("Monthly")').count(),
+  0,
+);
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+check(
+  'and is costed as every 2 months, not monthly',
+  (await page.textContent('.main')).includes('120.00'),
+  true,
+);
+await page.click('button:has-text("Change something")');
+await page.waitForSelector('#sub-name');
+// No need to open More options: a subscription with a custom interval opens it
+// already, so the unusual setting is visible rather than hidden behind a toggle.
+check('reopening shows the custom interval without digging', await page.inputValue('#sub-every'), '2');
+await page.click('form.card button:has-text("Cancel")');
+await page.waitForTimeout(300);
+
 // --- a note --------------------------------------------------------------
 await page.click('.nav-btn:has-text("Notes")');
 await page.click('button:has-text("New note")');

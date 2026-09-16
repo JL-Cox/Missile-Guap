@@ -1,6 +1,51 @@
 import type { BillingCycle } from '../types';
 
 /**
+ * The billing rhythms offered as buttons.
+ *
+ * "Every 2 weeks" is not its own cycle - it is weekly billed every second week -
+ * so a preset sets both `cycle` and `every` together. That keeps the stored
+ * shape unchanged, so nothing already saved needs migrating.
+ *
+ * The labels say exactly how often money moves. Deliberately not "semi-weekly",
+ * "bi-weekly" or "fortnightly": the first two mean opposite things to different
+ * people and the third is regional, and a label you have to decode is no use on
+ * a screen whose whole job is to stop you second-guessing your own budget.
+ */
+export interface CyclePreset {
+  id: string;
+  label: string;
+  cycle: BillingCycle;
+  every: number;
+}
+
+export const CYCLE_PRESETS: CyclePreset[] = [
+  { id: 'weekly', label: 'Weekly', cycle: 'weekly', every: 1 },
+  { id: 'fortnightly', label: 'Every 2 weeks', cycle: 'weekly', every: 2 },
+  { id: 'monthly', label: 'Monthly', cycle: 'monthly', every: 1 },
+  { id: 'quarterly', label: 'Every 3 months', cycle: 'quarterly', every: 1 },
+  { id: 'yearly', label: 'Yearly', cycle: 'yearly', every: 1 },
+];
+
+/**
+ * The preset matching a saved subscription, or `undefined` for a rhythm no
+ * button covers - every 2 months, say.
+ *
+ * `undefined` is the right answer there, not a failure: the form then highlights
+ * nothing and leaves the custom value alone under More options, so an unusual
+ * subscription is never quietly rewritten into a tidier one that bills on
+ * different days.
+ */
+export function findCyclePreset(cycle: BillingCycle, every: number): CyclePreset | undefined {
+  return CYCLE_PRESETS.find((p) => p.cycle === cycle && p.every === every);
+}
+
+/** The plain noun for a cycle's period, for "bill every how many ___?". */
+export function cycleUnit(cycle: BillingCycle): string {
+  return { weekly: 'weeks', monthly: 'months', quarterly: 'quarters', yearly: 'years' }[cycle];
+}
+
+/**
  * Categories as a fixed list of buttons rather than a free-text box. Typing a
  * category means inventing one, and inventing one means a decision; tapping one
  * of nine does not. "Something else" is still there for the odd case, and any

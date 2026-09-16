@@ -64,6 +64,11 @@ One button, three fields, done:
    the usual billing cycle for you. Deliberately no prices: they change
    constantly, and a wrong number sitting quietly in your budget is worse than
    no number.
+   **How often** is a row of buttons: Weekly, **Every 2 weeks**, Monthly, Every
+   3 months, Yearly. They say exactly how often money moves — never
+   "semi-weekly" or "bi-weekly", which mean opposite things to different people.
+   Anything else (every 2 months, say) still goes under *More options*, and the
+   app leaves it alone rather than rounding it to the nearest button.
 3. **Amount, how often, next charge date.** Category is a row of buttons, not a
    text box — tapping one of nine is not a decision the way inventing one is.
    Everything else (how to cancel, notes, "every 2 months") is behind
@@ -199,7 +204,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-118 unit tests cover the parts where a quiet wrong answer would make the app
+136 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation between weekly/monthly/quarterly/yearly, `.ics` generation
@@ -231,7 +236,7 @@ src/
     recurrence.ts     Repeats, and billing dates anchored to the first charge
     money.ts          Minor units only; cost normalised to a year
     classify.ts       Naive Bayes tag suggestions, trained on your own notes
-    subscriptions.ts  Category list and name autocomplete (static, no lookups)
+    subscriptions.ts  Billing rhythms, categories, name autocomplete (no lookups)
     share.ts          Hands a file to the phone's share sheet, not the network
     ics.ts            Calendar export, whole-app or one item at a time
     agenda.ts         Builds one ordered list for a day

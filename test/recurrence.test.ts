@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { advanceCycle, billingDatesBetween, describeRecurrence, nextBilling, nextOccurrence } from '../src/lib/recurrence';
+import { advanceCycle, billingDatesBetween, describeCycle, describeRecurrence, nextBilling, nextOccurrence } from '../src/lib/recurrence';
+import { daysBetween, fromDateKey } from '../src/lib/time';
 import type { Subscription } from '../src/types';
 
 function sub(partial: Partial<Subscription> = {}): Subscription {
@@ -158,5 +159,42 @@ describe('long-dormant subscriptions', () => {
       if (i > 500) break;
     }
     expect(nextBilling(s, from)).toBe(brute);
+  });
+});
+
+
+describe('every-2-weeks billing dates', () => {
+  const fortnightly = (firstBilled: string) => sub({ cycle: 'weekly', every: 2, firstBilled });
+
+  it('steps 14 days, not 7', () => {
+    expect(nextBilling(fortnightly('2026-09-04'), '2026-09-05')).toBe('2026-09-18');
+  });
+
+  it('crosses a month boundary without drifting', () => {
+    expect(nextBilling(fortnightly('2026-09-25'), '2026-09-26')).toBe('2026-10-09');
+  });
+
+  it('crosses a year boundary without drifting', () => {
+    expect(nextBilling(fortnightly('2026-12-25'), '2026-12-26')).toBe('2027-01-08');
+  });
+
+  it('lands on the same weekday every time', () => {
+    const dates = billingDatesBetween(fortnightly('2026-01-02'), '2026-01-02', '2026-12-31');
+    const weekdays = new Set(dates.map((d) => fromDateKey(d).getDay()));
+    expect(weekdays.size).toBe(1);
+  });
+
+  it('describes itself unambiguously on the card', () => {
+    // Not "semi-weekly" or "bi-weekly", which readers disagree about.
+    expect(describeCycle('weekly', 2)).toBe('every 2 weeks');
+    expect(describeCycle('weekly', 1)).toBe('every week');
+  });
+
+  it('produces 26 charges across a year, each a fortnight apart', () => {
+    const dates = billingDatesBetween(fortnightly('2026-01-02'), '2026-01-02', '2026-12-31');
+    expect(dates).toHaveLength(26);
+    for (let i = 1; i < dates.length; i++) {
+      expect(daysBetween(dates[i - 1], dates[i])).toBe(14);
+    }
   });
 });

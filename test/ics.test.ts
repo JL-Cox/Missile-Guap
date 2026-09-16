@@ -179,3 +179,11 @@ describe('icsFilename', () => {
     expect(icsFilename('a'.repeat(200)).length).toBeLessThanOrEqual(44);
   });
 });
+
+
+describe('every-2-weeks subscriptions in the calendar', () => {
+  it('repeats fortnightly, not weekly', () => {
+    const ics = build([], [sub({ cycle: 'weekly', every: 2 })]);
+    expect(ics).toContain('RRULE:FREQ=WEEKLY;INTERVAL=2');
+  });
+});
