@@ -25,6 +25,7 @@ import {
   nextBilling,
 } from '../lib/recurrence';
 import { normaliseDays } from '../lib/monthdays';
+import { outlook, stillToCome } from '../lib/cashflow';
 import { upcomingBills } from '../lib/agenda';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
@@ -131,6 +132,11 @@ export default function Money({ settings }: { settings: Settings }) {
   const deductionRows = deductionsByLabel(incomes);
   const maxDeduction = deductionRows[0]?.minor ?? 1;
 
+  // Real dates rather than monthly averages: what is still going to leave the
+  // account before more money arrives, which is the question an average hides.
+  const pending = stillToCome(incomes, subs, today);
+  const cheques = outlook(incomes, subs, today, 4);
+
   return (
     <>
       <Section title="Income">
@@ -174,13 +180,99 @@ export default function Money({ settings }: { settings: Settings }) {
         )}
       </Section>
 
+      {subs.some((s) => !s.endedOn) && (
+        <Section title="Still to come out">
+          <div className="card stack-sm">
+            <div className="spread">
+              <div className="grow">
+                <div className="item-title">Rest of this month</div>
+                <div className="faint">
+                  {pending.month.count === 0
+                    ? 'Nothing else is due'
+                    : `${pending.month.count} ${pending.month.count === 1 ? 'charge' : 'charges'}, up to ${describeDate(pending.month.until, today)}`}
+                </div>
+              </div>
+              <Amount text={formatMoney(pending.month.minor, settings.currency)} blur={settings.blurAmounts} />
+            </div>
+
+            {pending.period ? (
+              <div className="spread">
+                <div className="grow">
+                  <div className="item-title">Before your next payday</div>
+                  <div className="faint">
+                    {pending.period.count === 0
+                      ? 'Nothing else is due'
+                      : `${pending.period.count} ${pending.period.count === 1 ? 'charge' : 'charges'}, up to ${describeDate(pending.period.until, today)}`}
+                  </div>
+                </div>
+                <Amount text={formatMoney(pending.period.minor, settings.currency)} blur={settings.blurAmounts} />
+              </div>
+            ) : (
+              <p className="faint">
+                Add your income above and this will also show what is due before your next payday.
+              </p>
+            )}
+            <p className="faint">
+              Counted from today on the real charge dates, so a bill that already went out this month is not
+              in here.
+            </p>
+          </div>
+        </Section>
+      )}
+
+      {cheques.length > 0 && (
+        <Section title="Each paycheck">
+          <p className="faint">
+            What each one has to cover before the next arrives. Only the subscriptions this app knows
+            about — rent, food, fuel and everything else still come out of what is left.
+          </p>
+          {cheques.map((c) => (
+            <div key={c.period.start} className="card stack-sm">
+              <div className="spread">
+                <div className="grow">
+                  <div className="item-title">
+                    {c.current ? 'This paycheck' : describeDate(c.period.start, today)}
+                  </div>
+                  <div className="faint">
+                    {c.period.paidBy.map((s) => s.name).join(', ')} · covers to {describeDate(c.period.end, today)}
+                  </div>
+                </div>
+                <Amount text={formatMoney(c.period.incomeMinor, settings.currency)} blur={settings.blurAmounts} />
+              </div>
+              <div className="spread small">
+                <span className="muted">Subscriptions due</span>
+                <Amount text={`- ${formatMoney(c.billsMinor, settings.currency)}`} blur={settings.blurAmounts} />
+              </div>
+              <hr className="divider" />
+              <div className="spread">
+                <strong>Left for everything else</strong>
+                <Amount text={formatMoney(c.leftoverMinor, settings.currency)} blur={settings.blurAmounts} />
+              </div>
+              {c.current && c.remainingMinor !== c.billsMinor && (
+                <p className="faint">
+                  {formatMoney(c.remainingMinor, settings.currency)} of that has not gone out yet.
+                </p>
+              )}
+              {c.leftoverMinor < 0 && (
+                // Never hidden and never clamped to zero: a cheque that does not
+                // cover its own bills is the most important thing this screen
+                // could tell you. Stated in words, not shouted in red.
+                <p className="notice">
+                  This one does not cover its own subscriptions. Worth moving a charge date or cancelling
+                  something before it lands.
+                </p>
+              )}
+            </div>
+          ))}
+        </Section>
+      )}
+
       {activeIncomes.length > 0 && (
         <Section title="Income against expenses">
           <div className="card stack-sm">
             <div className="spread">
               <span className="muted">Take-home each month</span>
-              <Amount text={formatMoney(netMonthly, settings.currency)} blur={settings.blurAmounts} />
-            </div>
+              <Amount text={formatMoney(netMonthly, settings.currency)} blur={settings.blurAmounts} />            </div>
             <div className="spread">
               <span className="muted">Subscriptions each month</span>
               <Amount text={`- ${formatMoney(totalMonthlyMinor(subs), settings.currency)}`} blur={settings.blurAmounts} />

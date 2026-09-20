@@ -90,6 +90,17 @@ describe('billing rhythm presets', () => {
     expect(BILLING_DAY_CHOICES.map((c) => c.days)).toEqual([[1, 15], [15, 31]]);
   });
 
+  it('offers every 6 months as monthly billed every sixth month', () => {
+    // Not a new cycle - the date maths already handles it, so this is only a
+    // button for a rhythm you previously had to find under More options.
+    const half = CYCLE_PRESETS.find((p) => p.id === 'halfYearly');
+    expect(half).toEqual({ id: 'halfYearly', label: 'Every 6 months', cycle: 'monthly', every: 6 });
+  });
+
+  it('lights that button up for a subscription already saved as every 6 months', () => {
+    expect(findCyclePreset('monthly', 6)?.id).toBe('halfYearly');
+  });
+
   it('avoids labels that mean different things to different people', () => {
     // The whole reason this option exists is that "semi-weekly" is ambiguous.
     // A button that reintroduces the ambiguity would defeat the point.

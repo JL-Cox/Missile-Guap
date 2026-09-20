@@ -31,6 +31,7 @@ export const CYCLE_PRESETS: CyclePreset[] = [
   { id: 'semimonthly', label: 'Twice a month', cycle: 'semimonthly', every: 1 },
   { id: 'monthly', label: 'Monthly', cycle: 'monthly', every: 1 },
   { id: 'quarterly', label: 'Every 3 months', cycle: 'quarterly', every: 1 },
+  { id: 'halfYearly', label: 'Every 6 months', cycle: 'monthly', every: 6 },
   { id: 'yearly', label: 'Yearly', cycle: 'yearly', every: 1 },
 ];
 

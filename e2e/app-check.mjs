@@ -404,6 +404,48 @@ check(
 );
 await page.screenshot({ path: `${OUT}/income.png`, fullPage: true });
 
+// --- what is still to come out, and what each cheque has to cover --------
+// These are real charge dates against real paydays, not monthly averages. The
+// failure worth catching is a period figure larger than the month figure,
+// which would mean a pay period leaking past the end of the month.
+const flowText = await page.textContent('.main');
+check('the money screen says what is still to come out', flowText.includes('Still to come out'), true);
+check('and names the rest of the month', flowText.includes('Rest of this month'), true);
+check('and what lands before the next payday', flowText.includes('Before your next payday'), true);
+check('each paycheck is set against its own bills', flowText.includes('Each paycheck'), true);
+check(
+  'and says plainly that the remainder is not spare money',
+  flowText.includes('rent, food, fuel and everything else'),
+  true,
+);
+
+// The two figures must be consistent: a pay period ends on or before the last
+// day of the month it starts in only sometimes, so period <= month is NOT a
+// given - but both must parse as money, and neither may be negative.
+const amounts = [...flowText.matchAll(/\$([\d,]+\.\d{2})/g)].map((m) => Number(m[1].replace(/,/g, '')));
+check('every figure on the screen parses as money', amounts.every((n) => Number.isFinite(n)), true);
+await page.screenshot({ path: `${OUT}/money-flow.png`, fullPage: true });
+
+// --- every 6 months is offered as a button -------------------------------
+await page.click('button:has-text("Add a subscription")');
+await page.waitForSelector('#sub-name');
+await page.fill('#sub-name', 'Domain renewal');
+await page.fill('#sub-amount', '18.00');
+await page.click('form.card button:text-is("Every 6 months")');
+await page.waitForTimeout(200);
+check(
+  'every 6 months is a button, not a trip to More options',
+  await page.getAttribute('form.card button:text-is("Every 6 months")', 'aria-pressed'),
+  'true',
+);
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(500);
+const halfYearly = await page.textContent('.main');
+check('it is costed as two charges a year', halfYearly.includes('36.00'), true);
+check('and described in plain words', halfYearly.includes('every 6 months'), true);
+await page.click('button:has-text("Done")');
+await page.waitForTimeout(300);
+
 // --- a note --------------------------------------------------------------
 await page.click('.nav-btn:has-text("Notes")');
 await page.click('button:has-text("New note")');

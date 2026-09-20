@@ -51,7 +51,7 @@ opposite on all three counts.
 | **Tasks** | All tasks, grouped by day, searchable across titles, notes, steps and tags. Optional times, durations, reminders, repeats and an energy level. |
 | **Backlog** | Everything that needs doing and has no day on it — book the appointment, order the thing, chase the letter. Anything you write down without giving it a date lands here by itself, so there is no decision to make at the time. Four priority levels (Low, Medium, High, Critical, and "not said", which stays a valid answer), four sort orders, and the one you used last is remembered. Nothing here is ever called late. |
 | **Notes** | Plain text you will want to look up again. Reference numbers, phone scripts, what the nurse actually said. Pin the important ones. |
-| **Money** | Your income and your subscriptions, and what one leaves of the other. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
+| **Money** | Your income and your subscriptions, and what one leaves of the other. Real dates rather than averages: what is still to come out this month and before your next payday, and what each individual paycheck has to cover before the next one arrives. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
 | **Settings** | Appearance, notifications, backup and restore, calendar export, and a plain-English account of what happens to your data. |
 
 There are four buckets, not six: **a reminder is a property of a task**, not a
@@ -71,7 +71,7 @@ One button, three fields, done:
    constantly, and a wrong number sitting quietly in your budget is worse than
    no number.
    **How often** is a row of buttons: Weekly, **Every 2 weeks**, **Twice a
-   month**, Monthly, Every 3 months, Yearly. They say exactly how often money
+   month**, Monthly, Every 3 months, **Every 6 months**, Yearly. They say exactly how often money
    moves — never "semi-weekly" or "bi-weekly", which mean opposite things to
    different people. Every 2 weeks and twice a month are separate buttons
    because they are separate things: 26 charges a year against 24. Twice a
@@ -259,7 +259,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-435 unit tests cover the parts where a quiet wrong answer would make the app
+472 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between
