@@ -263,7 +263,9 @@ backup file you saved earlier, or from a calendar entry you added; delete those
 separately if you want them gone.
 
 **Settings → Save a backup file** writes a plain JSON file you can open in any
-text editor. Do it occasionally, and keep it somewhere you trust. Restoring
+text editor. Where the phone lets a web app share that kind of file, the
+share sheet opens and you pick where it goes; otherwise it lands in your
+downloads. Do it occasionally, and keep it somewhere you trust. Restoring
 offers two modes:
 
 - **Add what's missing** — keeps everything on the device, only adds records it

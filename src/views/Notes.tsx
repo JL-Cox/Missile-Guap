@@ -1,8 +1,21 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankNote, db, saveNote } from '../db';
-import type { Note, Settings } from '../types';
-import { ConfirmButton, Empty, Section, TagList, parseTags, useAutoFocus } from '../components/ui';
+import type { Note, Settings, Task } from '../types';
+import {
+  ConfirmButton,
+  Empty,
+  Section,
+  TagList,
+  parseTags,
+  useAutoFocus,
+  useBackLayer,
+  useNavigate,
+  useToast,
+} from '../components/ui';
+import { taskMatches } from '../lib/tasklist';
+import { undoAction } from '../lib/undo';
+import { shortDate, todayKey } from '../lib/time';
 import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSuggestions';
 
 /**
@@ -14,8 +27,15 @@ export default function Notes({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<Note | null>(null);
   const [tidying, setTidying] = useState(false);
   const [query, setQuery] = useState('');
+  const toast = useToast();
+  const navigate = useNavigate();
+  useBackLayer(editing !== null || tidying, () => {
+    setEditing(null);
+    setTidying(false);
+  });
 
   const notes = useLiveQuery(() => db.notes.orderBy('updatedAt').reverse().toArray(), [settings.rev], []) ?? [];
+  const tasks = useLiveQuery(() => db.tasks.toArray(), [settings.rev], [] as Task[]) ?? [];
 
   if (tidying) {
     return <TidyUp notes={notes} onDone={() => setTidying(false)} />;
@@ -28,10 +48,17 @@ export default function Notes({ settings }: { settings: Settings }) {
         suggestOn={settings.suggestTags}
         onSaved={() => setEditing(null)}
         onCancel={() => setEditing(null)}
-        onDelete={async (n) => {
-          await db.notes.delete(n.id);
-          setEditing(null);
-        }}
+        onDelete={
+          notes.some((n) => n.id === editing.id)
+            ? async (n) => {
+                setEditing(null);
+                // The saved record, not the draft, so Undo brings back what was there.
+                const before = await db.notes.get(n.id);
+                await db.notes.delete(n.id);
+                if (before) toast('Deleted.', undoAction(db.notes, [{ before, after: undefined }], toast));
+              }
+            : undefined
+        }
       />
     );
   }
@@ -44,6 +71,9 @@ export default function Notes({ settings }: { settings: Settings }) {
       n.body.toLowerCase().includes(needle) ||
       n.tags.some((t) => t.includes(needle)),
   );
+  // You should not have to remember whether the thing you wrote down was a
+  // note or a task. A search here says how many tasks match too, one tap away.
+  const matchingTasks = needle ? tasks.filter((t) => taskMatches(t, needle)).length : 0;
   const pinned = visible.filter((n) => n.pinned);
   const rest = visible.filter((n) => !n.pinned);
 
@@ -74,6 +104,14 @@ export default function Notes({ settings }: { settings: Settings }) {
         )}
       </Section>
 
+      {matchingTasks > 0 && (
+        <div className="btn-row">
+          <button type="button" className="btn btn-sm" onClick={() => navigate('tasks', { query: query.trim() })}>
+            {matchingTasks === 1 ? '1 matching task' : `${matchingTasks} matching tasks`} — open Tasks
+          </button>
+        </div>
+      )}
+
       {visible.length === 0 && (
         <Empty>
           {needle
@@ -94,7 +132,7 @@ export default function Notes({ settings }: { settings: Settings }) {
 
       {rest.length > 0 && (
         <div className="stack-sm">
-          {pinned.length > 0 && <h3 className="muted">Everything else</h3>}
+          {pinned.length > 0 && <h3>Everything else</h3>}
           {rest.map((note) => (
             <NoteCard key={note.id} note={note} onEdit={setEditing} />
           ))}
@@ -113,29 +151,36 @@ function NoteCard({ note, onEdit }: { note: Note; onEdit: (note: Note) => void }
     <div className="card card-tight stack-sm">
       <div className="spread">
         <h3 className="grow">{note.title || 'Untitled note'}</h3>
+        {/* One label, and the pressed state says whether it is on - a label
+            that flips between Pin and Unpin read as "Unpin, pressed". Pinning
+            is not an edit, so it does not change when the note was updated
+            (which is also what the list is ordered by). */}
         <button
           type="button"
-          className="btn btn-quiet btn-sm"
+          className={`btn btn-sm${note.pinned ? ' btn-primary' : ' btn-quiet'}`}
           aria-pressed={note.pinned}
-          onClick={() => void saveNote({ ...note, pinned: !note.pinned })}
+          onClick={() => void db.notes.update(note.id, { pinned: !note.pinned })}
         >
-          {note.pinned ? 'Unpin' : 'Pin'}
+          Pin
         </button>
       </div>
       {note.body.trim() && <p className="note-body">{open ? note.body : preview}</p>}
       <TagList tags={note.tags} />
       <div className="row-tight">
         {hasMore && (
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setOpen((v) => !v)}>
+          <button
+            type="button"
+            className="btn btn-quiet btn-sm"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          >
             {open ? 'Show less' : 'Show all'}
           </button>
         )}
         <button type="button" className="btn btn-quiet btn-sm" onClick={() => onEdit(note)}>
           Edit
         </button>
-        <span className="faint">
-          Updated {new Date(note.updatedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
-        </span>
+        <span className="faint">Updated {shortDate(todayKey(new Date(note.updatedAt)))}</span>
       </div>
     </div>
   );
@@ -212,7 +257,8 @@ function NoteEditor({
   suggestOn: boolean;
   onSaved: () => void;
   onCancel: () => void;
-  onDelete: (note: Note) => void;
+  /** Absent for a note that has not been saved yet: there is nothing to delete. */
+  onDelete?: (note: Note) => void;
 }) {
   const [draft, setDraft] = useState(note);
   const [tagText, setTagText] = useState(note.tags.join(', '));
@@ -226,6 +272,7 @@ function NoteEditor({
       className="card stack"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (!draft.title.trim() && !draft.body.trim()) return;
         await saveNote({ ...draft, tags: parseTags(tagText) });
         onSaved();
       }}
@@ -281,19 +328,22 @@ function NoteEditor({
 
       <div className="spread">
         <div className="btn-row">
-          <button type="submit" className="btn btn-primary">
+          {/* Same rule as a task: an empty note is not a note. */}
+          <button type="submit" className="btn btn-primary" disabled={!draft.title.trim() && !draft.body.trim()}>
             Save
           </button>
           <button type="button" className="btn" onClick={onCancel}>
             Cancel
           </button>
         </div>
-        <ConfirmButton
-          label="Delete"
-          confirmLabel="Yes, delete it"
-          className="btn btn-quiet btn-sm"
-          onConfirm={() => onDelete(draft)}
-        />
+        {onDelete && (
+          <ConfirmButton
+            label="Delete"
+            confirmLabel="Yes, delete it"
+            className="btn btn-quiet btn-sm"
+            onConfirm={() => onDelete(draft)}
+          />
+        )}
       </div>
     </form>
   );

@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, addMonths, atTime, daysBetween, describeDate, describeDuration, fromDateKey, toDateKey } from '../src/lib/time';
+import {
+  addDays,
+  addMonths,
+  atTime,
+  clockLabel,
+  daysBetween,
+  describeDate,
+  describeDuration,
+  fromDateKey,
+  shortDate,
+  shortDateTime,
+  timeLabel,
+  toDateKey,
+} from '../src/lib/time';
 
 describe('date keys stay in local time', () => {
   it('round-trips a date without drifting a day', () => {
@@ -65,7 +78,23 @@ describe('plain-language dates', () => {
   });
 
   it('falls back to a real date further out, still with the gap', () => {
-    expect(describeDate('2026-10-20', today)).toContain('in 35 days');
+    expect(describeDate('2026-10-20', today)).toBe('Tue, Oct 20 · in 35 days');
+  });
+
+  it('leaves the year off when it is this year', () => {
+    expect(describeDate('2026-09-25', today)).toBe('Fri, Sep 25 · in 10 days');
+    expect(describeDate('2026-09-01', today)).toBe('Tue, Sep 1 · 14 days ago');
+  });
+
+  it('says the year when it is not this year, in either direction', () => {
+    expect(describeDate('2027-01-06', today)).toBe('Wed, Jan 6, 2027 · in 113 days');
+    expect(describeDate('2025-12-31', today)).toBe('Wed, Dec 31, 2025 · 258 days ago');
+  });
+
+  it('is the same on every phone, whatever its locale', () => {
+    // Hand-written month and weekday names: a phone set to en-GB used to show
+    // "20 Oct 2026" here and en-US "Oct 20, 2026".
+    expect(describeDate('2026-10-20', today)).not.toMatch(/2026/);
   });
 });
 
@@ -74,5 +103,34 @@ describe('describeDuration', () => {
     expect(describeDuration(45)).toBe('45 min');
     expect(describeDuration(60)).toBe('1 hr');
     expect(describeDuration(90)).toBe('1 hr 30 min');
+  });
+});
+
+describe('US times', () => {
+  it('reads a stored 24-hour time as a 12-hour one', () => {
+    expect(timeLabel('09:30')).toBe('9:30 AM');
+    expect(timeLabel('14:05')).toBe('2:05 PM');
+  });
+
+  it('gets midnight and noon right, which is where 12-hour clocks go wrong', () => {
+    expect(timeLabel('00:00')).toBe('12:00 AM');
+    expect(timeLabel('00:45')).toBe('12:45 AM');
+    expect(timeLabel('12:00')).toBe('12:00 PM');
+    expect(timeLabel('23:59')).toBe('11:59 PM');
+  });
+
+  it('says the same thing for a moment as for a time key', () => {
+    expect(clockLabel(atTime('2026-06-10', '07:05'))).toBe('7:05 AM');
+  });
+
+  it('writes a short date and time for "written" lines', () => {
+    const now = atTime('2026-09-23', '12:00');
+    expect(shortDateTime(atTime('2026-09-23', '09:30'), now)).toBe('Sep 23, 9:30 AM');
+    expect(shortDateTime(atTime('2025-12-30', '18:00'), now)).toBe('Dec 30, 2025, 6:00 PM');
+  });
+
+  it('keeps short dates short within the year', () => {
+    expect(shortDate('2026-03-01', '2026-09-23')).toBe('Mar 1');
+    expect(shortDate('2027-03-01', '2026-09-23')).toBe('Mar 1, 2027');
   });
 });

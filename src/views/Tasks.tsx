@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankTask, db } from '../db';
 import type { Settings, Task } from '../types';
-import { deleteTask } from '../lib/tasks';
-import { describeDate, todayKey } from '../lib/time';
+import { todayKey } from '../lib/time';
+import { groupTasks, taskMatches } from '../lib/tasklist';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
-import { Empty, Section } from '../components/ui';
-import { sortTasks } from '../lib/priority';
+import { useTaskActions } from '../components/taskActions';
+import { Empty, Section, useBackLayer } from '../components/ui';
 
 type Filter = 'open' | 'today' | 'someday' | 'done';
 
@@ -18,34 +18,33 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: 'done', label: 'Finished' },
 ];
 
-export default function Tasks({ settings }: { settings: Settings }) {
+export default function Tasks({ settings, initialQuery = '' }: { settings: Settings; initialQuery?: string }) {
   const [filter, setFilter] = useState<Filter>('open');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [editing, setEditing] = useState<Task | null>(null);
+  const { remove } = useTaskActions();
+  useBackLayer(editing !== null, () => setEditing(null));
 
   const tasks = useLiveQuery(() => db.tasks.toArray(), [settings.rev], [] as Task[]) ?? [];
 
   if (editing) {
+    const saved = tasks.some((t) => t.id === editing.id);
     return (
       <TaskEditor
         task={editing}
         onSaved={() => setEditing(null)}
         onCancel={() => setEditing(null)}
-        onDelete={async (t) => {
-          await deleteTask(t);
-          setEditing(null);
-        }}
+        onDelete={
+          saved
+            ? async (t) => {
+                setEditing(null);
+                await remove(t);
+              }
+            : undefined
+        }
       />
     );
   }
-
-  const needle = query.trim().toLowerCase();
-  const matches = (t: Task) =>
-    !needle ||
-    t.title.toLowerCase().includes(needle) ||
-    t.notes.toLowerCase().includes(needle) ||
-    t.tags.some((tag) => tag.includes(needle)) ||
-    t.steps.some((s) => s.text.toLowerCase().includes(needle));
 
   const byFilter = (t: Task) => {
     switch (filter) {
@@ -60,20 +59,17 @@ export default function Tasks({ settings }: { settings: Settings }) {
     }
   };
 
-  const visible = tasks.filter((t) => byFilter(t) && matches(t));
+  const visible = tasks.filter((t) => byFilter(t) && taskMatches(t, query));
+  // Today first, then what is coming, then earlier days, then no date - see groupTasks.
+  const groups = groupTasks(visible, todayKey(), filter === 'done');
 
-  // Group by day so the list reads as a sequence rather than one long wall.
-  const groups = new Map<string, Task[]>();
-  for (const task of visible) {
-    const key = filter === 'done' ? 'Finished' : task.date ?? 'No date yet';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(task);
-  }
-  const orderedKeys = [...groups.keys()].sort((a, b) => {
-    if (a === 'No date yet') return 1;
-    if (b === 'No date yet') return -1;
-    return a.localeCompare(b);
-  });
+  const emptyText = query.trim()
+    ? `Nothing matches "${query.trim()}". Try a shorter word - search looks in titles, notes, steps and tags.`
+    : tasks.length === 0
+      ? 'Everything with a day on it, and everything without. Add one here or from the Inbox.'
+      : filter === 'done'
+        ? 'Things you tick off are kept here.'
+        : 'Nothing in this list right now.';
 
   return (
     <>
@@ -93,7 +89,7 @@ export default function Tasks({ settings }: { settings: Settings }) {
           placeholder="Search tasks, notes, steps and tags"
           aria-label="Search tasks"
         />
-        <div className="btn-row" role="group" aria-label="Filter tasks">
+        <div className="btn-row" role="group" aria-label="Show">
           {FILTERS.map((f) => (
             <button
               key={f.id}
@@ -108,31 +104,14 @@ export default function Tasks({ settings }: { settings: Settings }) {
         </div>
       </Section>
 
-      {visible.length === 0 ? (
-        <Empty>
-          {needle
-            ? `Nothing matches "${query}". Try a shorter word - search looks in titles, notes, steps and tags.`
-            : 'Nothing in this list right now.'}
-        </Empty>
+      {groups.length === 0 ? (
+        <Empty>{emptyText}</Empty>
       ) : (
-        orderedKeys.map((key) => (
-          <section key={key} className="stack-sm" aria-label={key}>
-            <h3 className="muted">
-              {key === 'No date yet' || key === 'Finished' ? key : describeDate(key, todayKey())}
-            </h3>
-            {/* Dated groups read in time order. The undated group has no times
-                at all, so sorting it by start time left it in whatever order
-                IndexedDB handed it back - the same items the Backlog tab shows,
-                in a different and meaningless order. It uses the same ranking as
-                the Backlog now. Both sort a copy; the old code sorted the
-                grouped array in place, during render. */}
-            {(key === 'No date yet'
-              ? sortTasks(groups.get(key)!, 'priority')
-              : [...groups.get(key)!].sort((a, b) =>
-                  (a.startTime ?? '99:99').localeCompare(b.startTime ?? '99:99'),
-                )
-            ).map((task) => (
-              <TaskRow key={task.id} task={task} onEdit={setEditing} />
+        groups.map((group) => (
+          <section key={group.key} className="stack-sm" aria-label={group.label}>
+            <h3>{group.label}</h3>
+            {group.tasks.map((task) => (
+              <TaskRow key={task.id} task={task} onEdit={setEditing} showDate={group.showDate} />
             ))}
           </section>
         ))

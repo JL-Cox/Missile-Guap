@@ -68,7 +68,7 @@ export function totalMonthlyMinor(subs: Subscription[]): number {
 export function byCategoryYearly(subs: Subscription[]): { category: string; minor: number }[] {
   const map = new Map<string, number>();
   for (const s of subs.filter(isOngoing)) {
-    const key = s.category?.trim() || 'Uncategorised';
+    const key = s.category?.trim() || 'Uncategorized';
     map.set(key, (map.get(key) ?? 0) + yearlyMinor(s));
   }
   return [...map.entries()]
@@ -76,13 +76,29 @@ export function byCategoryYearly(subs: Subscription[]): { category: string; mino
     .sort((a, b) => b.minor - a.minor);
 }
 
+/**
+ * "$1,850.00", and "−$47.99" for a negative - a true minus sign (U+2212), not
+ * a hyphen. A hyphen is shorter and sits lower than the digits, so in a column
+ * of figures a negative can read as a dash before a positive number.
+ */
 export function formatMoney(minor: number, currency: string): string {
+  let text: string;
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(minor / 100);
+    text = new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
   } catch {
     // Unknown currency code - still show the number rather than an error.
-    return `${(minor / 100).toFixed(2)} ${currency}`;
+    text = `${(minor / 100).toFixed(2)} ${currency}`;
   }
+  return text.replace('-', '\u2212');
+}
+
+/**
+ * An amount being taken away: "−$30.00". Zero is just "$0.00" - a minus in
+ * front of nothing reads like a mistake.
+ */
+export function formatDeduction(minor: number, currency: string): string {
+  const abs = Math.abs(minor);
+  return abs === 0 ? formatMoney(0, currency) : `\u2212${formatMoney(abs, currency)}`;
 }
 
 /** Parse "12.99", "£12.99", "12,99" into minor units. Returns null if it isn't a number. */
@@ -155,7 +171,7 @@ export function deductionsByLabel(sources: IncomeSource[]): { label: string; min
       map.set(key, (map.get(key) ?? 0) + d.amountMinor * periods);
     }
     const rest = unitemisedMinor(source) * periods;
-    if (rest > 0) map.set('Not itemised', (map.get('Not itemised') ?? 0) + rest);
+    if (rest > 0) map.set('Not itemized', (map.get('Not itemized') ?? 0) + rest);
   }
   return [...map.entries()]
     .map(([label, minor]) => ({ label, minor }))

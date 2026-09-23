@@ -15,7 +15,6 @@ import {
   backupFilename,
   countBackup,
   describeCounts,
-  downloadFile,
   exportBackup,
   importBackup,
   parseBackup,
@@ -27,21 +26,42 @@ import { buildCalendar, CALENDAR_CAUTION, calendarContents } from '../lib/ics';
 import { formatMoney } from '../lib/money';
 import { notificationSupport, requestPermission, type PermissionState } from '../lib/notify';
 import { formatBytes, requestPersistence, storageOrigin, storageStatus, type StorageStatus } from '../lib/storage';
-import { ConfirmButton, Section } from '../components/ui';
+import { shareOrDownload } from '../lib/share';
+import { ConfirmButton, FormError, Section, useToast } from '../components/ui';
 
 /**
  * Each theme says what it is FOR, not what colour it is. "Warm off-white" tells
  * you nothing about when to reach for it; "easier at night" does.
  */
-const THEMES: { id: ThemeName; label: string; hint: string }[] = [
+interface ThemeChoice {
+  id: ThemeName;
+  label: string;
+  hint: string;
+}
+
+const THEMES: ThemeChoice[] = [
   { id: 'calm', label: 'Calm', hint: 'Warm off-white. The default, and the one for most days.' },
   { id: 'amber', label: 'Amber', hint: 'Warm and low in blue light, for winding down without going dark.' },
   { id: 'overcast', label: 'Overcast', hint: 'Flat daylight with no warmth, if the off-white reads yellow to you.' },
   { id: 'dark', label: 'Dark', hint: 'Warm dark, not black. Easier at night.' },
   { id: 'midnight', label: 'Midnight', hint: 'Nearly black, so the screen gives off as little light as it can.' },
   { id: 'contrast', label: 'High contrast', hint: 'Black on white, heavier borders. For when nothing else is clear enough.' },
-  { id: 'custom', label: 'Custom', hint: 'Your own paper and your own colour. Set them just below.' },
 ];
+
+/** Opt-in, and still held to every contrast pair the others are. */
+const FUN_THEMES: ThemeChoice[] = [
+  { id: 'synthwave', label: 'Synthwave', hint: 'Neon on deep violet. For the good days.' },
+  { id: 'bubblegum', label: 'Bubblegum', hint: 'Pink paper, violet ink. Bright, and still easy to read.' },
+  { id: 'aurora', label: 'Aurora', hint: 'Deep teal night, electric mint, a violet shimmer.' },
+];
+
+const CUSTOM_THEME: ThemeChoice = {
+  id: 'custom',
+  label: 'Custom',
+  hint: 'Your own paper and your own color. Set them just below.',
+};
+
+const ALL_THEMES = [...THEMES, ...FUN_THEMES, CUSTOM_THEME];
 
 /**
  * What a reminder shows on the lock screen. The default names the task and the
@@ -73,12 +93,11 @@ function swatchStyle(tokens: Record<string, string>): CSSProperties {
 export default function Settings({
   settings,
   onChange,
-  onToast,
 }: {
   settings: SettingsType;
   onChange: (settings: SettingsType) => void;
-  onToast: (message: string) => void;
 }) {
+  const onToast = useToast();
   const [permission, setPermission] = useState<PermissionState>(notificationSupport());
   const [importMode, setImportMode] = useState<ImportMode>('merge');
   const [importError, setImportError] = useState('');
@@ -120,10 +139,16 @@ export default function Settings({
 
   const patch = async (changes: Partial<SettingsType>) => onChange(await saveSettings(changes));
 
+  /*
+    Both files go the same way "Add to my calendar" does: the phone's share
+    sheet where it has one, so you choose where the file goes, and a plain
+    download where it does not. Neither is a network call.
+  */
   const doExport = async () => {
     const backup = await exportBackup();
-    downloadFile(backupFilename(), JSON.stringify(backup, null, 2), 'application/json');
-    onToast('Backup saved to your downloads.');
+    const outcome = await shareOrDownload(backupFilename(), JSON.stringify(backup, null, 2), 'application/json');
+    if (outcome === 'shared') onToast('Backup sent to where you picked.');
+    else if (outcome === 'downloaded') onToast('Backup saved to your downloads.');
   };
 
   const doCalendar = async () => {
@@ -140,8 +165,9 @@ export default function Settings({
       formatPay: (src) => formatMoney(src.netMinor, src.currency),
       includeNotes: settings.calendarIncludeNotes,
     });
-    downloadFile('steady.ics', ics, 'text/calendar');
-    onToast('Calendar file saved. Open it to add everything to your phone calendar.');
+    const outcome = await shareOrDownload('steady.ics', ics, 'text/calendar');
+    if (outcome === 'shared') onToast('Calendar file sent. Your calendar app takes it from here.');
+    else if (outcome === 'downloaded') onToast('Calendar file saved. Open it to add everything to your phone calendar.');
   };
 
   const restore = async (backup: Backup, mode: ImportMode) => {
@@ -191,39 +217,16 @@ export default function Settings({
   return (
     <>
       <Section title="How it looks">
-        <div className="field">
-          <label>Theme</label>
-          <div className="btn-row">
-            {THEMES.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                aria-pressed={settings.theme === t.id}
-                className={`btn btn-sm theme-btn${settings.theme === t.id ? ' btn-primary' : ''}`}
-                onClick={() =>
-                  void patch(
-                    // Choosing Custom for the first time needs something to show,
-                    // so it starts on the Calm pair rather than on nothing.
-                    t.id === 'custom'
-                      ? { theme: 'custom', customTheme: settings.customTheme ?? DEFAULT_CUSTOM }
-                      : { theme: t.id },
-                  )
-                }
-              >
-                {/* A slice of the theme, next to its name - never instead of it. */}
-                <span
-                  className="swatch"
-                  aria-hidden="true"
-                  {...(t.id === 'custom'
-                    ? { style: swatchStyle(resolveCustom(settings.customTheme).tokens) }
-                    : { 'data-theme': t.id })}
-                />
-                {t.label}
-              </button>
-            ))}
+        <fieldset className="field">
+          <legend>Theme</legend>
+          <ThemeButtons themes={THEMES} settings={settings} onPick={(t) => void patch(t)} />
+          <p className="faint group-note">Just for fun</p>
+          <ThemeButtons themes={FUN_THEMES} settings={settings} onPick={(t) => void patch(t)} />
+          <div className="group-note">
+            <ThemeButtons themes={[CUSTOM_THEME]} settings={settings} onPick={(t) => void patch(t)} />
           </div>
-          <p className="faint">{THEMES.find((t) => t.id === settings.theme)?.hint}</p>
-        </div>
+          <p className="faint">{ALL_THEMES.find((t) => t.id === settings.theme)?.hint}</p>
+        </fieldset>
 
         {settings.theme === 'custom' && (
           <CustomThemeEditor
@@ -243,7 +246,6 @@ export default function Settings({
             step={0.05}
             value={settings.textScale}
             onChange={(e) => void patch({ textScale: Number(e.target.value) })}
-            style={{ width: '100%' }}
           />
         </div>
 
@@ -289,7 +291,6 @@ export default function Settings({
             step={1}
             value={settings.lookaheadDays}
             onChange={(e) => void patch({ lookaheadDays: Number(e.target.value) })}
-            style={{ width: '100%' }}
           />
         </div>
 
@@ -307,7 +308,7 @@ export default function Settings({
             already saved - the button below does that.
           </p>
           {mismatched > 0 && (
-            <div className="stack-sm" style={{ marginTop: 8 }}>
+            <div className="stack-sm">
               <ConfirmButton
                 label={`Change ${mismatched} subscription${mismatched === 1 ? '' : 's'} to ${settings.currency}`}
                 confirmLabel={`Yes, use ${settings.currency} for all of them`}
@@ -335,11 +336,13 @@ export default function Settings({
           alarms do not depend on this app at all.
         </p>
 
-        {permission === 'unsupported' && <p className="pill pill-warn">This browser has no notification support.</p>}
-        {permission === 'granted' && <p className="pill">Notifications are on.</p>}
+        {/* Status, said as a plain line - not a coloured pill, which read as a
+            button on one side and as a warning on the other. */}
+        {permission === 'unsupported' && <p className="small">This browser can't show notifications.</p>}
+        {permission === 'granted' && <p className="small">Notifications are on.</p>}
         {permission === 'denied' && (
-          <p className="pill pill-warn">
-            Notifications are blocked for this site. Turn them back on in your browser's site settings.
+          <p className="small">
+            Notifications are blocked for Steady on this phone. Turn them back on in Chrome's settings for this site.
           </p>
         )}
         {permission === 'default' && (
@@ -356,9 +359,9 @@ export default function Settings({
           </button>
         )}
 
-        <div className="field">
-          <label>What a reminder shows</label>
-          <div className="btn-row" role="group" aria-label="What a reminder shows">
+        <fieldset className="field">
+          <legend>What a reminder shows</legend>
+          <div className="btn-row">
             {REMINDER_CHOICES.map((choice) => (
               <button
                 key={choice.id}
@@ -374,7 +377,7 @@ export default function Settings({
           <p className="faint">
             Reminders can show on your lock screen and on a paired watch, where anyone nearby can read them.
           </p>
-        </div>
+        </fieldset>
 
         <button type="button" className="btn" onClick={() => void doCalendar()}>
           Export everything to my calendar (.ics)
@@ -489,8 +492,8 @@ export default function Settings({
 
         <hr className="divider" />
 
-        <div className="field">
-          <label>Restoring a backup</label>
+        <fieldset className="field">
+          <legend>Restoring a backup</legend>
           <div className="btn-row">
             <button
               type="button"
@@ -514,7 +517,7 @@ export default function Settings({
               ? 'Keeps everything already here and only adds records it has not seen before. Safe to run twice.'
               : 'Shows you what the file holds first. Only when you say yes does it delete everything on this device and restore the file exactly. Use this on a new phone.'}
           </p>
-        </div>
+        </fieldset>
 
         <input
           ref={fileRef}
@@ -526,7 +529,7 @@ export default function Settings({
             if (file) void doImport(file);
           }}
         />
-        {importError && <p className="pill pill-warn">{importError}</p>}
+        <FormError message={importError} />
         {pending && (
           <div className="card stack-sm" role="status">
             <p className="small">
@@ -583,7 +586,7 @@ export default function Settings({
           </p>
           <p className="small">
             The only network request in the whole app is your browser fetching the app's own files, and the service
-            worker caches those so it works with no signal at all. You can put the phone in aeroplane mode and use
+            worker caches those so it works with no signal at all. You can put the phone in airplane mode and use
             every feature.
           </p>
           <p className="faint">
@@ -593,6 +596,49 @@ export default function Settings({
         </div>
       </Section>
     </>
+  );
+}
+
+/** One row of theme buttons, each with a slice of that theme beside its name. */
+function ThemeButtons({
+  themes,
+  settings,
+  onPick,
+}: {
+  themes: ThemeChoice[];
+  settings: SettingsType;
+  onPick: (changes: Partial<SettingsType>) => void;
+}) {
+  return (
+    <div className="btn-row">
+      {themes.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          aria-pressed={settings.theme === t.id}
+          className={`btn btn-sm theme-btn${settings.theme === t.id ? ' btn-primary' : ''}`}
+          onClick={() =>
+            onPick(
+              // Choosing Custom for the first time needs something to show,
+              // so it starts on the Calm pair rather than on nothing.
+              t.id === 'custom'
+                ? { theme: 'custom', customTheme: settings.customTheme ?? DEFAULT_CUSTOM }
+                : { theme: t.id },
+            )
+          }
+        >
+          {/* A slice of the theme, next to its name - never instead of it. */}
+          <span
+            className="swatch"
+            aria-hidden="true"
+            {...(t.id === 'custom'
+              ? { style: swatchStyle(resolveCustom(settings.customTheme).tokens) }
+              : { 'data-theme': t.id })}
+          />
+          {t.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -621,8 +667,8 @@ function CustomThemeEditor({
 
   return (
     <div className="card stack">
-      <div className="field">
-        <label>Paper</label>
+      <fieldset className="field">
+        <legend>Paper</legend>
         <div className="btn-row">
           {GROUND_IDS.map((id) => {
             const option = GROUNDS[id];
@@ -643,10 +689,10 @@ function CustomThemeEditor({
           })}
         </div>
         <p className="faint">{ground.hint}</p>
-      </div>
+      </fieldset>
 
-      <div className="field">
-        <label>One colour</label>
+      <fieldset className="field">
+        <legend>One color</legend>
         <div className="btn-row">
           {ACCENT_IDS.map((id) => {
             const accent = ground.dark ? ACCENTS[id].onDark : ACCENTS[id].onLight;
@@ -670,14 +716,14 @@ function CustomThemeEditor({
           })}
         </div>
         <p className="faint">
-          Used for the tab you are on and the button you are about to press. Nothing else in the app is coloured,
+          Used for the tab you are on and the button you are about to press. Nothing else in the app is colored,
           which is what keeps it quiet.
         </p>
-      </div>
+      </fieldset>
 
       <p className="faint">
         Every pair on this screen has been checked for readability, so there is no combination here that comes out
-        hard to read. That is why it offers paper and a colour rather than a colour wheel.
+        hard to read. That is why it offers paper and a color rather than a color wheel.
       </p>
     </div>
   );

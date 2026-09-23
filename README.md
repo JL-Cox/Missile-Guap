@@ -33,11 +33,12 @@ opposite on all three counts.
    task. The form never demands an estimate or a due date, because being forced
    to decide is what stops the thought getting written down at all.
 6. **Big things break into small ones.** Step lists sit in the main task form,
-   not behind an "advanced" toggle, because "ring the dentist" is often really
-   "find the letter, then ring at 9am".
-7. **You can turn the volume down.** Six themes — Calm, Amber, Overcast, Dark,
-   Midnight and High contrast — plus a custom one you compose from a paper and a
-   single colour, every combination contrast-checked in the tests so an
+   not behind an "advanced" toggle, because "call the dentist" is often really
+   "find the letter, then call at 9am".
+7. **You can turn the volume down.** Six everyday themes — Calm, Amber,
+   Overcast, Dark, Midnight and High contrast — three just for fun (Synthwave,
+   Bubblegum and Aurora), and a custom one you compose from a paper and a
+   single color, every one of them contrast-checked in the tests so an
    unreadable pair cannot be made. A text size slider, motion off, and a switch
    that blurs every money amount until you tap it, for days when seeing the
    number is too much.
@@ -54,6 +55,21 @@ opposite on all three counts.
 | **Money** | Your income and your subscriptions, and what one leaves of the other. Real dates rather than averages: what is still to come out this month and before your next payday, and what each individual paycheck has to cover before the next one arrives. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
 | **Settings** | Appearance, notifications, backup and restore, calendar export, and a plain-English account of what happens to your data. |
 
+Two things hold across every screen:
+
+- **Nothing just vanishes.** Anything that moves or disappears - ticking a task
+  off, moving it to today, taking its date off, keeping a capture as a note,
+  cancelling or deleting something - says where it went in a short line at the
+  bottom ("On Today now.", "Moved to Backlog.", "Kept as a note — it's in
+  Notes."), with an **Undo** button right there. Undo puts back exactly what was
+  there, unless you have changed it again since, in which case your change wins
+  and it says so. Deleting still asks twice first; Undo is as well as that, not
+  instead of it.
+- **Back does what Android's Back should.** It closes the form or confirmation
+  you have open, then goes to Today, then leaves the app - never through every
+  tab you happened to visit. A half-written task is kept if you switch tabs and
+  come back.
+
 There are four buckets, not six: **a reminder is a property of a task**, not a
 separate kind of thing, so there is never a moment of "is this a task or a
 reminder?". Backlog is the same rule applied again — it is a view of the tasks
@@ -64,8 +80,9 @@ it. Priority is a field on a task, like a reminder.
 
 One button, three fields, done:
 
-1. **Tap "Add a subscription"** — full width, top of the Money screen, never a
-   thing you have to hunt for.
+1. **Tap "Add a subscription"** — the first thing on the Money screen, beside
+   "Add income" until there is some, never a thing you have to hunt for. The
+   home-screen icon's long-press menu has it too, and opens the form directly.
 2. **Type the name.** Common services autocomplete and fill in the category and
    the usual billing cycle for you. Deliberately no prices: they change
    constantly, and a wrong number sitting quietly in your budget is worse than
@@ -110,7 +127,7 @@ in one file.
 Notes can suggest their own tags. The classifier is a small Naive Bayes model
 trained on **your own already-tagged notes** — not a language model, and not
 something that has read anyone else's writing. That is the point: the corpus is
-one person's notes in their own vocabulary, so "ring the surgery" comes to mean
+one person's notes in their own vocabulary, so "call the doctor's office" comes to mean
 *health* because that is what it means to **you**.
 
 It is deliberately shy, because a wrong suggestion costs more than a missing one:
@@ -135,20 +152,20 @@ while recording every request the page makes.
 
 ### Income, from the paystub
 
-Add a paycheque and the expense figures stop being half a picture.
+Add a paycheck and the expense figures stop being half a picture.
 
 **It does not calculate your tax.** Gross and net are typed straight off the
 stub, so they are right by construction. Tax rates vary by state and filing
 status and change every year; a confident wrong number in your budget is worse
 than no number.
 
-- **Every 2 weeks and twice a month are not the same thing** — 26 paycheques a
-  year against 24, a difference of two whole paycheques. The app keeps them
+- **Every 2 weeks and twice a month are not the same thing** — 26 paychecks a
+  year against 24, a difference of two whole paychecks. The app keeps them
   apart, and twice-a-month pays on real dates: "the 15th and the last day"
   lands on the 28th in February and the 30th in April by itself.
 - **Deductions are lines you copy across** — federal, Social Security, Medicare,
   state, 401(k), health insurance — offered as one-tap chips. Whatever you
-  haven't written down shows as *"not itemised"*, never as an error. A partial
+  haven't written down shows as *"not itemized"*, never as an error. A partial
   list is fine.
 - **You see gross against net**: what you earn, what you keep, and the share
   taken before you ever see it — a number paystubs make oddly hard to read.
@@ -222,10 +239,13 @@ Everything else follows from that:
   never its notes, because a lock screen and a watch can be read by whoever is
   nearby. Settings can make them say less, or more.
 - **Data leaves only when you tap a button that says so**: *Save a backup file*
-  (a readable file with everything in it) and *Add to my calendar* (the lines
-  next to each button say what goes in). Deleting something in the app does not
+  (a readable file with everything in it), *Add to my calendar* and *Export
+  everything to my calendar* (the lines next to each button say what goes in).
+  Where the phone lets a web app hand it that kind of file, the phone's share
+  sheet opens and you pick where it goes; otherwise it is saved to your
+  downloads. Either way it goes only where you send it. Deleting something in the app does not
   reach into a backup file you saved earlier or a calendar entry you added.
-- **Works in aeroplane mode.** The service worker caches the app itself on first
+- **Works in airplane mode.** The service worker caches the app itself on first
   visit, so every feature works with no signal at all.
 
 Your data lives in this browser's IndexedDB storage, on this device, in a
@@ -296,7 +316,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-598 unit tests cover the parts where a quiet wrong answer would make the app
+647 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between
@@ -344,6 +364,9 @@ src/
     notify.ts         The in-app scheduler, its honest limits, and what a lock screen shows
     backup.ts         Export, and an import that shows what it holds before it replaces anything
     inbox.ts          Undoing "Keep as a note" without leaving a duplicate
+    tasklist.ts       Task search, and the order the Tasks screen groups by
+    undo.ts           Undo that puts back exactly what was there, unless it changed since
+    feedback.ts       What the toast says after something moves or disappears
   components/         Capture bar, task editor, task row, shared bits
   views/              Today, Inbox, Tasks, Notes, Money, Settings
 public/
@@ -359,7 +382,7 @@ The whole point is that this fits one specific brain. Some starting points:
 
 - **Wording** lives in the views; it is deliberately plain and non-judgemental.
   If a phrase grates, change it — that is not a cosmetic fix, it is the feature.
-- **Colours** are CSS custom properties at the top of `src/styles.css`. Each
+- **Colors** are CSS custom properties at the top of `src/styles.css`. Each
   theme redefines the same small set of tokens.
 - **The capture box** is `src/components/CaptureBar.tsx`. If you want it to
   parse "tomorrow 3pm" out of what you type, that is where it goes.

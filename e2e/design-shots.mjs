@@ -167,13 +167,13 @@ async function seed() {
           put('captures', [
             {
               id: 'c1',
-              text: 'Ask about the referral letter when the surgery rings back',
+              text: "Ask about the referral letter when the doctor's office calls back",
               createdAt: now - 3600_000,
             },
-            { id: 'c2', text: 'Bin day is Thursday this week, not Wednesday', createdAt: now - 7200_000 },
+            { id: 'c2', text: 'Trash pickup is Thursday this week, not Wednesday', createdAt: now - 7200_000 },
             {
               id: 'c3',
-              text: 'That noise the boiler makes when the heating comes on - mention it to the engineer',
+              text: 'That noise the furnace makes when the heat comes on - mention it to the technician',
               createdAt: now - 86_400_000,
             },
           ]);
@@ -181,11 +181,11 @@ async function seed() {
           put('tasks', [
             {
               id: 't1',
-              title: 'Ring the dentist about the referral',
+              title: 'Call the dentist about the referral',
               notes: 'Ask for Dr Hall. The letter is in the blue folder on the shelf.',
               steps: [
                 { id: 's1', text: 'Find the referral letter', done: true },
-                { id: 's2', text: 'Ring at 9am, when they open', done: false },
+                { id: 's2', text: 'Call at 9am, when they open', done: false },
               ],
               tags: ['health', 'phone calls'],
               energy: 'high',
@@ -210,7 +210,7 @@ async function seed() {
             },
             {
               id: 't3',
-              title: 'Put the bins out',
+              title: 'Take the trash out',
               notes: '',
               steps: [],
               tags: ['house'],
@@ -221,7 +221,7 @@ async function seed() {
             },
             {
               id: 't4',
-              title: 'Email the landlord about the boiler',
+              title: 'Email the landlord about the furnace',
               notes: 'It is the same fault as March. There is a photo of the error code on the phone.',
               steps: [],
               tags: ['house'],
@@ -246,15 +246,36 @@ async function seed() {
               steps: [],
               tags: ['admin'],
               energy: 'medium',
+              priority: 'high',
               createdAt: now,
               updatedAt: now,
             },
             {
               id: 't7',
-              title: 'Book the eye test',
+              title: 'Book the eye exam',
               notes: '',
               steps: [],
               tags: ['health'],
+              createdAt: now,
+              updatedAt: now,
+            },
+            {
+              id: 't9',
+              title: 'Renew the car registration before it runs out',
+              notes: 'The form is online; the insurance card is in the glove box.',
+              steps: [],
+              tags: ['admin'],
+              priority: 'critical',
+              createdAt: now - 86_400_000,
+              updatedAt: now,
+            },
+            {
+              id: 't10',
+              title: 'Order more printer ink',
+              notes: '',
+              steps: [],
+              tags: [],
+              priority: 'low',
               createdAt: now,
               updatedAt: now,
             },
@@ -273,8 +294,8 @@ async function seed() {
           put('notes', [
             {
               id: 'n1',
-              title: 'GP surgery details',
-              body: 'Reception: 0161 496 0000\nAsk for Dr Hall.\nPhones open at 8, but they are busy until about 9.15.\nRepeat prescriptions go through the app, not the desk.',
+              title: "Doctor's office",
+              body: 'Front desk: (212) 555-0147\nAsk for Dr Hall.\nPhones open at 8, but they are busy until about 9:15.\nRefills go through the patient portal, not the front desk.',
               tags: ['health', 'phone numbers'],
               pinned: true,
               createdAt: now,
@@ -282,8 +303,8 @@ async function seed() {
             },
             {
               id: 'n2',
-              title: 'Boiler reset, what the engineer said',
-              body: 'Hold the reset button for five seconds, then put the dial back to 3.\nIf the pressure gauge is under 1, top it up with the grey key under the sink.\nService is due every October.',
+              title: 'Furnace reset, what the technician said',
+              body: 'Hold the reset button for five seconds, then set the thermostat back to 68.\nIf the pilot light is out, call the gas company before anything else.\nThe filter gets changed every October.',
               tags: ['house'],
               pinned: false,
               createdAt: now,
@@ -291,7 +312,7 @@ async function seed() {
             },
             {
               id: 'n3',
-              title: 'What to say when I ring about the referral',
+              title: 'What to say when I call about the referral',
               body: '"I was referred by Dr Hall in March and I have not heard anything. Can you tell me whether it was received?"\nReference on the letter: RF-40118.',
               tags: ['health', 'phone calls'],
               pinned: false,
@@ -300,8 +321,8 @@ async function seed() {
             },
             {
               id: 'n4',
-              title: 'Bin collection',
-              body: 'Green: every other Tuesday.\nBlack: every Tuesday.\nGarden waste stops in December.',
+              title: 'Trash pickup',
+              body: 'Recycling: every other Tuesday.\nTrash: every Tuesday.\nYard waste stops in December.',
               tags: [],
               pinned: false,
               createdAt: now,
@@ -387,7 +408,7 @@ async function seed() {
             },
             {
               id: 'sub6',
-              name: 'Veg box',
+              name: 'Produce box',
               amountMinor: 1500,
               currency: 'USD',
               cycle: 'weekly',
@@ -447,12 +468,20 @@ async function everyScreen(tag, alsoAsPhone = false) {
   if (alsoAsPhone) await shotPhone(`phone-${tag}-inbox`);
   await go('Tasks');
   await shot(`${tag}-tasks`);
+  await go('Backlog');
+  await shot(`${tag}-backlog`);
+  if (alsoAsPhone) await shotPhone(`phone-${tag}-backlog`);
   await go('Notes');
   await shot(`${tag}-notes`);
   if (alsoAsPhone) await shotPhone(`phone-${tag}-notes`);
   await go('Money');
   await shot(`${tag}-money`);
   if (alsoAsPhone) await shotPhone(`phone-${tag}-money`);
+  const yearly = page.locator('button:text-is("Show the yearly breakdown")');
+  if (await yearly.count()) {
+    await yearly.click();
+    await shot(`${tag}-money-yearly`);
+  }
   await openSettings();
   await shot(`${tag}-settings`);
   if (alsoAsPhone) await shotPhone(`phone-${tag}-settings`);
@@ -461,7 +490,7 @@ async function everyScreen(tag, alsoAsPhone = false) {
 /** The forms, opened on real records and cancelled again so nothing changes. */
 async function everyEditor(tag) {
   await go('Tasks');
-  await page.click('button.item-title:has-text("Ring the dentist")');
+  await page.click('button.item-title:has-text("Call the dentist")');
   await page.waitForTimeout(200);
   await shot(`${tag}-task-expanded`);
   await page.click('button:text-is("Edit")');
@@ -506,6 +535,7 @@ for (const [tag, opts] of [
   ['empty-calm-1.6', { theme: 'calm', textScale: 1.6 }],
   ['empty-dark-1.0', { theme: 'dark' }],
   ['empty-custom-1.0', { theme: 'custom', customTheme: { ground: 'sepia', accent: 'plum' } }],
+  ['empty-synthwave-1.0', { theme: 'synthwave' }],
 ]) {
   await appearance(opts);
   await everyScreen(tag);
@@ -523,6 +553,13 @@ const FULL = [
   ['dark-1.6', { theme: 'dark', textScale: 1.6 }],
   ['custom-1.0', { theme: 'custom', customTheme: { ground: 'trueBlack', accent: 'teal' } }],
   ['custom-1.6', { theme: 'custom', textScale: 1.6, customTheme: { ground: 'trueBlack', accent: 'teal' } }],
+  // Just for fun - held to the same shots as the everyday themes.
+  ['synthwave-1.0', { theme: 'synthwave' }],
+  ['synthwave-1.6', { theme: 'synthwave', textScale: 1.6 }],
+  ['bubblegum-1.0', { theme: 'bubblegum' }],
+  ['bubblegum-1.6', { theme: 'bubblegum', textScale: 1.6 }],
+  ['aurora-1.0', { theme: 'aurora' }],
+  ['aurora-1.6', { theme: 'aurora', textScale: 1.6 }],
 ];
 
 for (const [tag, opts] of FULL) {
@@ -552,53 +589,65 @@ for (const [tag, opts] of [
   await shot(`${tag}-settings`);
 }
 
-/* --- the toast ------------------------------------------------------------- */
+/* --- the toast, and the toast with Undo ----------------------------------- */
 await appearance({ theme: 'calm' });
 await go('Today');
-await page.fill('#capture-input', 'Ring the surgery back about the referral');
+await page.fill('#capture-input', 'Call the doctor back about the referral');
+await shotPhone('state-capture-open');
 await page.click('button:text-is("Save to inbox")');
 await page.waitForTimeout(300);
 await shot('state-toast');
+await page.locator('.item input[type="checkbox"]').first().click();
+await page.waitForTimeout(300);
+await shotPhone('state-toast-undo');
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(300);
+
+/* --- a form that did not work: the notice sits above Save ------------------- */
+await go('Money');
+await page.click('button:text-is("Add a subscription")');
+await page.waitForSelector('#sub-name');
+await page.fill('#sub-name', 'Gym');
+await page.fill('#sub-amount', 'twelve');
+await page.click('form.card button[type="submit"]:text-is("Save")');
+await page.waitForTimeout(600);
+// Where the phone actually is after Save: scrolled to the notice above the Save row.
+await page.screenshot({ path: `${OUT}/state-form-error.png` });
+count += 1;
+await page.click('form.card button:text-is("Cancel")');
+await page.waitForTimeout(200);
 
 /*
-  --- six nav items at 1.6x ---------------------------------------------------
-  The Backlog tab is not built yet, and app-check.mjs asserts the nav has five
-  buttons, so a sixth is injected here purely to prove the layout survives it.
-  This is the case the --nav-label cap and the disappearing glyph exist for.
+  --- the nav at both ends of the text scale ----------------------------------
+  Six real tabs now. This is the case the --nav-label cap and the disappearing
+  glyph exist for, proven by measurement as well as by eye.
 */
 for (const [tag, opts] of [
-  ['nav-six-calm-1.0', { theme: 'calm' }],
-  ['nav-six-calm-1.6', { theme: 'calm', textScale: 1.6 }],
-  ['nav-six-dark-1.6', { theme: 'dark', textScale: 1.6 }],
+  ['nav-calm-1.0', { theme: 'calm' }],
+  ['nav-calm-1.6', { theme: 'calm', textScale: 1.6 }],
+  ['nav-dark-1.6', { theme: 'dark', textScale: 1.6 }],
+  ['nav-synthwave-1.0', { theme: 'synthwave' }],
 ]) {
   await appearance(opts);
-  await go('Today');
-  await page.evaluate(() => {
-    const nav = document.querySelector('.nav');
-    const clone = nav.lastElementChild.cloneNode(true);
-    clone.removeAttribute('aria-current');
-    const spans = clone.querySelectorAll('span');
-    spans[0].textContent = '⊞';
-    spans[1].textContent = 'Backlog';
-    nav.appendChild(clone);
-  });
-  await page.waitForTimeout(150);
+  await go('Inbox');
   const box = await page.locator('.nav').boundingBox();
   await page.screenshot({
     path: `${OUT}/${tag}.png`,
     clip: { x: box.x, y: box.y - 8, width: box.width, height: box.height + 8 },
   });
   count += 1;
-  // Prove it by measurement as well as by eye: nothing may overflow its slot.
   const overflow = await page.evaluate(() =>
     [...document.querySelectorAll('.nav-btn')].map((b) => ({
       label: b.textContent.trim(),
       clipped: b.scrollWidth > b.clientWidth + 1,
+      // Every label's baseline on the same line, badge or no badge.
+      top: Math.round(b.querySelector('span:not(.nav-glyph):not(.nav-count)').getBoundingClientRect().top),
     })),
   );
   const clipped = overflow.filter((b) => b.clipped);
+  const tops = new Set(overflow.map((b) => b.top));
   console.log(
-    `  ${tag}: ${overflow.length} tabs, ${clipped.length ? `CLIPPED: ${clipped.map((c) => c.label).join(', ')}` : 'none clipped'}`,
+    `  ${tag}: ${overflow.length} tabs, ${clipped.length ? `CLIPPED: ${clipped.map((c) => c.label).join(', ')}` : 'none clipped'}, labels ${tops.size === 1 ? 'in line' : `on ${tops.size} lines`}`,
   );
 }
 

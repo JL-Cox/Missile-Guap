@@ -7,6 +7,7 @@ import {
   DEFAULT_CUSTOM,
   GROUNDS,
   GROUND_IDS,
+  GROUND_THEMES,
   THEME_TOKENS,
   contrastRatio,
   relativeLuminance,
@@ -186,6 +187,28 @@ describe('the custom theme cannot be made unreadable', () => {
     expect(resolveCustom({ ground: 'warmNight', accent: 'ink' }).dark).toBe(true);
     expect(resolveCustom({ ground: 'trueBlack', accent: 'ink' }).dark).toBe(true);
     expect(resolveCustom({ ground: 'sepia', accent: 'ink' }).dark).toBe(false);
+  });
+});
+
+describe('each custom paper is an exact copy of a shipped theme', () => {
+  /*
+    The five grounds are the neutral halves of five built-in themes, typed out a
+    second time because a custom theme has to be assembled in JavaScript. A
+    copy is exactly what drifts: tweak Calm's faint text and "Warm white" would
+    quietly keep the old value. Every token each ground defines has to match.
+  */
+  it.each(GROUND_IDS)('%s matches its theme', (ground) => {
+    const theme = BLOCKS.get(GROUND_THEMES[ground])!;
+    expect(theme, `no theme block for ${GROUND_THEMES[ground]}`).toBeTruthy();
+    for (const [token, value] of Object.entries(GROUNDS[ground].tokens)) {
+      expect(value, `${ground} --${token} has drifted from ${GROUND_THEMES[ground]}`).toBe(theme[token]);
+    }
+  });
+
+  it('agrees about light and dark too', () => {
+    for (const ground of GROUND_IDS) {
+      expect(GROUNDS[ground].dark ? 'dark' : 'light').toBe(BLOCKS.get(GROUND_THEMES[ground])!['color-scheme']);
+    }
   });
 });
 

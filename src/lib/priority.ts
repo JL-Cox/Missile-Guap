@@ -46,11 +46,15 @@ export function priorityClass(priority: Priority): string {
   return priority === 'low' ? 'prio-text prio-text-low' : 'prio-text';
 }
 
+/**
+ * Short on purpose, so all four sit on one row at every text size and the
+ * choice reads as one control rather than a wall of buttons.
+ */
 export const SORTS: { id: BacklogSort; label: string }[] = [
-  { id: 'priority', label: 'Most pressing' },
-  { id: 'oldest', label: 'Oldest first' },
-  { id: 'newest', label: 'Newest first' },
-  { id: 'az', label: 'A to Z' },
+  { id: 'priority', label: 'Priority' },
+  { id: 'oldest', label: 'Oldest' },
+  { id: 'newest', label: 'Newest' },
+  { id: 'az', label: 'A–Z' },
 ];
 
 /**

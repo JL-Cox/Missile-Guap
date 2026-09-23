@@ -1,20 +1,34 @@
 import { useState } from 'react';
-import { newId, saveTask } from '../db';
+import { newId, saveSettings, saveTask } from '../db';
 import type { Recurrence, Task } from '../types';
 import { describeDuration, todayKey } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
 import { reminderOffset, withAnchor, withReminder } from '../lib/tasks';
-import { ConfirmButton, parseTags, useAutoFocus } from './ui';
+import { notificationSupport, requestPermission, type PermissionState } from '../lib/notify';
+import { calendarForTask, icsFilename } from '../lib/ics';
+import AddToCalendar from './AddToCalendar';
+import { ConfirmButton, DateShortcuts, parseTags, useAutoFocus } from './ui';
 import { PRIORITIES, PRIORITY_LABELS } from '../lib/priority';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DURATIONS = [10, 15, 30, 45, 60, 90, 120];
 const REMIND_OFFSETS = [0, 5, 10, 30, 60, 24 * 60];
+const REPEAT_UNITS: Record<Recurrence['kind'], [string, string]> = {
+  daily: ['day', 'days'],
+  weekly: ['week', 'weeks'],
+  monthly: ['month', 'months'],
+  yearly: ['year', 'years'],
+};
 
 function offsetLabel(min: number): string {
   if (min === 0) return 'At the time';
   if (min >= 1440) return `${min / 1440} day before`;
   return `${min} min before`;
+}
+
+/** "every 2" as typed, read back as a whole number from 1 to 99. */
+function readEvery(text: string): number {
+  return Math.min(99, Math.max(1, Math.floor(Number(text)) || 1));
 }
 
 /**
@@ -23,6 +37,10 @@ function offsetLabel(min: number): string {
  * none of them, because being made to decide is the thing that stops the task
  * getting written at all. Anything added here has to keep that true: a new
  * field may be offered, never required, and never rendered as missing.
+ *
+ * The order follows the questions as they come: what, the steps, which day,
+ * how long, when to be reminded - and only then how pressing it is, which is a
+ * question about the backlog rather than about the task.
  */
 export default function TaskEditor({
   task,
@@ -40,7 +58,14 @@ export default function TaskEditor({
   const [showMore, setShowMore] = useState(
     Boolean(task.recurrence || task.energy || task.tags.length || task.notes),
   );
+  /*
+    Held as the raw text typed, like every number box in this app: a box that
+    rewrote itself to "1" the moment it was emptied could not be retyped.
+  */
+  const [everyText, setEveryText] = useState(String(task.recurrence?.every ?? 1));
+  const [permission, setPermission] = useState<PermissionState>(notificationSupport);
   const titleRef = useAutoFocus<HTMLInputElement>();
+  const today = todayKey();
 
   /*
     "Remind me 30 min before" is kept as the 30, not as a moment. The moment is
@@ -52,13 +77,19 @@ export default function TaskEditor({
 
   const patch = (changes: Partial<Task>) => setDraft((d) => ({ ...d, ...changes }));
 
+  /** The task as it would be saved right now. */
+  const assembled = (): Task => {
+    const recurrence = draft.recurrence ? { ...draft.recurrence, every: readEvery(everyText) } : undefined;
+    return withAnchor(
+      withReminder({ ...draft, recurrence, title: draft.title.trim(), tags: parseTags(tagText) }, offset, task),
+      task,
+    );
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const title = draft.title.trim();
-    if (!title) return;
-    const next = withAnchor(withReminder({ ...draft, title, tags: parseTags(tagText) }, offset, task), task);
-    const saved = await saveTask(next);
-    onSaved(saved);
+    if (!draft.title.trim()) return;
+    onSaved(await saveTask(assembled()));
   };
 
   const toggleWeekday = (day: number) => {
@@ -68,6 +99,9 @@ export default function TaskEditor({
     else days.add(day);
     patch({ recurrence: { ...rec, kind: 'weekly', weekdays: [...days].sort((a, b) => a - b) } });
   };
+
+  const everyValue = readEvery(everyText);
+  const unit = draft.recurrence ? REPEAT_UNITS[draft.recurrence.kind][everyValue === 1 ? 0 : 1] : '';
 
   return (
     <form className="card stack" onSubmit={submit}>
@@ -80,75 +114,51 @@ export default function TaskEditor({
           type="text"
           value={draft.title}
           onChange={(e) => patch({ title: e.target.value })}
-          placeholder="Ring the dentist"
+          placeholder="Call the dentist"
         />
       </div>
 
-      <StepsEditor
-        steps={draft.steps}
-        onChange={(steps) => patch({ steps })}
-      />
+      <StepsEditor steps={draft.steps} onChange={(steps) => patch({ steps })} />
 
-      <div className="field-row">
-        <div className="field">
-          <label htmlFor="task-date">Day (optional)</label>
-          <input
-            autoComplete="off"
-            id="task-date"
-            type="date"
-            value={draft.date ?? ''}
-            onChange={(e) => patch({ date: e.target.value || undefined })}
-          />
+      <fieldset className="field">
+        <legend>Which day? (optional)</legend>
+        <DateShortcuts
+          value={draft.date}
+          today={today}
+          label="Which day?"
+          noneLabel="No day yet"
+          onPick={(date) => patch(date ? { date } : { date: undefined, startTime: undefined })}
+        />
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="task-date">Or pick a date</label>
+            <input
+              autoComplete="off"
+              id="task-date"
+              type="date"
+              value={draft.date ?? ''}
+              onChange={(e) => patch({ date: e.target.value || undefined })}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="task-time">Time (optional)</label>
+            <input
+              autoComplete="off"
+              id="task-time"
+              type="time"
+              value={draft.startTime ?? ''}
+              onChange={(e) => patch({ startTime: e.target.value || undefined })}
+              disabled={!draft.date}
+            />
+          </div>
         </div>
-        <div className="field">
-          <label htmlFor="task-time">Time (optional)</label>
-          <input
-            autoComplete="off"
-            id="task-time"
-            type="time"
-            value={draft.startTime ?? ''}
-            onChange={(e) => patch({ startTime: e.target.value || undefined })}
-            disabled={!draft.date}
-          />
-        </div>
-      </div>
-
-      {!draft.date && (
-        <div className="btn-row">
-          <button type="button" className="btn btn-sm" onClick={() => patch({ date: todayKey() })}>
-            Put it on today
-          </button>
-        </div>
-      )}
-
-      {/* Offered, never demanded - see the note at the top of this file. Tapping
-          the level it already has clears it, so "actually I don't know" is one
-          tap rather than a trip through a menu. */}
-      <div className="field">
-        <label>How pressing is it?</label>
-        <div className="btn-row" role="group" aria-label="How pressing is it?">
-          {PRIORITIES.map((p) => (
-            <button
-              key={p}
-              type="button"
-              aria-pressed={draft.priority === p}
-              className={`btn btn-sm${draft.priority === p ? ' btn-primary' : ''}`}
-              onClick={() => patch({ priority: draft.priority === p ? undefined : p })}
-            >
-              {PRIORITY_LABELS[p]}
-            </button>
-          ))}
-        </div>
-        <p className="faint">
-          Only used to sort your backlog. Leave it alone if you would rather not decide - that is a normal
-          answer, and nothing is treated as late either way.
-        </p>
-      </div>
+        {!draft.date && <p className="faint">With no day, it goes on your Backlog.</p>}
+      </fieldset>
 
       {draft.date && (
         <>
-          <div className="field">
-            <label>How long do you think it takes?</label>
+          <fieldset className="field">
+            <legend>How long do you think it takes?</legend>
             <div className="btn-row">
               {DURATIONS.map((d) => (
                 <button
@@ -163,10 +173,10 @@ export default function TaskEditor({
               ))}
             </div>
             <p className="faint">An estimate is just an estimate. Nothing checks whether you were right.</p>
-          </div>
+          </fieldset>
 
-          <div className="field">
-            <label>Remind me</label>
+          <fieldset className="field">
+            <legend>Remind me</legend>
             <div className="btn-row">
               <button
                 type="button"
@@ -189,14 +199,79 @@ export default function TaskEditor({
               ))}
             </div>
             {!draft.startTime && offset !== null && (
-              <p className="faint">No time set, so this counts from 9:00 am on the day.</p>
+              <p className="faint">No time set, so this counts from 9:00 AM on the day.</p>
             )}
-          </div>
+            {/* A reminder the phone is not allowed to show is worse than none,
+                because you think it is set. Said here, where it is being set. */}
+            {offset !== null && permission !== 'granted' && (
+              <div className="stack-sm">
+                <p className="small">
+                  {permission === 'denied'
+                    ? "Notifications are blocked for Steady on this phone. They can be turned back on in Chrome's settings for this site."
+                    : permission === 'unsupported'
+                      ? "This browser can't show notifications."
+                      : 'Notifications are off for Steady on this phone.'}
+                </p>
+                {permission === 'default' && (
+                  <div className="btn-row">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={async () => {
+                        setPermission(await requestPermission());
+                        await saveSettings({ notificationsAsked: true });
+                      }}
+                    >
+                      Allow notifications
+                    </button>
+                  </div>
+                )}
+                <p className="faint">
+                  Or add it to your calendar, and your phone reminds you whether or not Steady is open.
+                </p>
+                <AddToCalendar
+                  build={(options) => calendarForTask(assembled(), Date.now(), options)}
+                  kind="task"
+                  filename={icsFilename(draft.title || 'task')}
+                  nothingToAdd="Give this a day first, then it can go in your calendar."
+                />
+              </div>
+            )}
+          </fieldset>
         </>
       )}
 
+      {/* Offered, never demanded - see the note at the top of this file. Tapping
+          the level it already has clears it, so "actually I don't know" is one
+          tap rather than a trip through a menu. */}
+      <fieldset className="field">
+        <legend>How pressing is it?</legend>
+        <div className="btn-row">
+          {PRIORITIES.map((p) => (
+            <button
+              key={p}
+              type="button"
+              aria-pressed={draft.priority === p}
+              className={`btn btn-sm${draft.priority === p ? ' btn-primary' : ''}`}
+              onClick={() => patch({ priority: draft.priority === p ? undefined : p })}
+            >
+              {PRIORITY_LABELS[p]}
+            </button>
+          ))}
+        </div>
+        <p className="faint">
+          Only used to sort your backlog. Leave it alone if you would rather not decide - that is a normal
+          answer, and nothing is treated as late either way.
+        </p>
+      </fieldset>
+
       {!showMore ? (
-        <button type="button" className="btn btn-quiet btn-sm" onClick={() => setShowMore(true)}>
+        <button
+          type="button"
+          className="btn btn-quiet btn-sm"
+          aria-expanded={false}
+          onClick={() => setShowMore(true)}
+        >
           More options (repeat, notes, tags)
         </button>
       ) : (
@@ -211,14 +286,14 @@ export default function TaskEditor({
               onChange={(e) => {
                 const kind = e.target.value;
                 if (kind === 'none') return patch({ recurrence: undefined });
-                patch({ recurrence: { kind: kind as Recurrence['kind'], every: draft.recurrence?.every ?? 1 } });
+                patch({ recurrence: { kind: kind as Recurrence['kind'], every: everyValue } });
               }}
             >
               <option value="none">Doesn't repeat</option>
-              <option value="daily">Every day</option>
-              <option value="weekly">Every week</option>
-              <option value="monthly">Every month</option>
-              <option value="yearly">Every year</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
             </select>
             {draft.recurrence && !draft.date && (
               // Ticking a repeat off rolls it to its next date - which needs a
@@ -231,9 +306,31 @@ export default function TaskEditor({
             )}
           </div>
 
-          {draft.recurrence?.kind === 'weekly' && (
+          {draft.recurrence && (
             <div className="field">
-              <label>On which days?</label>
+              <div className="row-tight">
+                <label htmlFor="task-every" className="inline-label">
+                  Every
+                </label>
+                <input
+                  autoComplete="off"
+                  id="task-every"
+                  type="text"
+                  inputMode="numeric"
+                  className="input-narrow"
+                  value={everyText}
+                  onChange={(e) => setEveryText(e.target.value)}
+                  aria-describedby="task-every-unit"
+                />
+                <span id="task-every-unit">{unit}</span>
+              </div>
+              <p className="faint">Leave it at 1 for every single one. 2 is every other.</p>
+            </div>
+          )}
+
+          {draft.recurrence?.kind === 'weekly' && (
+            <fieldset className="field">
+              <legend>On which days?</legend>
               <div className="btn-row">
                 {WEEKDAY_LABELS.map((label, day) => (
                   <button
@@ -247,10 +344,12 @@ export default function TaskEditor({
                   </button>
                 ))}
               </div>
-            </div>
+            </fieldset>
           )}
 
-          {draft.recurrence && <p className="faint">{describeRecurrence(draft.recurrence)}.</p>}
+          {draft.recurrence && (
+            <p className="faint">{describeRecurrence({ ...draft.recurrence, every: everyValue })}.</p>
+          )}
 
           <div className="field">
             <label htmlFor="task-energy">How much does this take out of you?</label>
@@ -332,9 +431,9 @@ function StepsEditor({ steps, onChange }: { steps: Task['steps']; onChange: (ste
     <div className="field">
       <label htmlFor="task-step">Break it into steps (optional)</label>
       {steps.length > 0 && (
-        <div className="stack-sm" style={{ marginBottom: 8 }}>
+        <div className="stack-sm">
           {steps.map((step) => (
-            <div key={step.id} className="row-tight">
+            <div key={step.id} className="row-tight step-row">
               <label className="check grow">
                 <input
                   type="checkbox"
@@ -343,7 +442,7 @@ function StepsEditor({ steps, onChange }: { steps: Task['steps']; onChange: (ste
                     onChange(steps.map((s) => (s.id === step.id ? { ...s, done: !s.done } : s)))
                   }
                 />
-                <span style={step.done ? { color: 'var(--text-faint)', textDecoration: 'line-through' } : undefined}>
+                <span className={step.done ? 'step-done' : undefined}>
                   {step.text}
                 </span>
               </label>

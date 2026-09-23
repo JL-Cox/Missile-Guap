@@ -31,7 +31,7 @@ export const THEME_TOKENS = [
   'text', 'text-soft', 'text-faint', 'text-disabled',
   'accent', 'accent-soft', 'accent-text', 'accent-on',
   'warn-soft', 'warn-text', 'done', 'bar-fill',
-  'prio-critical-bg', 'prio-critical-text', 'prio-high-bg', 'prio-high-text',
+  'prio-critical-bg', 'prio-critical-text', 'prio-high-text',
   'prio-medium-text', 'prio-low-text',
 ] as const;
 
@@ -61,13 +61,18 @@ export const CONTRAST_PAIRS: [ThemeToken, ThemeToken, number][] = [
   // surface-alt is where inputs sit, and on a dark theme it is the *lightest*
   // surface, so it is the hardest case for a border - not the easiest.
   ['border-strong', 'surface-alt', 3],
+  // The capture box's edge. It sits on the accent tint, where --border-strong
+  // fell to 2.3:1 in some themes, so it is drawn in --text-faint instead - and
+  // that is the pair held here.
+  ['text-faint', 'accent-soft', 3],
   // The quiet attention register. Never alarm, still legible.
   ['warn-text', 'warn-soft', 4.5], ['warn-text', 'surface', 4.5],
   // Graphics that carry meaning.
   ['done', 'surface', 3], ['done', 'bg', 3], ['bar-fill', 'surface-sunk', 3],
   // Priority, for the Backlog screen. Badges carry words too, never colour alone.
   ['prio-critical-text', 'prio-critical-bg', 4.5],
-  ['prio-high-text', 'prio-high-bg', 4.5], ['prio-high-text', 'surface', 4.5],
+  // High is an outline badge on the card itself, so its only ground is the card.
+  ['prio-high-text', 'surface', 4.5],
   ['prio-medium-text', 'surface', 4.5], ['prio-low-text', 'surface', 4.5],
   // Disabled is exempt from WCAG. Held to 3:1 anyway, because "you cannot press
   // this" is information, and an unreadable control is just a broken-looking one.
@@ -101,7 +106,12 @@ export function contrastRatio(a: string, b: string): number {
 
 /* ---------- grounds: the neutral ramps, which you cannot break ---------- */
 
-/** Everything except the four accent tokens, which the accent supplies. */
+/**
+ * Everything except the four accent tokens, which the accent supplies.
+ *
+ * Each ground is a copy of a built-in theme's neutrals - see GROUND_THEMES -
+ * and test/theme.test.ts fails if a copy drifts from the stylesheet.
+ */
 type GroundTokens = Omit<Tokens, 'accent' | 'accent-soft' | 'accent-text' | 'accent-on'>;
 
 interface Ground {
@@ -124,7 +134,7 @@ export const GROUNDS: Record<GroundId, Ground> = {
       text: '#2b2823', 'text-soft': '#5c5649', 'text-faint': '#696251', 'text-disabled': '#8b8474',
       'warn-soft': '#f5eeda', 'warn-text': '#655423', done: '#4a7159', 'bar-fill': '#6c8377',
       'prio-critical-bg': '#ddd5c2', 'prio-critical-text': '#453e2c',
-      'prio-high-bg': '#eeeae0', 'prio-high-text': '#554c38',
+      'prio-high-text': '#554c38',
       'prio-medium-text': '#5c5649', 'prio-low-text': '#696251',
     },
   },
@@ -138,7 +148,7 @@ export const GROUNDS: Record<GroundId, Ground> = {
       text: '#23262b', 'text-soft': '#51565e', 'text-faint': '#5e636c', 'text-disabled': '#7d828c',
       'warn-soft': '#eee7d6', 'warn-text': '#5c5029', done: '#3d6b52', 'bar-fill': '#717f91',
       'prio-critical-bg': '#d3d7de', 'prio-critical-text': '#33373e',
-      'prio-high-bg': '#e9ebef', 'prio-high-text': '#454a53',
+      'prio-high-text': '#454a53',
       'prio-medium-text': '#51565e', 'prio-low-text': '#5e636c',
     },
   },
@@ -152,7 +162,7 @@ export const GROUNDS: Record<GroundId, Ground> = {
       text: '#33291a', 'text-soft': '#5f5134', 'text-faint': '#6f6040', 'text-disabled': '#8d7e5c',
       'warn-soft': '#f2e2c0', 'warn-text': '#66511d', done: '#4f6b34', 'bar-fill': '#887a54',
       'prio-critical-bg': '#e0d0ad', 'prio-critical-text': '#453820',
-      'prio-high-bg': '#f1e7d2', 'prio-high-text': '#564726',
+      'prio-high-text': '#564726',
       'prio-medium-text': '#5f5134', 'prio-low-text': '#6f6040',
     },
   },
@@ -166,7 +176,7 @@ export const GROUNDS: Record<GroundId, Ground> = {
       text: '#ece7de', 'text-soft': '#bdb6aa', 'text-faint': '#a09889', 'text-disabled': '#7c776d',
       'warn-soft': '#3a3320', 'warn-text': '#dcc68d', done: '#7fa98d', 'bar-fill': '#6e8578',
       'prio-critical-bg': '#453f37', 'prio-critical-text': '#ece2cf',
-      'prio-high-bg': '#322f2b', 'prio-high-text': '#d6cbb9',
+      'prio-high-text': '#d6cbb9',
       'prio-medium-text': '#bdb6aa', 'prio-low-text': '#a09889',
     },
   },
@@ -180,10 +190,19 @@ export const GROUNDS: Record<GroundId, Ground> = {
       text: '#c9c7c2', 'text-soft': '#a0a0a7', 'text-faint': '#8a8a92', 'text-disabled': '#6a6a73',
       'warn-soft': '#2a2418', 'warn-text': '#c9b587', done: '#6f9a80', 'bar-fill': '#5d7288',
       'prio-critical-bg': '#2d323b', 'prio-critical-text': '#d2d5da',
-      'prio-high-bg': '#1b1e24', 'prio-high-text': '#b4b7bd',
+      'prio-high-text': '#b4b7bd',
       'prio-medium-text': '#a0a0a7', 'prio-low-text': '#8a8a92',
     },
   },
+};
+
+/** Which built-in theme each ground was copied from. */
+export const GROUND_THEMES: Record<GroundId, string> = {
+  warmWhite: 'calm',
+  coolWhite: 'overcast',
+  sepia: 'amber',
+  warmNight: 'dark',
+  trueBlack: 'midnight',
 };
 
 /* ---------- accents: the one colour, in a light and a dark cut ---------- */

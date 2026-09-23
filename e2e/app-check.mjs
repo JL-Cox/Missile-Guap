@@ -233,18 +233,27 @@ check('the notification does not carry the notes', JSON.stringify(shown).include
 check('it says the time instead, on a 12-hour clock', /^Reminder for \d{1,2}:\d{2} (AM|PM)$/.test(reminder?.body ?? ''), true);
 
 // --- capture -------------------------------------------------------------
-await page.fill('#capture-input', 'Ring the dentist about the referral');
-await page.click('button:has-text("Save to inbox")');
+// The box is one line until you are in it; the Save button and the hint about
+// Enter appear when you are.
+check('the capture box starts as one line, with no Save button showing', await page.locator('button:text-is("Save to inbox")').count(), 0);
+await page.fill('#capture-input', 'Call the dentist about the referral\nAsk for Dr Hall. The letter is in the blue folder.');
+check('in the box, Save and the hint appear', await page.locator('button:text-is("Save to inbox")').count(), 1);
+await page.click('button:text-is("Save to inbox")');
 await page.waitForTimeout(400);
 check('capture lands in the inbox', await page.textContent('.nav-count'), '1');
+check('and the box folds back to one line', await page.locator('button:text-is("Save to inbox")').count(), 0);
 
 // --- inbox item becomes a task with steps, a time and a reminder ---------
 await page.click('.nav-btn:has-text("Inbox")');
 await page.click('button:has-text("Make it a task")');
 await page.waitForSelector('#task-title');
+// A two-line capture: the first line is the title, the rest the notes.
+check('the first line of a capture becomes the title', await page.inputValue('#task-title'), 'Call the dentist about the referral');
+// Notes are there, so the editor opens with them showing rather than folded away.
+check('and the rest becomes its notes', await page.inputValue('#task-notes'), 'Ask for Dr Hall. The letter is in the blue folder.');
 await page.fill('#task-step', 'Find the referral letter');
 await page.click('button:has-text("Add step")');
-await page.fill('#task-step', 'Ring at 9am when they open');
+await page.fill('#task-step', 'Call at 9am when they open');
 await page.click('button:has-text("Add step")');
 await page.fill('#task-date', todayKey);
 await page.fill('#task-time', '09:30');
@@ -253,12 +262,13 @@ await page.click('button:has-text("10 min before")');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
 check('inbox is emptied once the item becomes a task', await page.locator('.nav-count').count(), 0);
+check('and it says where the task went', await page.locator('.toast:has-text("Saved to Tasks.")').count(), 1);
 
 // --- a reminder follows the task when its time changes ----------------------
 // "10 min before" 9:30 is 9:20. Moving the task to 11:00 must move the
 // reminder to 10:50, not leave it behind on the old time.
 const dentistRemindAt = async () =>
-  (await readStore('tasks')).find((t) => t.title.startsWith('Ring the dentist'))?.remindAt;
+  (await readStore('tasks')).find((t) => t.title.startsWith('Call the dentist'))?.remindAt;
 const localMs = (hh, mm) => page.evaluate(([h, m]) => {
   const d = new Date();
   d.setHours(h, m, 0, 0);
@@ -266,13 +276,38 @@ const localMs = (hh, mm) => page.evaluate(([h, m]) => {
 }, [hh, mm]);
 check('the reminder is set from the time chosen', await dentistRemindAt(), await localMs(9, 20));
 await page.click('.nav-btn:has-text("Today")');
-await page.click('button.item-title:has-text("Ring the dentist")');
+await page.click('button.item-title:has-text("Call the dentist")');
 await page.click('button:text-is("Edit")');
 await page.waitForSelector('#task-time');
 await page.fill('#task-time', '11:00');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
 check('moving the time moves the reminder with it', await dentistRemindAt(), await localMs(10, 50));
+
+// --- Android Back closes what is open, then goes home, then leaves ----------
+await page.click('.nav-btn:has-text("Tasks")');
+await page.click('button:text-is("New task")');
+await page.waitForSelector('#task-title');
+await page.fill('#task-title', 'Half-written task');
+// Switching tab keeps the draft rather than throwing it away.
+await page.click('.nav-btn:has-text("Notes")');
+await page.waitForTimeout(200);
+await page.click('.nav-btn:has-text("Tasks")');
+await page.waitForTimeout(200);
+check('a half-written task survives a trip to another tab', await page.inputValue('#task-title'), 'Half-written task');
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back closes the editor instead of leaving the app', await page.locator('#task-title').count(), 0);
+check('and stays on the same tab', await page.getAttribute('.nav-btn:has-text("Tasks")', 'aria-current'), 'page');
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back from a tab goes to Today', await page.getAttribute('.nav-btn:has-text("Today")', 'aria-current'), 'page');
+check('and the app is still open', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
+await page.click('.nav-btn:has-text("Money")');
+await page.click('.header button:text-is("Settings")');
+await page.click('.header button:text-is("Done")');
+await page.waitForTimeout(200);
+check('Settings Done goes back where you were', await page.getAttribute('.nav-btn:has-text("Money")', 'aria-current'), 'page');
 
 // --- a subscription, in one journey -------------------------------------
 await page.click('.nav-btn:has-text("Money")');
@@ -499,6 +534,9 @@ await page.waitForTimeout(150);
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
 
+check('the yearly breakdown is folded away', (await page.textContent('.main')).includes('60,000.00'), false);
+await page.click('button:text-is("Show the yearly breakdown")');
+await page.waitForTimeout(200);
 const moneyText = await page.textContent('.main');
 check('take-home is 24 paycheques a year, not 26', moneyText.includes('3,700.00'), true);
 check('gross is annualised the same way', moneyText.includes('60,000.00'), true);
@@ -521,14 +559,19 @@ check(
   ),
   '42000,15500',
 );
-check('the unexplained gap is named, not hidden', moneyText.includes('Not itemised'), true);
+check('the unexplained gap is named, not hidden', moneyText.includes('Not itemized'), true);
 
 // The next payday shown must never be a Saturday or Sunday once shifting is on.
-const shownPayday = /Next: ([A-Z][a-z]{2} \d{1,2}, \d{4})/.exec(moneyText)?.[1];
+// It reads "Today", "Tomorrow", "Friday, in 3 days" or "Wed, Sep 30 · in 7 days".
+const shownPayday = /Next: (Today|Tomorrow|[A-Z][a-z]+)/.exec(moneyText)?.[1];
 check('a next payday is shown at all', Boolean(shownPayday), true);
 if (shownPayday) {
-  const day = new Date(`${shownPayday} 12:00:00`).getDay();
-  check('and it is not on a weekend', [0, 6].includes(day), false);
+  const offset = { Today: 0, Tomorrow: 1 }[shownPayday];
+  const weekday =
+    offset === undefined
+      ? shownPayday.slice(0, 3)
+      : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(Date.now() + offset * 86_400_000).getDay()];
+  check('and it is not on a weekend', ['Sat', 'Sun'].includes(weekday), false);
 }
 check(
   'the holiday list is there to check',
@@ -546,6 +589,9 @@ check('the money screen says what is still to come out', flowText.includes('Stil
 check('and names the rest of the month', flowText.includes('Rest of this month'), true);
 check('and what lands before the next payday', flowText.includes('Before your next payday'), true);
 check('each paycheck is set against its own bills', flowText.includes('Each paycheck'), true);
+check('this paycheck says what it leaves', flowText.includes('Left from this paycheck'), true);
+check('the list of charges is not repeated on Money', flowText.includes('Charging in the next'), false);
+check('negatives use a real minus sign, never a hyphen', /-\$\d/.test(flowText), false);
 check(
   'and says plainly that the remainder is not spare money',
   flowText.includes('rent, food, fuel and everything else'),
@@ -583,8 +629,8 @@ await page.waitForTimeout(300);
 await page.click('.nav-btn:has-text("Notes")');
 await page.click('button:has-text("New note")');
 await page.waitForSelector('#note-title');
-await page.fill('#note-title', 'GP surgery details');
-await page.fill('#note-body', 'Reception: 0161 496 0000\nAsk for Dr Hall.');
+await page.fill('#note-title', "Doctor's office");
+await page.fill('#note-body', 'Reception: (212) 555-0147\nAsk for Dr Hall.');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
 
@@ -626,8 +672,8 @@ await makeNote('Overcharge', 'Paid the invoice and got a refund on the overcharg
 await page.click('.nav-btn:has-text("Notes")');
 await page.click('button:has-text("New note")');
 await page.waitForSelector('#note-title');
-await page.fill('#note-title', 'Ring the dentist');
-await page.fill('#note-body', 'Need to ring the dentist about that appointment');
+await page.fill('#note-title', 'Call the dentist');
+await page.fill('#note-body', 'Need to call the dentist about that appointment');
 await page.waitForTimeout(400);
 check('suggests a tag it learned from me', await page.locator('button:has-text("+ health")').count(), 1);
 check('does not suggest the unrelated tag', await page.locator('button:has-text("+ money")').count(), 0);
@@ -653,7 +699,7 @@ check(
           const tx = req.result.transaction('notes', 'readonly');
           const all = tx.objectStore('notes').getAll();
           all.onsuccess = () => {
-            const note = all.result.find((n) => n.title === 'Ring the dentist');
+            const note = all.result.find((n) => n.title === 'Call the dentist');
             req.result.close();
             resolve(note ? note.tags.join(',') : 'NOT FOUND');
           };
@@ -663,6 +709,30 @@ check(
   'health',
 );
 await page.screenshot({ path: `${OUT}/tag-suggestions.png`, fullPage: true });
+
+// --- a notes search points at matching tasks too ------------------------------
+await page.click('.nav-btn:has-text("Notes")');
+await page.fill('input[aria-label="Search notes"]', 'dentist');
+await page.waitForTimeout(200);
+check('a notes search says how many tasks match too', await page.locator('button:has-text("matching task")').count(), 1);
+await page.click('button:has-text("matching task")');
+await page.waitForTimeout(300);
+check('and opens Tasks with the same search', await page.inputValue('input[aria-label="Search tasks"]'), 'dentist');
+
+// --- pinning is not an edit -----------------------------------------------------
+const doctorNote = async () => (await readStore('notes')).find((n) => n.title === "Doctor's office");
+const beforePin = await doctorNote();
+await page.click('.nav-btn:has-text("Notes")');
+await page.locator('.card', { hasText: "Doctor's office" }).locator('button:text-is("Pin")').click();
+await page.waitForTimeout(300);
+const afterPin = await doctorNote();
+check('pinning a note pins it', afterPin.pinned, true);
+check('and does not change when it was last updated', afterPin.updatedAt, beforePin.updatedAt);
+check(
+  'the Pin button keeps its label and says it is on',
+  await page.locator('.card', { hasText: "Doctor's office" }).locator('button:text-is("Pin")').getAttribute('aria-pressed'),
+  'true',
+);
 
 // The tidy-up screen should offer the same suggestion for an untagged note.
 await makeNote('Old note', 'Dentist rang about the appointment', '');
@@ -683,9 +753,10 @@ await page.click('.nav-btn:has-text("Inbox")');
 await page.click('button:has-text("Keep as a note")');
 await page.waitForTimeout(300);
 check('keeping it as a note makes one note', await libraryNotes(), 1);
-await page.click('button:has-text("Put it back")');
+check('it says where the note went', await page.locator('.toast:has-text("Kept as a note")').count(), 1);
+await page.click('.toast button:text-is("Undo")');
 await page.waitForTimeout(300);
-check('putting it back takes that note away again', await libraryNotes(), 0);
+check('undoing it takes that note away again', await libraryNotes(), 0);
 await page.click('button:has-text("Keep as a note")');
 await page.waitForTimeout(300);
 check('so filing it again leaves exactly one', await libraryNotes(), 1);
@@ -694,8 +765,12 @@ check('so filing it again leaves exactly one', await libraryNotes(), 1);
 await page.click('.nav-btn:has-text("Today")');
 await page.waitForTimeout(400);
 const todayText = await page.textContent('.main');
-check('the task shows on Today', todayText.includes('Ring the dentist'), true);
-check('the renewal shows on Today', todayText.includes('Netflix renews'), true);
+check('the task shows on Today', todayText.includes('Call the dentist'), true);
+check('the renewal shows on Today', todayText.includes('Charged today') && todayText.includes('Netflix'), true);
+check('with no warning pill on it', await page.locator('.main .pill-warn').count(), 0);
+// The box is drawn at 26px; the finger gets 44.
+const tickTarget = await page.locator('.item-check-hit').first().boundingBox();
+check('a tick box is at least 44 by 44 to a finger', tickTarget.width >= 44 && tickTarget.height >= 44, true);
 await page.screenshot({ path: `${OUT}/today.png`, fullPage: true });
 
 // --- the backlog: priority, sorting, and that the sort is remembered ------
@@ -734,11 +809,12 @@ check(
 check('and the level is named, not just coloured', backlogText.includes('Critical'), true);
 await page.screenshot({ path: `${OUT}/backlog.png`, fullPage: true });
 
-await page.click('button:text-is("A to Z")');
+check('under the priority sort, a row does not repeat its heading', await page.locator('.main .badge-critical').count(), 0);
+await page.click('button:text-is("A–Z")');
 await page.waitForTimeout(400);
 const azText = await page.textContent('.main');
 check(
-  'switching to A to Z reorders the list',
+  'switching to A–Z reorders the list',
   azText.indexOf('Book the optician') < azText.indexOf('Order printer ink'),
   true,
 );
@@ -751,7 +827,7 @@ await page.click('.nav-btn:has-text("Backlog")');
 await page.waitForTimeout(400);
 check(
   'the chosen sort is still chosen after a reload',
-  await page.getAttribute('button:text-is("A to Z")', 'aria-pressed'),
+  await page.getAttribute('button:text-is("A–Z")', 'aria-pressed'),
   'true',
 );
 
@@ -761,6 +837,12 @@ await page.click('.item input[type="checkbox"]');
 await page.waitForTimeout(500);
 const afterTick = await page.textContent('.main');
 check('a finished thing leaves the list', afterTick.includes('Book the optician'), false);
+check('and the toast offers it back', await page.locator('.toast button:text-is("Undo")').count(), 1);
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(400);
+check('Undo puts it back in the list', (await page.textContent('.main')).includes('Book the optician'), true);
+await page.click('.item input[type="checkbox"]');
+await page.waitForTimeout(500);
 check('but is still there to be found', afterTick.includes('Show what I have finished'), true);
 await page.click('button:has-text("Show what I have finished")');
 await page.waitForTimeout(300);
@@ -786,6 +868,9 @@ await page.screenshot({ path: `${OUT}/settings-dark.png`, fullPage: true });
 for (const [label, expected] of [
   ['Midnight', 'midnight'],
   ['Amber', 'amber'],
+  ['Synthwave', 'synthwave'],
+  ['Bubblegum', 'bubblegum'],
+  ['Aurora', 'aurora'],
   ['Custom', 'custom'],
 ]) {
   await page.click(`button:text-is("${label}")`);
@@ -966,7 +1051,7 @@ await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(2500);
 check('the app still renders with no server', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
 check('the whole nav is there', await page.evaluate(() => document.querySelectorAll('.nav-btn').length), 6);
-check('the data is still there', (await page.textContent('.main')).includes('Ring the dentist'), true);
+check('the data is still there', (await page.textContent('.main')).includes('Call the dentist'), true);
 await page.screenshot({ path: `${OUT}/offline.png`, fullPage: true });
 
 // Across the whole run - every screen, every download, the service worker -

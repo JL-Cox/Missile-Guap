@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankTask, db, saveSettings } from '../db';
-import type { BacklogSort, Priority, Settings, Task } from '../types';
-import { deleteTask, moveTo } from '../lib/tasks';
+import type { Priority, Settings, Task } from '../types';
 import { finishedWithoutDate, unscheduled } from '../lib/agenda';
 import { groupLabel, PRIORITIES, sortTasks, SORTS } from '../lib/priority';
 import { todayKey } from '../lib/time';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
-import { Empty, Section } from '../components/ui';
+import { useTaskActions } from '../components/taskActions';
+import { Empty, Section, useBackLayer } from '../components/ui';
 
 /**
  * Everything that needs doing and has no day on it.
@@ -31,19 +31,26 @@ export default function Backlog({
 }) {
   const [editing, setEditing] = useState<Task | null>(null);
   const [showFinished, setShowFinished] = useState(false);
+  const { move, remove } = useTaskActions();
+  useBackLayer(editing !== null, () => setEditing(null));
 
   const tasks = useLiveQuery(() => db.tasks.toArray(), [settings.rev], [] as Task[]) ?? [];
 
   if (editing) {
+    const saved = tasks.some((t) => t.id === editing.id);
     return (
       <TaskEditor
         task={editing}
         onSaved={() => setEditing(null)}
         onCancel={() => setEditing(null)}
-        onDelete={async (t) => {
-          await deleteTask(t);
-          setEditing(null);
-        }}
+        onDelete={
+          saved
+            ? async (t) => {
+                setEditing(null);
+                await remove(t);
+              }
+            : undefined
+        }
       />
     );
   }
@@ -55,9 +62,9 @@ export default function Backlog({
 
   /*
     Under the default order the list carries a quiet heading per level, so you
-    can see where Critical stops. The other three orders are one flat run - a
-    heading there would be sorting the list by one thing and labelling it by
-    another.
+    can see where Critical stops - and the rows under it do not say "Critical"
+    a second time. The other three orders are one flat run, so there each row
+    keeps its own priority.
   */
   const grouped: { key: string; items: Task[] }[] = [];
   if (sort === 'priority') {
@@ -66,6 +73,21 @@ export default function Backlog({
       if (items.length > 0) grouped.push({ key: groupLabel(level), items });
     }
   }
+
+  const row = (task: Task) => (
+    <TaskRow
+      key={task.id}
+      task={task}
+      onEdit={setEditing}
+      hidePriority={sort === 'priority'}
+      // The one action that moves something along, with the same words as on Today.
+      actions={
+        <button type="button" className="btn btn-sm" onClick={() => void move(task, today)}>
+          Do it today
+        </button>
+      }
+    />
+  );
 
   return (
     <>
@@ -80,7 +102,7 @@ export default function Backlog({
         <p className="faint">
           Things to get to when you can. Nothing here has a day on it, and nothing here is late.
         </p>
-        <div className="btn-row" role="group" aria-label="Sort the backlog">
+        <div className="btn-row" role="group" aria-label="Sort by">
           {SORTS.map((s) => (
             <button
               key={s.id}
@@ -89,7 +111,7 @@ export default function Backlog({
               className={`btn btn-sm${sort === s.id ? ' btn-primary' : ''}`}
               // Saved rather than held in the component, so the list opens the
               // way you left it rather than resetting every time you come back.
-              onClick={() => void saveSettings({ backlogSort: s.id as BacklogSort }).then(onChange)}
+              onClick={() => void saveSettings({ backlogSort: s.id }).then(onChange)}
             >
               {s.label}
             </button>
@@ -104,30 +126,26 @@ export default function Backlog({
       ) : sort === 'priority' ? (
         grouped.map(({ key, items }) => (
           <section key={key} className="stack-sm" aria-label={key}>
-            <h3 className="muted">{key}</h3>
-            {items.map((task) => (
-              <BacklogRow key={task.id} task={task} today={today} onEdit={setEditing} />
-            ))}
+            <h3>{key}</h3>
+            {items.map(row)}
           </section>
         ))
       ) : (
-        <div className="stack-sm">
-          {open.map((task) => (
-            <BacklogRow key={task.id} task={task} today={today} onEdit={setEditing} />
-          ))}
-        </div>
+        <div className="stack-sm">{open.map(row)}</div>
       )}
 
       {finished.length > 0 && (
         <Section title="Finished">
-          <button
-            type="button"
-            className="btn btn-quiet btn-sm"
-            aria-expanded={showFinished}
-            onClick={() => setShowFinished((v) => !v)}
-          >
-            {showFinished ? 'Hide what I have finished' : `Show what I have finished (${finished.length})`}
-          </button>
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn btn-quiet btn-sm"
+              aria-expanded={showFinished}
+              onClick={() => setShowFinished((v) => !v)}
+            >
+              {showFinished ? 'Hide what I have finished' : `Show what I have finished (${finished.length})`}
+            </button>
+          </div>
           {showFinished && (
             <div className="stack-sm">
               {finished.map((task) => (
@@ -138,31 +156,5 @@ export default function Backlog({
         </Section>
       )}
     </>
-  );
-}
-
-/**
- * A backlog row is an ordinary task row plus the one action that actually moves
- * something along: giving it today. Same button and same words as the Today
- * screen uses, because it does the same thing.
- */
-function BacklogRow({
-  task,
-  today,
-  onEdit,
-}: {
-  task: Task;
-  today: string;
-  onEdit: (task: Task) => void;
-}) {
-  return (
-    <div className="stack-sm">
-      <TaskRow task={task} onEdit={onEdit} />
-      <div className="btn-row">
-        <button type="button" className="btn btn-quiet btn-sm" onClick={() => void moveTo(task, today)}>
-          Do it today
-        </button>
-      </div>
-    </div>
   );
 }

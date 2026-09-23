@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, getSettings, saveSettings } from './db';
 import { DEFAULT_SETTINGS, type Settings as SettingsType, type Task } from './types';
@@ -6,8 +6,18 @@ import { startScheduler } from './lib/notify';
 import { requestPersistence } from './lib/storage';
 import { THEME_TOKENS, resolveCustom } from './lib/theme';
 import { updateNotice } from './lib/version';
+import { shortDateTime } from './lib/time';
 import CaptureBar from './components/CaptureBar';
-import { Toast } from './components/ui';
+import {
+  LayerContext,
+  NavigateContext,
+  Toast,
+  ToastContext,
+  useLatest,
+  type Navigate,
+  type ToastAction,
+  type ToastState,
+} from './components/ui';
 import Today from './views/Today';
 import Inbox from './views/Inbox';
 import Tasks from './views/Tasks';
@@ -25,7 +35,7 @@ const NAV: { id: ViewId; label: string; glyph: string }[] = [
   { id: 'tasks', label: 'Tasks', glyph: '✓' },
   { id: 'backlog', label: 'Backlog', glyph: '◇' },
   { id: 'notes', label: 'Notes', glyph: '≡' },
-  { id: 'money', label: 'Money', glyph: '¤' },
+  { id: 'money', label: 'Money', glyph: '$' },
 ];
 
 const TITLES: Record<ViewId, string> = {
@@ -38,29 +48,159 @@ const TITLES: Record<ViewId, string> = {
   settings: 'Settings',
 };
 
+/** The six tabs, which can each hold an open editor. Settings is not one. */
+type TabId = Exclude<ViewId, 'settings'>;
+const TABS: TabId[] = NAV.map((n) => n.id as TabId);
+
 /**
  * Android home-screen shortcuts (long-press the icon) open the app with
- * `?view=inbox`. Reading it here is what makes those shortcuts real rather
- * than decorative.
+ * `?view=inbox`, or `?view=money&add=subscription` to go straight to the form.
+ * Reading them here is what makes those shortcuts real rather than decorative.
  */
-function startingView(): ViewId {
+function startingPoint(): { view: ViewId; add?: 'subscription' } {
   try {
-    const wanted = new URLSearchParams(window.location.search).get('view');
-    if (wanted && wanted in TITLES) return wanted as ViewId;
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get('view');
+    const view = wanted && wanted in TITLES ? (wanted as ViewId) : 'today';
+    return { view, add: view === 'money' && params.get('add') === 'subscription' ? 'subscription' : undefined };
   } catch {
     // A malformed URL is not a reason to fail to open.
+    return { view: 'today' };
   }
-  return 'today';
+}
+
+/** How many history entries this app has stacked above its first one. */
+function historyDepth(): number {
+  const depth = (window.history.state as { steady?: unknown } | null)?.steady;
+  return typeof depth === 'number' && depth > 0 ? depth : 0;
 }
 
 export default function App() {
-  const [view, setView] = useState<ViewId>(startingView);
+  const [start] = useState(startingPoint);
+  const [view, setView] = useState<ViewId>(start.view);
+  /** Where Settings was opened from, so Done and Back return there. */
+  const [beforeSettings, setBeforeSettings] = useState<TabId>('today');
   const [settings, setSettings] = useState<SettingsType>(DEFAULT_SETTINGS);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastId = useRef(0);
   const [missed, setMissed] = useState<Task[]>([]);
   const [updated, setUpdated] = useState(false);
   /** Whether the saved settings have arrived. See the appearance effect below. */
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  /** A search handed to the Tasks screen from Notes. */
+  const [taskQuery, setTaskQuery] = useState('');
+
+  /*
+    Something open on top of a tab - an editor, a confirmation - registers how
+    to close it. Kept per tab, and a tab with something open stays mounted
+    (hidden) when you switch away, so a half-written task is still there when
+    you come back rather than silently thrown away.
+  */
+  const closers = useRef<Partial<Record<TabId, () => void>>>({});
+  const [openLayers, setOpenLayers] = useState<TabId[]>([]);
+  const registrars = useMemo(
+    () =>
+      Object.fromEntries(
+        TABS.map((tab) => [
+          tab,
+          (close: (() => void) | null) => {
+            if (close) closers.current[tab] = close;
+            else delete closers.current[tab];
+            setOpenLayers((prev) => {
+              const has = prev.includes(tab);
+              if (close && !has) return [...prev, tab];
+              if (!close && has) return prev.filter((t) => t !== tab);
+              return prev;
+            });
+          },
+        ]),
+      ) as Record<TabId, (close: (() => void) | null) => void>,
+    [],
+  );
+
+  const goTo = useCallback(
+    (next: ViewId) => {
+      if (next === 'settings' && view !== 'settings') setBeforeSettings(view as TabId);
+      setView(next);
+    },
+    [view],
+  );
+
+  /*
+    THE BACK BUTTON.
+
+    Android's Back used to leave the app from any screen, because the app never
+    made a history entry. Now the history holds, at most, one entry for each of
+    these, bottom to top:
+
+      the Today screen  (always the first entry - Back from here leaves)
+      the tab you are on, if it is not Today
+      Settings, if it is open
+      an editor or confirmation, if one is open on the tab you are looking at
+
+    Back takes the top one away. That is the pattern Android's own apps use for
+    a bottom nav: Back goes home, then out - never through every tab you
+    happened to visit. The entries are only counters; what Back does is decided
+    from the app's own state, so the two cannot disagree about where you are.
+  */
+  const tab: TabId = view === 'settings' ? beforeSettings : view;
+  const visibleLayer = view !== 'settings' && openLayers.includes(view);
+  const depth = (tab !== 'today' ? 1 : 0) + (view === 'settings' ? 1 : 0) + (visibleLayer ? 1 : 0);
+  const depthRef = useRef(historyDepth());
+  const ignorePops = useRef(0);
+
+  useEffect(() => {
+    // The first entry drops any shortcut's ?view=, so a reload lands on Today
+    // like any other launch rather than reopening a form.
+    if (window.location.search) {
+      window.history.replaceState(window.history.state, '', window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    const current = depthRef.current;
+    if (depth > current) {
+      for (let d = current + 1; d <= depth; d++) window.history.pushState({ steady: d }, '');
+    } else if (depth < current) {
+      // Something was closed by a button rather than by Back: take its entry
+      // away too, or the next Back press would appear to do nothing.
+      ignorePops.current += 1;
+      window.history.go(depth - current);
+    }
+    depthRef.current = depth;
+  }, [depth]);
+
+  const back = useLatest(() => {
+    const close = view !== 'settings' ? closers.current[view] : undefined;
+    if (close) close();
+    else if (view === 'settings') setView(beforeSettings);
+    else if (view !== 'today') setView('today');
+  });
+
+  useEffect(() => {
+    const onPop = () => {
+      if (ignorePops.current > 0) {
+        ignorePops.current -= 1;
+        depthRef.current = historyDepth();
+        return;
+      }
+      depthRef.current = historyDepth();
+      back();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [back]);
+
+  const showToast = useCallback((message: string, action?: ToastAction) => {
+    toastId.current += 1;
+    setToast({ id: toastId.current, message, action });
+  }, []);
+  const dismissToast = useCallback(() => setToast(null), []);
+
+  const navigate = useCallback<Navigate>((next, options) => {
+    setTaskQuery(options?.query ?? '');
+    setView(next);
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -132,10 +272,10 @@ export default function App() {
   useEffect(() => {
     return startScheduler((tick) => {
       if (tick.missed.length) setMissed((prev) => [...prev, ...tick.missed]);
-      if (tick.fired.length === 1) setToast(`Reminder: ${tick.fired[0].title}`);
-      else if (tick.fired.length > 1) setToast(`${tick.fired.length} reminders just came due.`);
+      if (tick.fired.length === 1) showToast(`Reminder: ${tick.fired[0].title}`);
+      else if (tick.fired.length > 1) showToast(`${tick.fired.length} reminders just came due.`);
     });
-  }, []);
+  }, [showToast]);
 
   const openCount = useLiveQuery(
     () => db.captures.filter((c) => !c.clearedAt).count(),
@@ -143,108 +283,113 @@ export default function App() {
     0,
   ) ?? 0;
 
-  const showToast = useCallback((message: string) => setToast(message), []);
+  const renderTab = (id: TabId): ReactNode => {
+    switch (id) {
+      case 'today':
+        return <Today settings={settings} />;
+      case 'inbox':
+        return <Inbox settings={settings} />;
+      case 'tasks':
+        return <Tasks settings={settings} initialQuery={taskQuery} />;
+      case 'backlog':
+        return <Backlog settings={settings} onChange={setSettings} />;
+      case 'notes':
+        return <Notes settings={settings} />;
+      case 'money':
+        return <Money settings={settings} startAdding={start.add === 'subscription'} />;
+    }
+  };
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="header-inner">
-          <div>
-            <h1>{TITLES[view]}</h1>
-            {view === 'today' && <p className="faint">{longDate()}</p>}
-          </div>
-          <button
-            type="button"
-            className={`btn btn-quiet btn-sm${view === 'settings' ? ' btn-primary' : ''}`}
-            aria-current={view === 'settings' ? 'page' : undefined}
-            onClick={() => setView(view === 'settings' ? 'today' : 'settings')}
-          >
-            {view === 'settings' ? 'Done' : 'Settings'}
-          </button>
+    <ToastContext.Provider value={showToast}>
+      <NavigateContext.Provider value={navigate}>
+        <div className="app">
+          <header className="header">
+            <div className="header-inner">
+              <div>
+                <h1>{TITLES[view]}</h1>
+                {view === 'today' && <p className="faint">{longDate()}</p>}
+              </div>
+              <button
+                type="button"
+                className={view === 'settings' ? 'btn btn-sm' : 'btn btn-quiet btn-sm'}
+                onClick={() => (view === 'settings' ? setView(beforeSettings) : goTo('settings'))}
+              >
+                {view === 'settings' ? 'Done' : 'Settings'}
+              </button>
+            </div>
+          </header>
+
+          <main className="main">
+            {/* The capture box is on every screen except Settings, always first. */}
+            {view !== 'settings' && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
+
+            {updated && (
+              <div className="card stack-sm" role="status">
+                <div className="spread">
+                  <span className="grow">
+                    <strong>Steady updated.</strong> Your notes, tasks and subscriptions are untouched.
+                  </span>
+                  <button type="button" className="btn btn-sm" onClick={() => setUpdated(false)}>
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {missed.length > 0 && (
+              <div className="card stack-sm" role="status">
+                <h2>While the app was closed</h2>
+                <p className="small">
+                  {missed.length === 1 ? 'This reminder' : 'These reminders'} came due while Steady was not running,
+                  so {missed.length === 1 ? 'it was not' : 'they were not'} shown at the time.
+                </p>
+                <ul className="stack-sm plain-list">
+                  {missed.map((task) => (
+                    <li key={task.id}>
+                      {task.title}
+                      {task.remindAt && <span className="faint"> · {shortDateTime(task.remindAt)}</span>}
+                    </li>
+                  ))}
+                </ul>
+                <div className="btn-row">
+                  <button type="button" className="btn btn-sm" onClick={() => setMissed([])}>
+                    Got it
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {TABS.filter((id) => id === view || openLayers.includes(id)).map((id) => (
+              <div key={id} className="view" hidden={id !== view}>
+                <LayerContext.Provider value={registrars[id]}>{renderTab(id)}</LayerContext.Provider>
+              </div>
+            ))}
+            {view === 'settings' && <Settings settings={settings} onChange={setSettings} />}
+          </main>
+
+          <nav className="nav" aria-label="Main">
+            {NAV.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="nav-btn"
+                aria-current={view === item.id ? 'page' : undefined}
+                onClick={() => goTo(item.id)}
+              >
+                <span className="nav-glyph" aria-hidden="true">
+                  {item.glyph}
+                </span>
+                <span>{item.label}</span>
+                {item.id === 'inbox' && openCount > 0 && <span className="nav-count">{openCount}</span>}
+              </button>
+            ))}
+          </nav>
+
+          {toast && <Toast toast={toast} onDismiss={dismissToast} />}
         </div>
-      </header>
-
-      <main className="main">
-        {/* The capture box is on every screen except Settings, always first. */}
-        {view !== 'settings' && (
-          <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />
-        )}
-
-        {updated && (
-          <div className="card stack-sm" role="status">
-            <div className="spread">
-              <span className="grow">
-                <strong>Steady updated.</strong> Your notes, tasks and subscriptions are untouched.
-              </span>
-              <button type="button" className="btn btn-sm" onClick={() => setUpdated(false)}>
-                Dismiss
-              </button>
-            </div>
-          </div>
-        )}
-
-        {missed.length > 0 && (
-          <div className="card stack-sm" role="status">
-            <h2>While the app was closed</h2>
-            <p className="small">
-              {missed.length === 1 ? 'This reminder' : 'These reminders'} came due while Steady was not running,
-              so {missed.length === 1 ? 'it was not' : 'they were not'} shown at the time.
-            </p>
-            <ul className="stack-sm" style={{ margin: 0, paddingLeft: 20 }}>
-              {missed.map((task) => (
-                <li key={task.id}>
-                  {task.title}
-                  {task.remindAt && (
-                    <span className="faint">
-                      {' '}
-                      - {new Date(task.remindAt).toLocaleString(undefined, {
-                        day: 'numeric',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-            <div className="btn-row">
-              <button type="button" className="btn btn-sm" onClick={() => setMissed([])}>
-                Got it
-              </button>
-            </div>
-          </div>
-        )}
-
-        {view === 'today' && <Today settings={settings} />}
-        {view === 'inbox' && <Inbox settings={settings} />}
-        {view === 'tasks' && <Tasks settings={settings} />}
-        {view === 'backlog' && <Backlog settings={settings} onChange={setSettings} />}
-        {view === 'notes' && <Notes settings={settings} />}
-        {view === 'money' && <Money settings={settings} />}
-        {view === 'settings' && <Settings settings={settings} onChange={setSettings} onToast={showToast} />}
-      </main>
-
-      <nav className="nav" aria-label="Main">
-        {NAV.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className="nav-btn"
-            aria-current={view === item.id ? 'page' : undefined}
-            onClick={() => setView(item.id)}
-          >
-            <span className="nav-glyph" aria-hidden="true">
-              {item.glyph}
-            </span>
-            <span>{item.label}</span>
-            {item.id === 'inbox' && openCount > 0 && <span className="nav-count">{openCount}</span>}
-          </button>
-        ))}
-      </nav>
-
-      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
-    </div>
+      </NavigateContext.Provider>
+    </ToastContext.Provider>
   );
 }
 

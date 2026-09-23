@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankIncome, blankSubscription, db, saveSubscription } from '../db';
 import type { IncomeSource, Settings, Subscription } from '../types';
 import {
   byCategoryYearly,
   deductionsByLabel,
+  formatDeduction,
   formatMoney,
   isActive,
   leftoverMonthlyMinor,
@@ -26,8 +27,7 @@ import {
   nextBilling,
 } from '../lib/recurrence';
 import { normaliseDays } from '../lib/monthdays';
-import { outlook, stillToCome, whyNoPayPeriod } from '../lib/cashflow';
-import { upcomingBills } from '../lib/agenda';
+import { outlook, stillToCome, whyNoPayPeriod, type PeriodOutlook } from '../lib/cashflow';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
 import IncomeEditor from '../components/IncomeEditor';
@@ -42,8 +42,35 @@ import {
   whenNameTyped,
   type ServicePreset,
 } from '../lib/subscriptions';
-import { addDays, describeDate, todayKey } from '../lib/time';
-import { Amount, ConfirmButton, Empty, Section, useAutoFocus } from '../components/ui';
+import { cancelledMessage } from '../lib/feedback';
+import { undoAction } from '../lib/undo';
+import { describeDate, shortDate, todayKey } from '../lib/time';
+import {
+  Amount,
+  ConfirmButton,
+  DateShortcuts,
+  DetailsButton,
+  Empty,
+  FormError,
+  Section,
+  useAutoFocus,
+  useBackLayer,
+  useToast,
+} from '../components/ui';
+
+/** How the subscription editor should open. */
+interface EditorFocus {
+  /** Open with More options showing, so nothing you came to change is folded away. */
+  expand?: boolean;
+  /** Straight to "How do you cancel it?", for the button that asks for exactly that. */
+  cancelSteps?: boolean;
+}
+
+/**
+ * The home-screen shortcut opens the add form once, on launch - not every time
+ * the Money tab is visited afterwards.
+ */
+let shortcutUsed = false;
 
 /**
  * Subscriptions are the classic forgetting tax: money leaving for something you
@@ -54,23 +81,61 @@ import { Amount, ConfirmButton, Empty, Section, useAutoFocus } from '../componen
  * Adding one is meant to be a single journey: tap Add, fill in three fields,
  * and the next screen already knows what it costs a year, when it next charges,
  * and offers to put it in your phone's calendar. No trip to Settings.
+ *
+ * The screen reads top to bottom from glance to reference: the two things to
+ * add, what is still to come out, what this paycheck leaves - the two figures
+ * set large - then the averages, the list, and the yearly breakdown folded away
+ * at the bottom for when you want it.
  */
-export default function Money({ settings }: { settings: Settings }) {
+export default function Money({ settings, startAdding = false }: { settings: Settings; startAdding?: boolean }) {
   const [editing, setEditing] = useState<Subscription | null>(null);
+  const [editorFocus, setEditorFocus] = useState<EditorFocus>({});
   const [editingIncome, setEditingIncome] = useState<IncomeSource | null>(null);
   const [justSaved, setJustSaved] = useState<Subscription | null>(null);
   const [showEnded, setShowEnded] = useState(false);
   const [showEndedIncome, setShowEndedIncome] = useState(false);
+  const [showYearly, setShowYearly] = useState(false);
+  const toast = useToast();
   const today = todayKey();
+
+  useBackLayer(editing !== null || editingIncome !== null || justSaved !== null, () => {
+    setEditing(null);
+    setEditingIncome(null);
+    setJustSaved(null);
+  });
 
   const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], [] as Subscription[]) ?? [];
   const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], [] as IncomeSource[]) ?? [];
   const active = subs.filter((s) => !s.endedOn).sort((a, b) => yearlyMinor(b) - yearlyMinor(a));
   const ended = subs.filter((s) => s.endedOn);
 
+  const edit = (sub: Subscription, focus: EditorFocus = {}) => {
+    setEditorFocus(focus);
+    setEditing(sub);
+  };
+
   const startNew = () => {
     setJustSaved(null);
-    setEditing(blankSubscription({ currency: settings.currency, firstBilled: today }));
+    edit(blankSubscription({ currency: settings.currency, firstBilled: today }));
+  };
+
+  const addIncome = () => setEditingIncome(blankIncome({ currency: settings.currency }));
+
+  useEffect(() => {
+    if (startAdding && !shortcutUsed) {
+      shortcutUsed = true;
+      startNew();
+    }
+    // Once, on first mount: see shortcutUsed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const cancelSub = async (sub: Subscription) => {
+    const after = await saveSubscription({ ...sub, endedOn: todayKey() });
+    toast(
+      `${cancelledMessage(sub.name)} ${CALENDAR_ENTRY_STAYS}`,
+      undoAction(db.subscriptions, [{ before: sub, after }], toast),
+    );
   };
 
   if (editingIncome) {
@@ -85,8 +150,10 @@ export default function Money({ settings }: { settings: Settings }) {
         onDelete={
           saved
             ? async (s) => {
-                await db.incomes.delete(s.id);
                 setEditingIncome(null);
+                const before = await db.incomes.get(s.id);
+                await db.incomes.delete(s.id);
+                if (before) toast('Deleted.', undoAction(db.incomes, [{ before, after: undefined }], toast));
               }
             : undefined
         }
@@ -99,6 +166,8 @@ export default function Money({ settings }: { settings: Settings }) {
     return (
       <SubscriptionEditor
         sub={editing}
+        existing={isSaved}
+        focus={editorFocus}
         knownCategories={categoryChoices(subs.map((s) => s.category))}
         onSaved={(saved) => {
           setEditing(null);
@@ -108,8 +177,10 @@ export default function Money({ settings }: { settings: Settings }) {
         onDelete={
           isSaved
             ? async (s) => {
-                await db.subscriptions.delete(s.id);
                 setEditing(null);
+                const before = await db.subscriptions.get(s.id);
+                await db.subscriptions.delete(s.id);
+                if (before) toast('Deleted.', undoAction(db.subscriptions, [{ before, after: undefined }], toast));
               }
             : undefined
         }
@@ -123,20 +194,21 @@ export default function Money({ settings }: { settings: Settings }) {
         sub={justSaved}
         blurAmounts={settings.blurAmounts}
         onAddAnother={startNew}
-        onEdit={() => {
+        onEdit={(focus) => {
           setJustSaved(null);
-          setEditing(justSaved);
+          edit(justSaved, focus);
         }}
         onDone={() => setJustSaved(null)}
       />
     );
   }
 
+  const blur = settings.blurAmounts;
+  const money = (minor: number) => formatMoney(minor, settings.currency);
   const monthly = totalMonthlyMinor(subs);
   const yearly = totalYearlyMinor(subs);
   const categories = byCategoryYearly(subs);
   const maxCategory = categories[0]?.minor ?? 1;
-  const soon = upcomingBills(subs, settings.lookaheadDays, today);
 
   const activeIncomes = incomes.filter(isActiveIncome);
   const endedIncomes = incomes.filter((src) => !isActiveIncome(src));
@@ -151,22 +223,40 @@ export default function Money({ settings }: { settings: Settings }) {
   // account before more money arrives, which is the question an average hides.
   const pending = stillToCome(incomes, subs, today);
   const noPeriod = pending.period ? null : whyNoPayPeriod(incomes, today);
-  const cheques = outlook(incomes, subs, today, 4);
+  const [firstCheque, ...laterCheques] = outlook(incomes, subs, today, 4);
+
+  const charges = (count: number, until: string) =>
+    count === 0 ? 'Nothing else is due' : `${count} ${count === 1 ? 'charge' : 'charges'}, up to ${describeDate(until, today)}`;
 
   return (
     <>
-      <Section title="Income">
-        <button
-          type="button"
-          className="btn btn-primary btn-wide"
-          onClick={() => setEditingIncome(blankIncome({ currency: settings.currency }))}
-        >
-          Add income
+      {/* The two things you come here to add, together, where they are never
+          hunted for. Once there is income, adding more is rarer, and it moves
+          to a small button beside the Income heading. */}
+      <div className="btn-row btn-row-fill">
+        <button type="button" className="btn btn-primary" onClick={startNew}>
+          Add a subscription
         </button>
+        {activeIncomes.length === 0 && (
+          <button type="button" className="btn" onClick={addIncome}>
+            Add income
+          </button>
+        )}
+      </div>
 
+      <Section
+        title="Income"
+        aside={
+          activeIncomes.length > 0 && (
+            <button type="button" className="btn btn-sm" onClick={addIncome}>
+              Add income
+            </button>
+          )
+        }
+      >
         {activeIncomes.length === 0 ? (
           <Empty>
-            Add a paycheque and the figures below stop being half a picture. You type gross and net straight off
+            Add a paycheck and the figures below stop being half a picture. You type gross and net straight off
             the stub - nothing here tries to work out your tax.
           </Empty>
         ) : (
@@ -175,19 +265,25 @@ export default function Money({ settings }: { settings: Settings }) {
               const payday = nextPayday(src, today);
               return (
                 <div key={src.id} className="card card-tight stack-sm">
-                  <div className="spread">
-                    <span className="item-title grow">{src.name}</span>
-                    <Amount text={formatMoney(src.netMinor, src.currency)} blur={settings.blurAmounts} />
+                  <div className="figure">
+                    <span className="item-title">{src.name}</span>
+                    <Amount className="figure-value" text={formatMoney(src.netMinor, src.currency)} blur={blur} />
                   </div>
-                  <div className="row-tight faint">
-                    <span>{describeFrequency(src)}</span>
-                    {payday && <span>Next: {describeDate(payday, today)}</span>}
-                    <span>
-                      <Amount text={`${formatMoney(netMonthlyMinor(src), src.currency)} a month`} blur={settings.blurAmounts} />
-                    </span>
-                  </div>
-                  <div className="btn-row">
-                    <button type="button" className="btn btn-quiet btn-sm" onClick={() => setEditingIncome(src)}>
+                  <div className="item-foot">
+                    <div className="stack-sm">
+                      <div className="meta">
+                        <span>{describeFrequency(src)}</span>
+                        {payday && <span>Next: {describeDate(payday, today)}</span>}
+                        <span>
+                          <Amount text={`${formatMoney(netMonthlyMinor(src), src.currency)} a month`} blur={blur} />
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-quiet btn-sm details-btn"
+                      onClick={() => setEditingIncome(src)}
+                    >
                       Edit
                     </button>
                   </div>
@@ -201,38 +297,40 @@ export default function Money({ settings }: { settings: Settings }) {
       {subs.some((s) => isActive(s, today)) && (
         <Section title="Still to come out">
           <div className="card stack-sm">
-            <div className="spread">
-              <div className="grow">
-                <div className="item-title">Rest of this month</div>
-                <div className="faint">
-                  {pending.month.count === 0
-                    ? 'Nothing else is due'
-                    : `${pending.month.count} ${pending.month.count === 1 ? 'charge' : 'charges'}, up to ${describeDate(pending.month.until, today)}`}
-                </div>
-              </div>
-              <Amount text={formatMoney(pending.month.minor, settings.currency)} blur={settings.blurAmounts} />
-            </div>
-
             {pending.period ? (
-              <div className="spread">
-                <div className="grow">
-                  <div className="item-title">Before your next payday</div>
-                  <div className="faint">
-                    {pending.period.count === 0
-                      ? 'Nothing else is due'
-                      : `${pending.period.count} ${pending.period.count === 1 ? 'charge' : 'charges'}, up to ${describeDate(pending.period.until, today)}`}
-                  </div>
-                </div>
-                <Amount text={formatMoney(pending.period.minor, settings.currency)} blur={settings.blurAmounts} />
-              </div>
+              <>
+                <FigureRow
+                  anchor
+                  label="Before your next payday"
+                  detail={charges(pending.period.count, pending.period.until)}
+                  amount={money(pending.period.minor)}
+                  blur={blur}
+                />
+                <hr className="divider" />
+                <FigureRow
+                  label="Rest of this month"
+                  detail={charges(pending.month.count, pending.month.until)}
+                  amount={money(pending.month.minor)}
+                  blur={blur}
+                />
+              </>
             ) : (
-              <p className="faint">
-                {noPeriod?.kind === 'needsRecentPayday'
-                  ? `Add a recent payday to ${noPeriod.source.name} so paydays can be worked out. Then this will also show what is due before your next payday.`
-                  : noPeriod?.kind === 'noIncome'
-                    ? 'Add your income above and this will also show what is due before your next payday.'
-                    : "Paydays can't be worked out from the income above yet, so what is due before your next payday is left out."}
-              </p>
+              <>
+                <FigureRow
+                  anchor
+                  label="Rest of this month"
+                  detail={charges(pending.month.count, pending.month.until)}
+                  amount={money(pending.month.minor)}
+                  blur={blur}
+                />
+                <p className="faint">
+                  {noPeriod?.kind === 'needsRecentPayday'
+                    ? `Add a recent payday to ${noPeriod.source.name} so paydays can be worked out. Then this will also show what is due before your next payday.`
+                    : noPeriod?.kind === 'noIncome'
+                      ? 'Add your income and this will also show what is due before your next payday.'
+                      : "Paydays can't be worked out from your income yet, so what is due before your next payday is left out."}
+                </p>
+              </>
             )}
             <p className="faint">
               Counted from today on the real charge dates, so a bill that already went out this month is not
@@ -242,131 +340,65 @@ export default function Money({ settings }: { settings: Settings }) {
         </Section>
       )}
 
-      {cheques.length > 0 && (
+      {firstCheque && (
         <Section title="Each paycheck">
           <p className="faint">
             What each one has to cover before the next arrives. Only the subscriptions this app knows
             about — rent, food, fuel and everything else still come out of what is left.
           </p>
-          {cheques.map((c) => (
-            <div key={c.period.start} className="card stack-sm">
-              <div className="spread">
-                <div className="grow">
-                  <div className="item-title">
-                    {c.current ? 'This paycheck' : describeDate(c.period.start, today)}
-                  </div>
-                  <div className="faint">
-                    {c.period.paidBy.map((s) => s.name).join(', ')} · covers to {describeDate(c.period.end, today)}
-                  </div>
-                </div>
-                <Amount text={formatMoney(c.period.incomeMinor, settings.currency)} blur={settings.blurAmounts} />
+          <ChequeCard cheque={firstCheque} today={today} money={money} blur={blur} />
+          {laterCheques.length > 0 && (
+            <div className="stack-sm">
+              <h3>The next ones</h3>
+              <div className="card card-rows">
+                {laterCheques.map((c, i) => (
+                  <ChequeRow key={c.period.start} cheque={c} today={today} money={money} blur={blur} first={i === 0} />
+                ))}
               </div>
-              <div className="spread small">
-                <span className="muted">Subscriptions due</span>
-                <Amount text={`- ${formatMoney(c.billsMinor, settings.currency)}`} blur={settings.blurAmounts} />
-              </div>
-              <hr className="divider" />
-              <div className="spread">
-                <strong>Left for everything else</strong>
-                <Amount text={formatMoney(c.leftoverMinor, settings.currency)} blur={settings.blurAmounts} />
-              </div>
-              {c.current && c.remainingMinor !== c.billsMinor && (
-                <p className="faint">
-                  <Amount text={formatMoney(c.remainingMinor, settings.currency)} blur={settings.blurAmounts} /> of
-                  that has not gone out yet.
-                </p>
-              )}
-              {c.leftoverMinor < 0 && (
-                // Never hidden and never clamped to zero: a cheque that does not
-                // cover its own bills is the most important thing this screen
-                // could tell you. Stated in words, not shouted in red.
-                <p className="notice">
-                  This one does not cover its own subscriptions. Worth moving a charge date or cancelling
-                  something before it lands.
-                </p>
-              )}
             </div>
-          ))}
+          )}
         </Section>
       )}
 
       {activeIncomes.length > 0 && (
         <Section title="Income against expenses">
           <div className="card stack-sm">
-            <div className="spread">
+            <div className="figure">
               <span className="muted">Take-home each month</span>
-              <Amount text={formatMoney(netMonthly, settings.currency)} blur={settings.blurAmounts} />            </div>
-            <div className="spread">
+              <Amount className="figure-value" text={money(netMonthly)} blur={blur} />
+            </div>
+            <div className="figure">
               <span className="muted">Subscriptions each month</span>
-              <Amount text={`- ${formatMoney(totalMonthlyMinor(subs), settings.currency)}`} blur={settings.blurAmounts} />
+              <Amount className="figure-value" text={formatDeduction(monthly, settings.currency)} blur={blur} />
             </div>
             <hr className="divider" />
-            <div className="spread">
-              <strong>Left for everything else</strong>
-              <Amount text={formatMoney(leftover, settings.currency)} blur={settings.blurAmounts} />
+            <div className="figure">
+              <span className="item-title">Left each month, on average</span>
+              <Amount className="figure-value" text={money(leftover)} blur={blur} />
             </div>
             <p className="faint">
               This app only knows about subscriptions, so that remainder still has to cover rent, food and
               everything else. It is what is left over, not spare money.
             </p>
           </div>
-
-          <div className="card stack-sm">
-            <div className="spread">
-              <span className="muted">You earn, a year</span>
-              <Amount text={formatMoney(grossYearly, settings.currency)} blur={settings.blurAmounts} />
-            </div>
-            <div className="spread">
-              <span className="muted">You keep</span>
-              <Amount text={formatMoney(netYearly, settings.currency)} blur={settings.blurAmounts} />
-            </div>
-            <p className="faint">
-              {grossYearly > 0
-                ? `${Math.round(((grossYearly - netYearly) / grossYearly) * 100)}% comes out before you ever see it.`
-                : ''}
-            </p>
-          </div>
-
-          {deductionRows.length > 0 && (
-            <div className="stack-sm">
-              <h3 className="muted">What comes out, a year</h3>
-              {deductionRows.map((row) => (
-                <div key={row.label} className="stack-sm">
-                  <div className="spread">
-                    <span className="small">{row.label}</span>
-                    <Amount text={formatMoney(row.minor, settings.currency)} blur={settings.blurAmounts} />
-                  </div>
-                  <div className="bar-track">
-                    <div className="bar" style={{ width: `${Math.max(3, (row.minor / maxDeduction) * 100)}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </Section>
       )}
 
       <Section title="Subscriptions">
-        {/* The primary action is a full-width button, not a small one tucked
-            into the heading. Adding one should never be a thing you hunt for. */}
-        <button type="button" className="btn btn-primary btn-wide" onClick={startNew}>
-          Add a subscription
-        </button>
-
         {active.length === 0 ? (
           <Empty>
             Nothing tracked yet. Add anything that takes money on a repeat: streaming, phone, gym, storage, that
-            app you signed up to once.
+            app you signed up for once.
           </Empty>
         ) : (
           <div className="card stack-sm">
-            <div className="spread">
+            <div className="figure">
               <span className="muted">Every month, roughly</span>
-              <Amount text={formatMoney(monthly, settings.currency)} blur={settings.blurAmounts} />
+              <Amount className="figure-value" text={money(monthly)} blur={blur} />
             </div>
-            <div className="spread">
+            <div className="figure">
               <span className="muted">Every year</span>
-              <Amount text={formatMoney(yearly, settings.currency)} blur={settings.blurAmounts} />
+              <Amount className="figure-value" text={money(yearly)} blur={blur} />
             </div>
             <p className="faint">
               {active.length} active {active.length === 1 ? 'subscription' : 'subscriptions'}. Weekly costs are
@@ -376,55 +408,88 @@ export default function Money({ settings }: { settings: Settings }) {
         )}
       </Section>
 
-      {soon.length > 0 && (
-        <Section title={`Charging in the next ${settings.lookaheadDays} days`}>
-          <div className="stack-sm">
-            {soon.map((b) => (
-              <div key={`${b.sub.id}-${b.date}`} className="item">
-                <div className="grow">
-                  <div className="item-title">{b.sub.name}</div>
-                  <div className="faint">{describeDate(b.date, today)}</div>
-                </div>
-                <Amount text={formatMoney(b.sub.amountMinor, b.sub.currency)} blur={settings.blurAmounts} />
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {categories.length > 1 && (
-        <Section title="Where the money goes each year">
-          <div className="stack-sm">
-            {categories.map((c) => (
-              <div key={c.category} className="stack-sm">
-                <div className="spread">
-                  <span className="small">{c.category}</span>
-                  <Amount text={formatMoney(c.minor, settings.currency)} blur={settings.blurAmounts} />
-                </div>
-                <div className="bar-track">
-                  <div className="bar" style={{ width: `${Math.max(3, (c.minor / maxCategory) * 100)}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
       {active.length > 0 && (
         <Section title="All of them">
           <div className="stack-sm">
             {active.map((sub) => (
-              <SubscriptionCard key={sub.id} sub={sub} settings={settings} onEdit={setEditing} />
+              <SubscriptionCard
+                key={sub.id}
+                sub={sub}
+                settings={settings}
+                onEdit={(s) => edit(s, { expand: true })}
+                onCancelled={cancelSub}
+              />
             ))}
           </div>
+        </Section>
+      )}
+
+      {/* Reference, not glance: the year as a whole. Folded away, and in the
+          same place whether or not it is open. */}
+      {(grossYearly > 0 || categories.length > 1) && (
+        <Section title="Over a year">
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn btn-quiet btn-sm"
+              aria-expanded={showYearly}
+              onClick={() => setShowYearly((v) => !v)}
+            >
+              {showYearly ? 'Hide the yearly breakdown' : 'Show the yearly breakdown'}
+            </button>
+          </div>
+          {showYearly && (
+            <>
+              {grossYearly > 0 && (
+                <div className="card stack-sm">
+                  <div className="figure">
+                    <span className="muted">You earn, a year</span>
+                    <Amount className="figure-value" text={money(grossYearly)} blur={blur} />
+                  </div>
+                  <div className="figure">
+                    <span className="muted">You keep</span>
+                    <Amount className="figure-value" text={money(netYearly)} blur={blur} />
+                  </div>
+                  <p className="faint">
+                    {Math.round(((grossYearly - netYearly) / grossYearly) * 100)}% comes out before you ever see it.
+                  </p>
+                </div>
+              )}
+              {deductionRows.length > 0 && (
+                <Bars
+                  title="What comes out of your pay"
+                  rows={deductionRows.map((r) => ({ key: r.label, minor: r.minor }))}
+                  max={maxDeduction}
+                  money={money}
+                  blur={blur}
+                />
+              )}
+              {categories.length > 1 && (
+                <Bars
+                  title="Where the subscription money goes"
+                  rows={categories.map((c) => ({ key: c.category, minor: c.minor }))}
+                  max={maxCategory}
+                  money={money}
+                  blur={blur}
+                />
+              )}
+            </>
+          )}
         </Section>
       )}
 
       {ended.length > 0 && (
         <Section title="Cancelled">
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setShowEnded((v) => !v)}>
-            {showEnded ? 'Hide' : 'Show'} {ended.length} cancelled
-          </button>
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn btn-quiet btn-sm"
+              aria-expanded={showEnded}
+              onClick={() => setShowEnded((v) => !v)}
+            >
+              {showEnded ? 'Hide' : 'Show'} {ended.length} cancelled
+            </button>
+          </div>
           {showEnded && (
             <div className="stack-sm">
               {ended.map((sub) => (
@@ -433,7 +498,7 @@ export default function Money({ settings }: { settings: Settings }) {
                     <div className="item-title">{sub.name}</div>
                     <div className="faint">Stopped {describeDate(sub.endedOn!, today)}</div>
                   </div>
-                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => setEditing(sub)}>
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => edit(sub, { expand: true })}>
                     Edit
                   </button>
                 </div>
@@ -449,9 +514,16 @@ export default function Money({ settings }: { settings: Settings }) {
         // The same as Cancelled, for income: kept rather than deleted, and
         // reachable, so "It's current again" is one tap away if a job comes back.
         <Section title="Ended">
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setShowEndedIncome((v) => !v)}>
-            {showEndedIncome ? 'Hide' : 'Show'} {endedIncomes.length} ended
-          </button>
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn btn-quiet btn-sm"
+              aria-expanded={showEndedIncome}
+              onClick={() => setShowEndedIncome((v) => !v)}
+            >
+              {showEndedIncome ? 'Hide' : 'Show'} {endedIncomes.length} ended
+            </button>
+          </div>
           {showEndedIncome && (
             <div className="stack-sm">
               {endedIncomes.map((src) => (
@@ -471,6 +543,153 @@ export default function Money({ settings }: { settings: Settings }) {
         </Section>
       )}
     </>
+  );
+}
+
+/**
+ * A label, an optional line under it, and its figure on the right. `anchor`
+ * sets the figure large: only the two figures the screen is built around.
+ */
+function FigureRow({
+  label,
+  detail,
+  amount,
+  blur,
+  anchor = false,
+}: {
+  label: string;
+  detail?: ReactNode;
+  amount: string;
+  blur: boolean;
+  anchor?: boolean;
+}) {
+  return (
+    <div className="figure">
+      <div>
+        <div className="item-title">{label}</div>
+        {detail && <div className="faint">{detail}</div>}
+      </div>
+      <Amount className={anchor ? 'figure-value amount-key' : 'figure-value'} text={amount} blur={blur} />
+    </div>
+  );
+}
+
+/** Never hidden and never clamped to zero, and said in words rather than red. */
+const SHORT_CHEQUE =
+  'This one does not cover its own subscriptions. Worth moving a charge date or cancelling something before it lands.';
+
+/** The paycheck you are in now (or the next one), in full. */
+function ChequeCard({
+  cheque: c,
+  today,
+  money,
+  blur,
+}: {
+  cheque: PeriodOutlook;
+  today: string;
+  money: (minor: number) => string;
+  blur: boolean;
+}) {
+  return (
+    <div className="card stack-sm">
+      <FigureRow
+        label={c.current ? 'This paycheck' : describeDate(c.period.start, today)}
+        detail={`${c.period.paidBy.map((s) => s.name).join(', ')} · covers to ${describeDate(c.period.end, today)}`}
+        amount={money(c.period.incomeMinor)}
+        blur={blur}
+      />
+      <div className="figure small">
+        <span className="muted">Subscriptions due</span>
+        <Amount className="figure-value" text={c.billsMinor ? `−${money(c.billsMinor)}` : money(0)} blur={blur} />
+      </div>
+      <hr className="divider" />
+      <FigureRow
+        anchor={c.current}
+        label={c.current ? 'Left from this paycheck' : 'Left from that paycheck'}
+        amount={money(c.leftoverMinor)}
+        blur={blur}
+      />
+      {c.current && c.remainingMinor !== c.billsMinor && (
+        <p className="faint">
+          <Amount text={money(c.remainingMinor)} blur={blur} /> of the subscriptions has not gone out yet.
+        </p>
+      )}
+      {c.leftoverMinor < 0 && <p className="notice">{SHORT_CHEQUE}</p>}
+    </div>
+  );
+}
+
+/** A later paycheck, as one row of a shared card: when, what it leaves, and why. */
+function ChequeRow({
+  cheque: c,
+  today,
+  money,
+  blur,
+  first,
+}: {
+  cheque: PeriodOutlook;
+  today: string;
+  money: (minor: number) => string;
+  blur: boolean;
+  first: boolean;
+}) {
+  return (
+    <>
+      {!first && <hr className="divider" />}
+      <div className="stack-sm">
+        <div className="figure">
+          <div>
+            <div className="item-title">
+              <span className="nowrap">{shortDate(c.period.start, today)}</span> · covers to{' '}
+              <span className="nowrap">{shortDate(c.period.end, today)}</span>
+            </div>
+            <div className="meta">
+              <span>
+                <Amount text={money(c.period.incomeMinor)} blur={blur} /> in
+              </span>
+              <span>
+                <Amount text={money(c.billsMinor)} blur={blur} /> in subscriptions
+              </span>
+            </div>
+          </div>
+          <Amount className="figure-value" text={money(c.leftoverMinor)} blur={blur} />
+        </div>
+        {c.leftoverMinor < 0 && <p className="notice">{SHORT_CHEQUE}</p>}
+      </div>
+    </>
+  );
+}
+
+/** A labelled figure with a bar under it, for the yearly breakdown. */
+function Bars({
+  title,
+  rows,
+  max,
+  money,
+  blur,
+}: {
+  title: string;
+  rows: { key: string; minor: number }[];
+  max: number;
+  money: (minor: number) => string;
+  blur: boolean;
+}) {
+  return (
+    <div className="stack-sm">
+      <h3>{title}</h3>
+      {rows.map((row) => (
+        <div key={row.key} className="stack-sm">
+          <div className="figure small">
+            <span>{row.key}</span>
+            <Amount className="figure-value" text={money(row.minor)} blur={blur} />
+          </div>
+          <div className="bar-track">
+            {/* The one inline style left: a length that is data, not design. */}
+            <div className="bar" style={{ width: `${Math.max(3, (row.minor / max) * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -498,7 +717,7 @@ function SavedConfirmation({
   sub: Subscription;
   blurAmounts: boolean;
   onAddAnother: () => void;
-  onEdit: () => void;
+  onEdit: (focus: EditorFocus) => void;
   onDone: () => void;
 }) {
   const next = nextBilling(sub);
@@ -506,31 +725,37 @@ function SavedConfirmation({
   return (
     <Section title={`${sub.name} is saved`}>
       <div className="card stack-sm">
-        <div className="spread">
+        <div className="figure">
           <span className="muted">Each charge</span>
-          <Amount text={formatMoney(sub.amountMinor, sub.currency)} blur={blurAmounts} />
+          <Amount className="figure-value" text={formatMoney(sub.amountMinor, sub.currency)} blur={blurAmounts} />
         </div>
-        <div className="spread">
+        <div className="figure">
           <span className="muted">How often</span>
-          <span>{describeBilling(sub)}</span>
+          <span className="figure-value">{describeBilling(sub)}</span>
         </div>
-        <div className="spread">
+        <div className="figure">
           <span className="muted">Next charge</span>
-          <span>{next ? describeDate(next) : 'None - it is cancelled'}</span>
+          <span className="figure-value">{next ? describeDate(next) : 'None - it is cancelled'}</span>
         </div>
         <hr className="divider" />
-        <div className="spread">
+        <div className="figure">
           <span className="muted">That works out at</span>
-          <Amount text={`${formatMoney(monthlyMinor(sub), sub.currency)} a month`} blur={blurAmounts} />
+          <Amount
+            className="figure-value"
+            text={`${formatMoney(monthlyMinor(sub), sub.currency)} a month`}
+            blur={blurAmounts}
+          />
         </div>
-        <div className="spread">
-          <span className="muted">Over a year</span>
-          <Amount text={formatMoney(yearlyMinor(sub), sub.currency)} blur={blurAmounts} />
+        <div className="figure">
+          <span className="item-title">Over a year</span>
+          <Amount className="figure-value amount-key" text={formatMoney(yearlyMinor(sub), sub.currency)} blur={blurAmounts} />
         </div>
         {sub.category && (
-          <div className="spread">
+          <div className="figure">
             <span className="muted">Filed under</span>
-            <span className="tag">{sub.category}</span>
+            <span className="figure-value">
+              <span className="tag">{sub.category}</span>
+            </span>
           </div>
         )}
       </div>
@@ -555,9 +780,11 @@ function SavedConfirmation({
           <p className="small">
             You haven't written down how to cancel this one. It takes a minute now and saves a bad half hour later.
           </p>
-          <button type="button" className="btn btn-sm" onClick={onEdit}>
-            Add the cancellation steps
-          </button>
+          <div className="btn-row">
+            <button type="button" className="btn btn-sm" onClick={() => onEdit({ expand: true, cancelSteps: true })}>
+              Add the cancellation steps
+            </button>
+          </div>
         </div>
       )}
 
@@ -568,7 +795,7 @@ function SavedConfirmation({
         <button type="button" className="btn" onClick={onAddAnother}>
           Add another
         </button>
-        <button type="button" className="btn btn-quiet" onClick={onEdit}>
+        <button type="button" className="btn btn-quiet" onClick={() => onEdit({ expand: true })}>
           Change something
         </button>
       </div>
@@ -580,46 +807,59 @@ function SubscriptionCard({
   sub,
   settings,
   onEdit,
+  onCancelled,
 }: {
   sub: Subscription;
   settings: Settings;
   onEdit: (sub: Subscription) => void;
+  onCancelled: (sub: Subscription) => void;
 }) {
   const [open, setOpen] = useState(false);
   const next = nextBilling(sub);
+  const detailsId = `sub-details-${sub.id}`;
 
   return (
     <div className="card card-tight stack-sm">
-      <div className="spread">
+      <div className="figure">
         <button
           type="button"
-          className="item-title grow"
+          className="item-title item-title-btn"
           aria-expanded={open}
+          aria-controls={detailsId}
           onClick={() => setOpen((v) => !v)}
-          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textAlign: 'left', cursor: 'pointer' }}
         >
           {sub.name}
         </button>
-        <Amount text={formatMoney(sub.amountMinor, sub.currency)} blur={settings.blurAmounts} />
+        <Amount
+          className="figure-value"
+          text={formatMoney(sub.amountMinor, sub.currency)}
+          blur={settings.blurAmounts}
+        />
       </div>
-      <div className="row-tight faint">
-        <span>{describeBilling(sub)}</span>
-        {next && <span>Next: {describeDate(next)}</span>}
-        {sub.category && <span className="tag">{sub.category}</span>}
+      <div className="item-foot">
+        <div className="stack-sm">
+          <div className="meta">
+            <span>{describeBilling(sub)}</span>
+            {next && <span>Next: {describeDate(next)}</span>}
+            {sub.category && <span className="tag">{sub.category}</span>}
+          </div>
+        </div>
+        <DetailsButton open={open} onToggle={() => setOpen((v) => !v)} controls={detailsId} />
       </div>
 
       {open && (
-        <div className="stack-sm">
-          <div className="spread small">
+        <div id={detailsId} className="stack-sm">
+          <div className="figure small">
             <span className="muted">Works out at</span>
             <Amount
+              className="figure-value"
               text={`${formatMoney(monthlyMinor(sub), sub.currency)} a month / ${formatMoney(yearlyMinor(sub), sub.currency)} a year`}
               blur={settings.blurAmounts}
             />
           </div>
           {sub.cancelHow.trim() ? (
-            <div className="card card-quiet">
-              <strong className="small">To cancel:</strong>
+            <div className="card card-quiet card-tight">
+              <p className="small item-title">To cancel:</p>
               <p className="note-body">{sub.cancelHow}</p>
             </div>
           ) : (
@@ -644,7 +884,7 @@ function SubscriptionCard({
               label="Mark as cancelled"
               confirmLabel="Yes, it's cancelled"
               className="btn btn-quiet btn-sm"
-              onConfirm={() => void saveSubscription({ ...sub, endedOn: todayKey() })}
+              onConfirm={() => onCancelled(sub)}
             />
           </div>
           <p className="faint">{CALENDAR_ENTRY_STAYS}</p>
@@ -656,12 +896,17 @@ function SubscriptionCard({
 
 function SubscriptionEditor({
   sub,
+  existing,
+  focus,
   knownCategories,
   onSaved,
   onCancel,
   onDelete,
 }: {
   sub: Subscription;
+  /** Saved before: its date is the one it was first charged on, not the next one. */
+  existing: boolean;
+  focus: EditorFocus;
   knownCategories: string[];
   onSaved: (sub: Subscription) => void;
   onCancel: () => void;
@@ -690,11 +935,15 @@ function SubscriptionEditor({
   const daysValue = normaliseDays(parsedDays, DEFAULT_BILLING_DAYS);
   const fixedDay = isFixedDayCycle(draft.cycle);
   const [error, setError] = useState('');
-  const [showMore, setShowMore] = useState(Boolean(sub.cancelHow || sub.notes || sub.every !== 1));
+  const [showMore, setShowMore] = useState(
+    Boolean(focus.expand || focus.cancelSteps || sub.cancelHow || sub.notes || sub.every !== 1),
+  );
   const [customCategory, setCustomCategory] = useState(
     Boolean(sub.category && !knownCategories.includes(sub.category)),
   );
-  const nameRef = useAutoFocus<HTMLInputElement>();
+  // "Add the cancellation steps" lands in the box it names, not at the top.
+  const nameRef = useAutoFocus<HTMLInputElement>(!focus.cancelSteps);
+  const cancelRef = useAutoFocus<HTMLTextAreaElement>(Boolean(focus.cancelSteps));
 
   const patch = (changes: Partial<Subscription>) => setDraft((d) => ({ ...d, ...changes }));
 
@@ -720,6 +969,11 @@ function SubscriptionEditor({
   const onNameChange = (name: string) => patch(whenNameTyped({ ...draft, every: everyValue }, name));
 
   const today = todayKey();
+  /** The next charge as the form stands, for the line under "First charged". */
+  const nextCharge = nextBilling(
+    { ...draft, every: fixedDay ? 1 : everyValue, daysOfMonth: fixedDay ? daysValue : undefined },
+    today,
+  );
 
   return (
     <form
@@ -758,7 +1012,7 @@ function SubscriptionEditor({
           autoComplete="off"
         />
         {nameMatches.length > 0 && (
-          <div className="btn-row" style={{ marginTop: 8 }}>
+          <div className="btn-row">
             {nameMatches.map((p) => (
               <button
                 key={p.name}
@@ -802,10 +1056,9 @@ function SubscriptionEditor({
           />
         </div>
       </div>
-      {error && <p className="pill pill-warn">{error}</p>}
 
-      <div className="field">
-        <label>How often</label>
+      <fieldset className="field">
+        <legend>How often</legend>
         <div className="btn-row">
           {CYCLE_PRESETS.map((c) => {
             const selected = findCyclePreset(draft.cycle, everyValue)?.id === c.id;
@@ -837,12 +1090,12 @@ function SubscriptionEditor({
           Every 2 weeks is 26 charges a year; twice a month is 24. They are not the same, and the difference
           is two whole charges.
         </p>
-      </div>
+      </fieldset>
 
       {fixedDay && (
         <div className="field">
           <label htmlFor="sub-days">Which days of the month?</label>
-          <div className="btn-row">
+          <div className="btn-row" role="group" aria-label="Which days of the month?">
             {BILLING_DAY_CHOICES.map((choice) => (
               <button
                 key={choice.label}
@@ -863,7 +1116,6 @@ function SubscriptionEditor({
             value={daysText}
             onChange={(e) => setDaysText(e.target.value)}
             placeholder="1, 15"
-            style={{ marginTop: 8 }}
           />
           <p className="faint">
             Charges {describeCycle(draft.cycle, everyValue, daysValue)}. Use 31 for the last day - it lands on
@@ -873,33 +1125,19 @@ function SubscriptionEditor({
       )}
 
       <div className="field">
-        <label htmlFor="sub-first">{fixedDay ? 'Charging from' : 'Date of the next charge'}</label>
-        <div className="btn-row" style={{ marginBottom: 8 }}>
-          <button
-            type="button"
-            aria-pressed={draft.firstBilled === today}
-            className={`btn btn-sm${draft.firstBilled === today ? ' btn-primary' : ''}`}
-            onClick={() => patch({ firstBilled: today })}
-          >
-            Today
-          </button>
-          <button
-            type="button"
-            aria-pressed={draft.firstBilled === addDays(today, 1)}
-            className={`btn btn-sm${draft.firstBilled === addDays(today, 1) ? ' btn-primary' : ''}`}
-            onClick={() => patch({ firstBilled: addDays(today, 1) })}
-          >
-            Tomorrow
-          </button>
-          <button
-            type="button"
-            aria-pressed={draft.firstBilled === addDays(today, 7)}
-            className={`btn btn-sm${draft.firstBilled === addDays(today, 7) ? ' btn-primary' : ''}`}
-            onClick={() => patch({ firstBilled: addDays(today, 7) })}
-          >
-            In a week
-          </button>
-        </div>
+        <label htmlFor="sub-first">
+          {fixedDay ? 'Charging from' : existing ? 'First charged' : 'Date of the next charge'}
+        </label>
+        {/* One-tap days for a new one. A saved one's date is where its whole
+            schedule is counted from, so it is not offered as "Today". */}
+        {!existing && (
+          <DateShortcuts
+            value={draft.firstBilled}
+            today={today}
+            label="Date of the next charge"
+            onPick={(date) => date && patch({ firstBilled: date })}
+          />
+        )}
         <input
           autoComplete="off"
           id="sub-first"
@@ -907,16 +1145,20 @@ function SubscriptionEditor({
           value={draft.firstBilled}
           onChange={(e) => patch({ firstBilled: e.target.value })}
         />
+        {existing && !fixedDay ? (
+          <p className="small">Next: {nextCharge ? describeDate(nextCharge, today) : 'none - it is cancelled'}</p>
+        ) : (
+          <p className="faint">{describeDate(draft.firstBilled, today)}.</p>
+        )}
         <p className="faint">
-          {describeDate(draft.firstBilled)}.{' '}
           {fixedDay
             ? 'The charges land on the days above; this only says when they start, so the first one is the first of those dates on or after it.'
             : 'Every future date is worked out from this one, so it only has to be right once.'}
         </p>
       </div>
 
-      <div className="field">
-        <label>Category</label>
+      <fieldset className="field">
+        <legend>Category</legend>
         <div className="btn-row">
           {knownCategories.map((c) => (
             <button
@@ -952,10 +1194,9 @@ function SubscriptionEditor({
             value={draft.category ?? ''}
             onChange={(e) => patch({ category: e.target.value || undefined })}
             placeholder="Type your own"
-            style={{ marginTop: 8 }}
           />
         )}
-      </div>
+      </fieldset>
 
       <div className="field">
         <label htmlFor="sub-remind">Warn me before each charge</label>
@@ -974,7 +1215,7 @@ function SubscriptionEditor({
       </div>
 
       {!showMore ? (
-        <button type="button" className="btn btn-quiet btn-sm" onClick={() => setShowMore(true)}>
+        <button type="button" className="btn btn-quiet btn-sm" aria-expanded={false} onClick={() => setShowMore(true)}>
           More options (how to cancel, notes, every N cycles)
         </button>
       ) : (
@@ -986,9 +1227,10 @@ function SubscriptionEditor({
             <textarea
               autoComplete="off"
               id="sub-cancel"
+              ref={cancelRef}
               value={draft.cancelHow}
               onChange={(e) => patch({ cancelHow: e.target.value })}
-              placeholder="Account > Membership > Cancel. Or: ring 0800 123 4567, account number 12345."
+              placeholder="Account > Membership > Cancel. Or: call 1-800-555-0199 with the account number."
             />
             <p className="faint">
               Write this down now, while you are already looking at it. Future you will not want to go hunting.
@@ -1037,6 +1279,8 @@ function SubscriptionEditor({
           </button>
         </div>
       )}
+
+      <FormError message={error} />
 
       <div className="spread">
         <div className="btn-row">

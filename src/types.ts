@@ -243,7 +243,18 @@ export interface IncomeSource {
  * Nothing is ever renamed or removed. A theme name is a saved preference on
  * somebody's phone, and a preference that silently stops existing is a bug.
  */
-export const BUILT_IN_THEMES = ['calm', 'amber', 'overcast', 'dark', 'midnight', 'contrast'] as const;
+export const BUILT_IN_THEMES = [
+  'calm',
+  'amber',
+  'overcast',
+  'dark',
+  'midnight',
+  'contrast',
+  // Just for fun. Opt-in, and held to the same contrast test as the rest.
+  'synthwave',
+  'bubblegum',
+  'aurora',
+] as const;
 export type BuiltInTheme = (typeof BUILT_IN_THEMES)[number];
 
 /** 'custom' has no CSS block - its tokens are assembled in src/lib/theme.ts. */

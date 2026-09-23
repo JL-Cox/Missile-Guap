@@ -20,3 +20,15 @@ export async function undoFiling(filed: Pick<Note, 'id' | 'updatedAt'>): Promise
   await db.notes.delete(filed.id);
   return true;
 }
+
+/**
+ * A capture turned into a task: the first line is the title, anything after it
+ * is kept as the task's notes. "Call the pharmacy\nask about the repeat, ref
+ * 40118" should not become a forty-word title, and nothing typed is dropped.
+ */
+export function splitCapture(text: string): { title: string; notes: string } {
+  const trimmed = text.trim();
+  const at = trimmed.indexOf('\n');
+  if (at === -1) return { title: trimmed, notes: '' };
+  return { title: trimmed.slice(0, at).trim(), notes: trimmed.slice(at + 1).trim() };
+}

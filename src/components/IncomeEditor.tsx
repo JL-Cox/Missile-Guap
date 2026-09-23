@@ -5,7 +5,7 @@ import { anchorDays, FREQUENCY_LABELS, isIntervalFrequency, WEEKEND_SHIFT_LABELS
 import { ALL_HOLIDAYS, HOLIDAY_LABELS, holidaysOf } from '../lib/holidays';
 import { formatMoney, parseMoney, unitemisedMinor } from '../lib/money';
 import { daysBetween, describeDate, todayKey } from '../lib/time';
-import { Amount, ConfirmButton, useAutoFocus } from './ui';
+import { Amount, ConfirmButton, FormError, useAutoFocus } from './ui';
 
 /**
  * Common US paystub lines, offered as quick-add chips so entering a stub is
@@ -159,8 +159,8 @@ export default function IncomeEditor({
         />
       </div>
 
-      <div className="field">
-        <label>How often are you paid?</label>
+      <fieldset className="field">
+        <legend>How often are you paid?</legend>
         <div className="btn-row">
           {FREQUENCIES.map((f) => (
             <button
@@ -175,10 +175,10 @@ export default function IncomeEditor({
           ))}
         </div>
         <p className="faint">
-          Every 2 weeks is 26 paycheques a year; twice a month is 24. They are not the same, and the difference
-          is two whole paycheques.
+          Every 2 weeks is 26 paychecks a year; twice a month is 24. They are not the same, and the difference
+          is two whole paychecks.
         </p>
-      </div>
+      </fieldset>
 
       {isIntervalFrequency(draft.frequency) ? (
         <div className="field">
@@ -222,8 +222,8 @@ export default function IncomeEditor({
           </p>
         </div>
       ) : (
-        <div className="field">
-          <label>Which days of the month?</label>
+        <fieldset className="field">
+          <legend>Which days of the month?</legend>
           <div className="btn-row">
             {DAY_CHOICES.map((choice) => (
               <button
@@ -245,16 +245,15 @@ export default function IncomeEditor({
             value={daysText}
             onChange={(e) => setDaysText(e.target.value)}
             placeholder="15, 31"
-            style={{ marginTop: 8 }}
           />
           <p className="faint">
             Use 31 for the last day - it lands on the 28th in February and the 30th in April automatically.
           </p>
-        </div>
+        </fieldset>
       )}
 
-      <div className="field">
-        <label>If payday lands on a weekend</label>
+      <fieldset className="field">
+        <legend>If payday lands on a weekend</legend>
         <div className="btn-row">
           {(['friday', 'monday', 'none'] as WeekendShift[]).map((shift) => (
             <button
@@ -269,14 +268,14 @@ export default function IncomeEditor({
           ))}
         </div>
         <p className="faint">
-          A payday on a day the office is shut moves the same way. It keeps stepping until it reaches a working
-          day, so a payday on Boxing Day weekend ends up before Christmas rather than on it.
+          A payday on a day the office is closed moves the same way. It keeps stepping until it reaches a working
+          day - with "the Friday before", a payday on Christmas Day lands on Christmas Eve.
         </p>
-      </div>
+      </fieldset>
 
       {weekendShiftOf(draft) !== 'none' && (
-        <div className="field">
-          <label>Days this employer is closed</label>
+        <fieldset className="field">
+          <legend>Days this employer is closed</legend>
           <div className="stack-sm">
             {ALL_HOLIDAYS.map((id) => {
               const on = holidaysOf(draft).includes(id);
@@ -300,14 +299,14 @@ export default function IncomeEditor({
           </div>
           <p className="faint">
             When one of these falls on a weekend, the day off is taken on the nearest weekday - so New Year's Day
-            2028 being a Saturday makes Friday 31 December 2027 the day off, and a payday that day moves.
+            2028 being a Saturday makes Friday, December 31, 2027 the day off, and a payday that day moves.
           </p>
-        </div>
+        </fieldset>
       )}
 
       <div className="field-row">
         <div className="field">
-          <label htmlFor="income-gross">Gross, each paycheque</label>
+          <label htmlFor="income-gross">Gross, each paycheck</label>
           <input
             autoComplete="off"
             id="income-gross"
@@ -341,12 +340,11 @@ export default function IncomeEditor({
         Both straight off the stub. Nothing here works out your tax - rates vary and change, and a confident
         wrong number in your budget is worse than no number.
       </p>
-      {error && <p className="pill pill-warn">{error}</p>}
 
-      <div className="field">
-        <label>What comes out in between</label>
+      <fieldset className="field">
+        <legend>What comes out in between</legend>
         {draft.deductions.length > 0 && (
-          <div className="stack-sm" style={{ marginBottom: 8 }}>
+          <div className="stack-sm">
             {draft.deductions.map((d) => (
               <div key={d.id} className="row-tight">
                 <input
@@ -363,7 +361,7 @@ export default function IncomeEditor({
                   type="text"
                   inputMode="decimal"
                   aria-label={`Amount for ${d.label || 'this deduction'}`}
-                  style={{ maxWidth: 120 }}
+                  className="input-narrow"
                   value={amountTexts[d.id] ?? ''}
                   onChange={(e) => setAmountTexts((prev) => ({ ...prev, [d.id]: e.target.value }))}
                   placeholder="0.00"
@@ -392,11 +390,11 @@ export default function IncomeEditor({
         {gap > 0 && (
           <p className="faint">
             <Amount text={formatMoney(gap, draft.currency)} blur={blurAmounts} /> of the gap between gross and net
-            is not written down yet. That is fine - it just shows as "not itemised". Add lines only if you want the
+            is not written down yet. That is fine - it just shows as "not itemized". Add lines only if you want the
             breakdown.
           </p>
         )}
-      </div>
+      </fieldset>
 
       <div className="field">
         <label htmlFor="income-notes">Notes (optional)</label>
@@ -417,6 +415,8 @@ export default function IncomeEditor({
           </button>
         </div>
       )}
+
+      <FormError message={error} />
 
       <div className="spread">
         <div className="btn-row">

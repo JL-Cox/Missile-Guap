@@ -1,7 +1,7 @@
 import { db, saveTask } from '../db';
 import type { DateKey, Recurrence, Task, TimeKey } from '../types';
 import { nextOccurrence } from './recurrence';
-import { atTime, clockLabel, daysBetween, fromDateKey, todayKey } from './time';
+import { atTime, clockLabel, daysBetween, fromDateKey, SHORT_MONTHS, SHORT_WEEKDAYS, todayKey } from './time';
 
 /** Where a reminder counts from when the task has a day but no time. */
 export const DEFAULT_REMIND_TIME: TimeKey = '09:00';
@@ -134,9 +134,6 @@ export function rolledForward(task: Task, at: number = Date.now()): Task {
 export async function completeTask(task: Task, at: number = Date.now()): Promise<Task> {
   return saveTask(rolledForward(task, at));
 }
-
-const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
  * "Last ticked today, 8:02 AM" / "Last ticked Tue". A plain fact that answers

@@ -50,6 +50,10 @@
     and so a person can audit it by eye. That test is the reason you can trust
     any of these palettes; it checks 34 pairs per theme.
 
+  * THREE THEMES ARE JUST FOR FUN. Synthwave, Bubblegum and Aurora put their
+    energy in the ground, the done colour and a header gradient - never in the
+    accent, which keeps its two meanings there too. They pass the same test.
+
   Adding a theme means adding it here AND to BUILT_IN_THEMES in src/types.ts.
   The test fails if you do only one.
 */
@@ -108,9 +112,6 @@ html {
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
 
   --gutter: var(--space-4);
   --pad: clamp(13px, 0.82rem, 20px);          /* inside a sheet */
@@ -158,8 +159,12 @@ html {
      is six fixed landmarks you find by position; the text-size setting exists
      for reading, and everything you actually read still scales. In exchange the
      glyph gives up its space as the text grows: full size to 1.25x, gone by
-     1.35x, so at large sizes the words get the whole slot. */
-  --nav-label: clamp(11px, 0.72rem, 15px);
+     1.35x, so at large sizes the words get the whole slot.
+
+     The floor is 12.5px, not 11: at 1.0x the label was the smallest text in the
+     app, on the one control you use on every visit. "Backlog" at 15px is about
+     58px, which still fits a 68px slot. */
+  --nav-label: clamp(12.5px, 0.76rem, 15px);
   --nav-glyph: clamp(0px, calc((1.35 - var(--text-scale)) * 10rem), 1rem);
   --nav-gap: clamp(0px, calc((1.35 - var(--text-scale)) * 2rem), 3px);
 
@@ -185,7 +190,6 @@ html {
   --bar-fill: #6c8377;
   --prio-critical-bg: #ddd5c2;
   --prio-critical-text: #453e2c;
-  --prio-high-bg: #eeeae0;
   --prio-high-text: #554c38;
   --prio-medium-text: #5c5649;
   --prio-low-text: #696251;
@@ -254,7 +258,6 @@ html {
   --bar-fill: #6c8377;
   --prio-critical-bg: #ddd5c2;
   --prio-critical-text: #453e2c;
-  --prio-high-bg: #eeeae0;
   --prio-high-text: #554c38;
   --prio-medium-text: #5c5649;
   --prio-low-text: #696251;
@@ -285,7 +288,6 @@ html {
   --bar-fill: #887a54;
   --prio-critical-bg: #e0d0ad;
   --prio-critical-text: #453820;
-  --prio-high-bg: #f1e7d2;
   --prio-high-text: #564726;
   --prio-medium-text: #5f5134;
   --prio-low-text: #6f6040;
@@ -316,7 +318,6 @@ html {
   --bar-fill: #717f91;
   --prio-critical-bg: #d3d7de;
   --prio-critical-text: #33373e;
-  --prio-high-bg: #e9ebef;
   --prio-high-text: #454a53;
   --prio-medium-text: #51565e;
   --prio-low-text: #5e636c;
@@ -346,7 +347,6 @@ html {
   --bar-fill: #6e8578;
   --prio-critical-bg: #453f37;
   --prio-critical-text: #ece2cf;
-  --prio-high-bg: #322f2b;
   --prio-high-text: #d6cbb9;
   --prio-medium-text: #bdb6aa;
   --prio-low-text: #a09889;
@@ -355,7 +355,10 @@ html {
 
 /* The 3am theme. Near-black so an OLED panel emits almost nothing, and text
    held well below white on purpose: white on black haloes and smears for a lot
-   of people, so this tops out around #c9c7c2. Still comfortably past AA. */
+   of people, so this tops out around #c9c7c2. Still comfortably past AA.
+   The accent is a dim sage rather than the steel blue it used to be: it tints
+   the capture box and the tab you are on, and at 3am the last thing that bar
+   should be doing is glowing blue. */
 [data-theme='midnight'] {
   --bg: #07080a;
   --surface: #101216;
@@ -368,17 +371,16 @@ html {
   --text-soft: #a0a0a7;
   --text-faint: #8a8a92;
   --text-disabled: #6a6a73;
-  --accent: #8aa8c4;
-  --accent-soft: #1e2a36;
-  --accent-text: #aac4dc;
-  --accent-on: #0c151d;
+  --accent: #7fa08e;
+  --accent-soft: #1a2721;
+  --accent-text: #a3c2b1;
+  --accent-on: #0b1510;
   --warn-soft: #2a2418;
   --warn-text: #c9b587;
   --done: #6f9a80;
   --bar-fill: #5d7288;
   --prio-critical-bg: #2d323b;
   --prio-critical-text: #d2d5da;
-  --prio-high-bg: #1b1e24;
   --prio-high-text: #b4b7bd;
   --prio-medium-text: #a0a0a7;
   --prio-low-text: #8a8a92;
@@ -410,7 +412,6 @@ html {
   --bar-fill: #00407a;
   --prio-critical-bg: #000000;
   --prio-critical-text: #ffffff;
-  --prio-high-bg: #eaeaea;
   --prio-high-text: #000000;
   --prio-medium-text: #000000;
   --prio-low-text: #262626;
@@ -420,6 +421,132 @@ html {
      versus strong distinction, because here every edge is the strong one. */
   --shadow-float: 0 0 0 2px #000000;
   --shadow-nav: none;
+}
+
+/* ==========================================================================
+   JUST FOR FUN
+   Opt-in, and still held to every pair in the contrast test. The accent keeps
+   its two meanings; the energy comes from the ground, the done and bar colours,
+   the accent tint on the capture box and the current tab, and a gradient on the
+   header. That gradient is the one decorative image in the app, and each stop
+   was checked against every text token that sits on it.
+   ========================================================================== */
+
+/* An 80s record sleeve at night. Indigo ground, hot magenta for what you
+   press, electric cyan for what is done. Text is lavender, not white. */
+[data-theme='synthwave'] {
+  --bg: #140c2c;
+  --surface: #1c1339;
+  --surface-sunk: #251a47;
+  --surface-alt: #2a1f50;
+  --surface-disabled: #211842;
+  --border: #34295c;
+  --border-strong: #7d6fb0;
+  --text: #efe9ff;
+  --text-soft: #c3b8e6;
+  --text-faint: #a89cd0;
+  --text-disabled: #7d72a3;
+  --accent: #ff5cc3;
+  --accent-soft: #3d1850;
+  --accent-text: #ff9fdc;
+  --accent-on: #1a0726;
+  --warn-soft: #382b3a;
+  --warn-text: #f5cf8e;
+  --done: #4de3e8;
+  --bar-fill: #3fc6d6;
+  --prio-critical-bg: #4a3a78;
+  --prio-critical-text: #f4efff;
+  --prio-high-text: #d9cff5;
+  --prio-medium-text: #c3b8e6;
+  --prio-low-text: #a89cd0;
+  color-scheme: dark;
+}
+
+/* The horizon: header sheen plus a 1px neon rule. All three stops were
+   checked against every text token (lowest: text-faint 6.31:1). */
+[data-theme='synthwave'] .header {
+  background: linear-gradient(100deg, #2a1452 0%, #1c1339 55%, #122046 100%);
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, #ff5cc3, #4de3e8) 1;
+}
+
+/* The one exception to the one-shadow rule: light, not elevation. Static. */
+[data-theme='synthwave'] :focus-visible {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 14px 3px rgba(255, 92, 195, 0.45);
+}
+
+[data-theme='synthwave'] .nav-btn[aria-current='page'] {
+  box-shadow: inset 0 3px 10px -4px rgba(255, 92, 195, 0.55);
+}
+
+/* A sweet-shop page in daylight. Pink ground, hot pink for what you press,
+   violet for what is done and for the ink. */
+[data-theme='bubblegum'] {
+  --bg: #fcebf4;
+  --surface: #fff7fb;
+  --surface-sunk: #f3dbe8;
+  --surface-alt: #f7e3ee;
+  --surface-disabled: #f5e1ec;
+  --border: #efd0e1;
+  --border-strong: #946281;
+  --text: #2a1433;
+  --text-soft: #5a3a66;
+  --text-faint: #6b4a78;
+  --text-disabled: #8f6e97;
+  --accent: #d1267f;
+  --accent-soft: #fad0e6;
+  --accent-text: #8a1253;
+  --accent-on: #ffffff;
+  --warn-soft: #fbeccd;
+  --warn-text: #6a4d12;
+  --done: #7a3fc0;
+  --bar-fill: #9a5fd0;
+  --prio-critical-bg: #e8c9f0;
+  --prio-critical-text: #3a1650;
+  --prio-high-text: #5c2f73;
+  --prio-medium-text: #5a3a66;
+  --prio-low-text: #6b4a78;
+  color-scheme: light;
+}
+
+/* Pink into lilac across the header. Lowest ratio is text-faint at 5.88:1. */
+[data-theme='bubblegum'] .header {
+  background: linear-gradient(100deg, #fde2f0, #eee2fb);
+}
+
+/* The northern lights. Teal-black ground, electric mint for what you press,
+   violet for what is done. */
+[data-theme='aurora'] {
+  --bg: #0a1820;
+  --surface: #10222b;
+  --surface-sunk: #152b35;
+  --surface-alt: #19323d;
+  --surface-disabled: #132730;
+  --border: #21404c;
+  --border-strong: #5f8a96;
+  --text: #e3f4f1;
+  --text-soft: #a9c9c6;
+  --text-faint: #8fb2b0;
+  --text-disabled: #638883;
+  --accent: #3ef0b0;
+  --accent-soft: #11392f;
+  --accent-text: #86f7cf;
+  --accent-on: #04201a;
+  --warn-soft: #2c2a1c;
+  --warn-text: #e8d08e;
+  --done: #b89cff;
+  --bar-fill: #9d86f0;
+  --prio-critical-bg: #24475a;
+  --prio-critical-text: #eafaf7;
+  --prio-high-text: #c9e3e0;
+  --prio-medium-text: #a9c9c6;
+  --prio-low-text: #8fb2b0;
+  color-scheme: dark;
+}
+
+/* Teal into violet across the header. Lowest ratio is text-faint at 6.62:1. */
+[data-theme='aurora'] .header {
+  background: linear-gradient(100deg, #0c2a2c, #0a1820 50%, #1a1a3a);
 }
 
 [data-theme='contrast'] .card,
@@ -590,6 +717,19 @@ code {
   gap: var(--gap-section);
 }
 
+/*
+  One tab's screen. It adds no box of its own - its sections are laid out by
+  .main's gap exactly as if it were not there - but it can be hidden, which is
+  how a tab with a half-written editor keeps it while you look at another tab.
+*/
+.view {
+  display: contents;
+}
+
+.view[hidden] {
+  display: none;
+}
+
 .stack {
   display: flex;
   flex-direction: column;
@@ -676,8 +816,31 @@ code {
 
 .amount {
   font-variant-numeric: tabular-nums;
-  font-weight: var(--w-strong);
+  font-weight: var(--w-medium);
   letter-spacing: -0.01em;
+}
+
+/*
+  The figure a screen is built around. Money has exactly two - what is still
+  to come out before payday, and what this paycheck leaves - and they are the
+  only place in the app that spends --fs-display and the strong weight together.
+  Every other amount is medium weight, so these two can land.
+*/
+.amount-key {
+  font-size: var(--fs-display);
+  font-weight: var(--w-strong);
+  line-height: var(--lh-tight);
+}
+
+/* A blurred amount is a real button, reset to look like the text it hides. */
+.amount-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
 }
 
 /* Blurred until tapped, for days when seeing the number is too much. It stays a
@@ -703,16 +866,93 @@ code {
   inset: -10px -4px;
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
+/* Text kept exactly as typed, line breaks included. */
+.pre-wrap {
+  white-space: pre-wrap;
+}
+
+/*
+  A LABEL AND ITS FIGURE, on one line.
+
+  Label on the left, taking what room there is; the figure on the right,
+  sharing a baseline with the label's first line, and never itself broken -
+  "$1,765.5" on one line and "3" on the next is not a number. Used for every
+  label + amount pair so that a column of figures actually lines up.
+
+  The label asks for 9em before it will share its line. At everyday sizes it
+  always gets it; at 1.6x, beside a large figure, it would have been squeezed
+  to a word per line - so instead the figure drops under it, still flush right.
+*/
+.figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: var(--gap);
+  row-gap: var(--space-1);
+}
+
+.figure > :first-child {
+  flex: 1 1 9em;
+  min-width: 0;
+}
+
+.figure-value {
+  flex: none;
+  max-width: 100%;
+  margin-left: auto;
+  text-align: right;
   white-space: nowrap;
-  border: 0;
+}
+
+/*
+  A META RUN: "9:30 AM · 30 min · high energy". One line of small facts,
+  separated by a middle dot drawn here rather than typed, so a fact that is
+  absent never leaves a stray separator behind. Wrapped lines sit tight - they
+  are one line of information that ran out of room, not two.
+
+  Every item carries its separator in a gutter of its own, in front of it, and
+  the run is pulled left by one gutter's width and clipped there - so the dot in
+  front of whatever starts a line, the first or a wrapped one, falls outside and
+  is never drawn. A line never begins with "·". The dot is positioned inside the
+  gutter rather than set inline, so when one long item wraps inside itself, its
+  second line starts after the gutter, in the clear. The clip reaches well past
+  the other three edges, so nothing else (an amount's tap area, a focus ring)
+  is cut off.
+
+  A badge or a tag carries its own edge, so it takes the space without a dot.
+*/
+.meta {
+  --meta-sep: 1.1em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 2px;
+  margin-left: calc(-1 * var(--meta-sep));
+  clip-path: inset(-24px -24px -24px var(--meta-sep));
+  color: var(--text-faint);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+
+.meta > * {
+  margin-left: var(--meta-sep);
+}
+
+.meta > :not(.tag, .badge) {
+  position: relative;
+  margin-left: 0;
+  padding-left: var(--meta-sep);
+}
+
+.meta > :not(.tag, .badge)::before {
+  content: '\00b7';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--meta-sep);
+  text-align: center;
+  color: var(--text-faint);
 }
 
 /* ==========================================================================
@@ -737,8 +977,6 @@ code {
 /* A container that holds nothing of its own - a note about the thing beside it. */
 .card-quiet {
   background: transparent;
-  border-style: solid;
-  border-color: var(--border);
 }
 
 .divider {
@@ -877,8 +1115,6 @@ code {
   border-color: var(--border);
   background: transparent;
   color: var(--text-soft);
-  padding: var(--space-2) var(--space-3);
-  min-height: 40px;
 }
 
 @media (hover: hover) {
@@ -915,8 +1151,7 @@ code {
   That is the right failure. For someone who needs to trust what they just
   pressed, the wrong action is far worse than a missed one.
 */
-.btn-sm::after,
-.btn-quiet::after {
+.btn-sm::after {
   content: '';
   position: absolute;
   inset: -3px 0;
@@ -927,6 +1162,11 @@ code {
   column-gap: var(--space-2);
   row-gap: var(--gap-row);
   flex-wrap: wrap;
+}
+
+/* A row of equal partners that share the width, and stack when they must. */
+.btn-row-fill > .btn {
+  flex: 1 1 auto;
 }
 
 /* A primary action that should never have to be hunted for. */
@@ -1017,8 +1257,18 @@ select {
   flex-direction: column;
 }
 
-label {
+fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* A group's name is set exactly like a field's label: it is one. */
+label,
+legend {
   display: block;
+  padding: 0;
   font-size: var(--fs-meta);
   font-weight: var(--w-medium);
   color: var(--text-soft);
@@ -1039,9 +1289,29 @@ label {
 
 /* A field's own helper text sits closer to it than the next field does. */
 .field > .faint,
+.field > .small,
 .field > .btn-row,
-.field > .stack-sm {
+.field > .stack-sm,
+.field > .btn-row + input,
+.field > .btn-row + .field-row,
+.field > .stack-sm + .row-tight {
   margin-top: var(--space-2);
+}
+
+/* A label that sits on the line with its box: "Every [2] weeks". */
+.inline-label {
+  margin: 0;
+}
+
+/* A money box in a row with its label box: wide enough for "12,345.67". */
+.input-narrow {
+  flex: 0 0 7.5em;
+  min-width: 0;
+}
+
+/* A second row of choices inside one group, after a quiet line naming it. */
+.group-note {
+  margin-top: var(--gap-row);
 }
 
 .check {
@@ -1158,10 +1428,29 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   margin-bottom: 0;
 }
 
+/*
+  The box's edge is --text-faint, not --border-strong. The box sits on the
+  accent tint, and --border-strong on that tint came out at 2.8-2.98:1 in
+  Calm, Overcast, Dark and Midnight and as low as 2.3:1 in custom themes -
+  under the 3:1 a control's edge needs. test/theme.test.ts holds this exact
+  pair in every theme.
+
+  One line until you are in it, so the box costs a line rather than three on
+  a screen you mostly open to read. It grows when focused or holding text, and
+  sizes itself to what it holds - including, at large text sizes, a
+  placeholder that needs two lines, rather than cutting it off.
+*/
 .capture textarea {
   background: var(--surface);
-  border-color: var(--border-strong);
-  min-height: 56px;
+  border-color: var(--text-faint);
+  min-height: 44px;
+  max-height: 40vh;
+  resize: none;
+  field-sizing: content;
+}
+
+.capture-open textarea {
+  min-height: 72px;
 }
 
 .capture textarea:focus {
@@ -1192,6 +1481,89 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 
 /*
+  A title you can tap, which still looks like the title it is. The reset takes
+  away the button's paper, edge and padding but not its type, so it keeps the
+  .item-title weight. The target is widened vertically only, like .blurred: a
+  23px line becomes a 43px-plus target without the row growing, and without
+  reaching sideways into the tick box's area.
+*/
+.item-title-btn {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item-title-btn::after {
+  content: '';
+  position: absolute;
+  inset: -10px 0;
+}
+
+/*
+  The foot of a row: what is true about it on the left, and Details on the
+  right, level with the last line of it. Details is in the same place on every
+  row, and costs no line of its own. At large text sizes the facts ask for
+  12em before they share their line - otherwise they were squeezed to one per
+  line - and Details drops under them instead, still on the right.
+*/
+.item-foot {
+  display: flex;
+  flex-wrap: wrap;
+  /* The last line of the facts sits level with the word "Details". */
+  align-items: flex-end;
+  align-items: last baseline;
+  column-gap: var(--gap-sm);
+  row-gap: var(--gap-row);
+}
+
+.item-foot > .stack-sm {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+/* A date in a heading-like line is never split from its day. */
+.nowrap {
+  white-space: nowrap;
+}
+
+.details-btn {
+  flex: none;
+  margin-left: auto;
+}
+
+/* A row's own buttons, inside its card, under what it says. */
+.item-actions {
+  margin-top: var(--space-1);
+}
+
+/* A step that is done: settled, like a finished task. */
+.step-done {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/*
+  A step and its Remove button. The step text asks for 13em before it will
+  share its line; below that Remove drops underneath it instead. Measured in em
+  so it follows the text size: at 1.6x the text used to be squeezed to one word
+  per line beside a button that would not move.
+*/
+.step-row > .check {
+  flex: 1 1 13em;
+  min-width: 0;
+}
+
+/*
   A finished task. --done is the one colour in the app that is not the accent:
   the accent means "where you are" and "what to press", and a completed tick is
   neither. Colour is never the only signal here - the box is checked and the
@@ -1204,11 +1576,26 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 
 .item-check {
+  display: block;
   width: 26px;
   height: 26px;
-  margin-top: 2px;
-  flex: none;
+  margin: 0;
   accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/*
+  The tick box stays 26px to look at and is 44px to a finger: the label around
+  it carries 9px of padding on every side, pulled back in by an equal negative
+  margin so the row does not move. On the right that leaves 3px of the 12px gap
+  between it and the title, whose own target only grows vertically - so the two
+  never claim the same pixel.
+*/
+.item-check-hit {
+  flex: none;
+  display: block;
+  padding: 9px;
+  margin: -7px -9px -9px;
   cursor: pointer;
 }
 
@@ -1221,16 +1608,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   accent-color: var(--done);
 }
 
-.time-chip {
-  flex: none;
-  min-width: 62px;
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--w-strong);
-  color: var(--accent-text);
-}
-
 /* ==========================================================================
-   TAGS, PILLS, BADGES, NOTICES
+   TAGS, BADGES, NOTICES
    ========================================================================== */
 
 .tag {
@@ -1242,22 +1621,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   font-size: var(--fs-micro);
   line-height: 1.5;
   color: var(--text-soft);
-}
-
-.pill {
-  display: inline-block;
-  padding: 3px var(--space-3);
-  border-radius: var(--radius-pill);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-size: var(--fs-micro);
-  font-weight: var(--w-medium);
-  line-height: 1.6;
-}
-
-.pill-warn {
-  background: var(--warn-soft);
-  color: var(--warn-text);
 }
 
 /*
@@ -1333,7 +1696,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .empty {
   /* --border-strong, not --accent-soft: the rule is a structural mark rather
      than an action, and it is the only token guaranteed to clear 3:1 against
-     the page in all forty-six palettes. An accent tint would be prettier in
+     the page in all forty-nine palettes (nine themes, forty custom pairs). An accent tint would be prettier in
      Calm and invisible in two of the custom ones. */
   border-left: 3px solid var(--border-strong);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
@@ -1368,6 +1731,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 
 .nav-btn {
+  position: relative;
   flex: 1 1 0;
   min-width: 0;
   min-height: 60px;
@@ -1419,8 +1783,12 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 .nav-count {
   /* Capped with the label, and for the same reason: it lives in the nav's fixed
-     six-slot budget. At 1.6x an uncapped 0.8rem badge became a 22px disc that
-     pushed the Inbox label out of line with its neighbours. */
+     six-slot budget. It is lifted out of the flow and sits in the slot's top
+     corner, so "Inbox" stays on the same line as every other label whether or
+     not there is anything waiting. */
+  position: absolute;
+  top: 5px;
+  left: calc(50% + 10px);
   font-size: clamp(10px, 0.62rem, 13px);
   font-weight: var(--w-strong);
   font-variant-numeric: tabular-nums;
@@ -1490,6 +1858,23 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 .toast .btn {
   flex: none;
+}
+
+.toast-actions {
+  flex: none;
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* A list with a marker, set in by the same step as the page gutter. */
+.plain-list {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+/* The rows of a card that lists several things: space, and a hairline. */
+.card-rows > .divider {
+  margin: var(--space-2) 0;
 }
 
 @keyframes rise {

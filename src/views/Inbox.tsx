@@ -1,29 +1,34 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { blankNote, blankTask, clearCapture, db, saveNote, unclearCapture } from '../db';
 import type { Capture, Note, Settings, Task } from '../types';
 import TaskEditor from '../components/TaskEditor';
-import { Empty, Section } from '../components/ui';
+import { Empty, Section, useBackLayer, useToast } from '../components/ui';
 import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSuggestions';
-import { undoFiling } from '../lib/inbox';
+import { splitCapture, undoFiling } from '../lib/inbox';
+import { savedTaskWhere } from '../lib/feedback';
+import { shortDateTime } from '../lib/time';
 
 /**
  * Where everything you typed into the capture box lands. Three buttons per
  * item, always the same three, so emptying the inbox is a mechanical action
  * rather than a series of judgement calls.
+ *
+ * Each of the three says where the thing went, and the two that clear it offer
+ * Undo in the same toast every other screen uses.
  */
 export default function Inbox({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<{ task: Task; captureId: string } | null>(null);
   const [showCleared, setShowCleared] = useState(false);
-  const [lastCleared, setLastCleared] = useState<Capture | null>(null);
+  const toast = useToast();
+  useBackLayer(editing !== null, () => setEditing(null));
   /**
    * The note just filed, kept up to date as tags are added here, so it can be
-   * offered tags without adding a step - and so "Put it back" knows which
-   * note to take away again.
+   * offered tags without adding a step to filing - and so Undo knows which
+   * note to take away again, as it now is.
    */
   const [justFiled, setJustFiled] = useState<Note | null>(null);
-  /** A quiet line saying what "Put it back" did with the note, when it kept it. */
-  const [undoNotice, setUndoNotice] = useState('');
+  const filedRef = useRef<Note | null>(null);
   const model = useTagModel();
   const suggestions = useSuggestions(
     model,
@@ -35,49 +40,62 @@ export default function Inbox({ settings }: { settings: Settings }) {
   const open = all.filter((c) => !c.clearedAt);
   const cleared = all.filter((c) => c.clearedAt);
 
-  const toTask = (capture: Capture) => {
-    setEditing({ task: blankTask({ title: capture.text }), captureId: capture.id });
+  const filed = (note: Note | null) => {
+    filedRef.current = note;
+    setJustFiled(note);
   };
 
-  const putBack = async () => {
-    if (!lastCleared) return;
-    await unclearCapture(lastCleared.id);
-    // A capture kept as a note comes back without its note, so filing it again
-    // does not leave two. A note changed since is left alone.
-    if (justFiled && !(await undoFiling(justFiled))) {
-      setUndoNotice('The note made from it is still in Notes, because it has been changed since.');
-    } else {
-      setUndoNotice('');
-    }
-    setLastCleared(null);
-    setJustFiled(null);
+  const toTask = (capture: Capture) => {
+    // First line is the title; anything after it becomes the notes.
+    setEditing({ task: blankTask(splitCapture(capture.text)), captureId: capture.id });
   };
 
   const toNote = async (capture: Capture) => {
     const firstLine = capture.text.split('\n')[0].slice(0, 80);
-    // Filing stays a single tap. Tags are offered afterwards, on the panel
-    // below, so nothing is added to the fastest path through this screen.
+    // Filing stays a single tap. Tags are offered afterwards, below, so nothing
+    // is added to the fastest path through this screen.
     const saved = await saveNote(blankNote({ title: firstLine, body: capture.text }));
     await clearCapture(capture.id);
-    setLastCleared(capture);
-    setJustFiled(saved);
-    setUndoNotice('');
+    filed(saved);
+    toast("Kept as a note — it's in Notes.", {
+      label: 'Undo',
+      run: async () => {
+        await unclearCapture(capture.id);
+        // The note goes too, so filing it again does not leave two - unless it
+        // has been changed since, in which case it is yours and it stays.
+        const current = filedRef.current?.id === saved.id ? filedRef.current : saved;
+        const removed = await undoFiling(current);
+        filed(null);
+        toast(
+          removed
+            ? 'Back in your inbox.'
+            : 'Back in your inbox. The note made from it is still in Notes, because it has been changed since.',
+        );
+      },
+    });
   };
 
   const dismiss = async (capture: Capture) => {
     await clearCapture(capture.id);
-    setLastCleared(capture);
-    setJustFiled(null);
-    setUndoNotice('');
+    filed(null);
+    toast('Moved to "Already dealt with".', {
+      label: 'Undo',
+      run: async () => {
+        await unclearCapture(capture.id);
+        toast('Back in your inbox.');
+      },
+    });
   };
 
   if (editing) {
     return (
       <TaskEditor
         task={editing.task}
-        onSaved={async () => {
+        onSaved={async (saved) => {
           await clearCapture(editing.captureId);
           setEditing(null);
+          filed(null);
+          toast(savedTaskWhere(saved));
         }}
         onCancel={() => setEditing(null)}
       />
@@ -96,15 +114,8 @@ export default function Inbox({ settings }: { settings: Settings }) {
           <div className="stack-sm">
             {open.map((capture) => (
               <div key={capture.id} className="card card-tight stack-sm">
-                <p style={{ whiteSpace: 'pre-wrap' }}>{capture.text}</p>
-                <p className="faint">
-                  Written {new Date(capture.createdAt).toLocaleString(undefined, {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </p>
+                <p className="pre-wrap">{capture.text}</p>
+                <p className="faint">Written {shortDateTime(capture.createdAt)}</p>
                 <div className="btn-row">
                   <button type="button" className="btn btn-sm" onClick={() => toTask(capture)}>
                     Make it a task
@@ -122,44 +133,37 @@ export default function Inbox({ settings }: { settings: Settings }) {
         )}
       </Section>
 
-      {lastCleared && (
+      {/* Tags for the note just filed, offered after the fact so filing stays one tap. */}
+      {settings.suggestTags && justFiled && suggestions.length > 0 && (
         <div className="card card-quiet stack-sm">
-          <div className="spread">
-            <span className="small">Cleared "{lastCleared.text.slice(0, 40)}".</span>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => void putBack()}
-            >
-              Put it back
-            </button>
-          </div>
-          {settings.suggestTags && justFiled && (
-            <TagSuggestions
-              suggestions={suggestions}
-              onAdd={async (tag) => {
-                const next = await saveNote({ ...justFiled, tags: [...justFiled.tags, tag] });
-                setJustFiled(next);
-              }}
-            />
-          )}
+          <p className="small">Filed "{justFiled.title}" in Notes.</p>
+          <TagSuggestions
+            suggestions={suggestions}
+            onAdd={async (tag) => {
+              const note = filedRef.current ?? justFiled;
+              filed(await saveNote({ ...note, tags: [...note.tags, tag] }));
+            }}
+          />
         </div>
       )}
 
-      {undoNotice && <p className="faint">{undoNotice}</p>}
-
       {cleared.length > 0 && (
         <Section title="Already dealt with">
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setShowCleared((v) => !v)}>
-            {showCleared ? 'Hide' : 'Show'} {cleared.length} cleared
-          </button>
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn btn-quiet btn-sm"
+              aria-expanded={showCleared}
+              onClick={() => setShowCleared((v) => !v)}
+            >
+              {showCleared ? 'Hide' : 'Show'} {cleared.length} cleared
+            </button>
+          </div>
           {showCleared && (
             <div className="stack-sm">
               {cleared.slice(0, 50).map((capture) => (
                 <div key={capture.id} className="item">
-                  <span className="grow muted small" style={{ whiteSpace: 'pre-wrap' }}>
-                    {capture.text}
-                  </span>
+                  <span className="grow muted small pre-wrap">{capture.text}</span>
                   <button type="button" className="btn btn-quiet btn-sm" onClick={() => void unclearCapture(capture.id)}>
                     Put it back
                   </button>

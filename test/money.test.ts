@@ -4,6 +4,7 @@ import {
   isOngoing,
   byCategoryYearly,
   deductionsByLabel,
+  formatDeduction,
   formatMoney,
   grossYearlyMinor,
   itemisedDeductionsMinor,
@@ -87,7 +88,7 @@ describe('category breakdown', () => {
     expect(result).toEqual([
       { category: 'Bills', minor: 24_000 },
       { category: 'Fun', minor: 18_000 },
-      { category: 'Uncategorised', minor: 3_600 },
+      { category: 'Uncategorized', minor: 3_600 },
     ]);
   });
 });
@@ -245,7 +246,7 @@ describe('deductions', () => {
   it('groups by label across sources, biggest first, and annualises', () => {
     const rows = deductionsByLabel([withLines]);
     expect(rows[0]).toEqual({ label: 'Federal income tax', minor: 32_000 * 24 });
-    expect(rows.map((r) => r.label)).toContain('Not itemised');
+    expect(rows.map((r) => r.label)).toContain('Not itemized');
     for (let i = 1; i < rows.length; i++) expect(rows[i - 1].minor).toBeGreaterThanOrEqual(rows[i].minor);
   });
 
@@ -287,5 +288,30 @@ describe('isActive and isOngoing', () => {
   it('leaves anything marked cancelled out of the monthly and yearly averages', () => {
     expect(isOngoing(sub({ endedOn: '2026-09-23' }))).toBe(false);
     expect(totalMonthlyMinor([sub({ amountMinor: 1_000 }), sub({ amountMinor: 1_000, endedOn: '2099-01-01' })])).toBe(1_000);
+  });
+});
+
+describe('signs on money', () => {
+  it('writes a negative with a true minus sign, not a hyphen', () => {
+    expect(formatMoney(-4799, 'USD')).toBe('−$47.99');
+    expect(formatMoney(-4799, 'USD')).not.toContain('-');
+  });
+
+  it('leaves positives alone', () => {
+    expect(formatMoney(185000, 'USD')).toBe('$1,850.00');
+  });
+
+  it('writes an amount being taken away with the same minus, and no space', () => {
+    expect(formatDeduction(3000, 'USD')).toBe('−$30.00');
+    // Already negative or positive, it is the size that is being taken away.
+    expect(formatDeduction(-3000, 'USD')).toBe('−$30.00');
+  });
+
+  it('does not put a minus in front of nothing', () => {
+    expect(formatDeduction(0, 'USD')).toBe('$0.00');
+  });
+
+  it('keeps the minus when the currency is unknown', () => {
+    expect(formatMoney(-1299, 'NOTACURRENCY')).toBe('−12.99 NOTACURRENCY');
   });
 });

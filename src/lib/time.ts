@@ -60,15 +60,39 @@ export function timeKeyOf(ms: number): TimeKey {
 }
 
 /**
- * "9:00 AM". Written out by hand rather than left to the phone's locale, so a
- * reminder reads the same on the lock screen as it does in the app, and so the
- * tests can pin it down.
+ * "9:30 AM" from a stored "09:30". Written out by hand rather than left to the
+ * phone's locale, so a time reads the same on the lock screen, in a row and in
+ * a toast, and so the tests can pin it down. US form: 12-hour, no leading zero.
  */
-export function clockLabel(ms: number): string {
-  const d = new Date(ms);
-  const h = d.getHours();
+export function timeLabel(key: TimeKey): string {
+  const [h, m] = key.split(':').map(Number);
   const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+  return `${hour12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/** The same, for a moment in time. */
+export function clockLabel(ms: number): string {
+  return timeLabel(timeKeyOf(ms));
+}
+
+export const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+export const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * "Sep 30", or "Jan 6, 2027" when it is not this year. The year is only said
+ * when it adds something: on a phone, "Sep 30, 2026" is five characters of
+ * noise on every row for eleven months of the year.
+ */
+export function shortDate(key: DateKey, today: DateKey = todayKey()): string {
+  const d = fromDateKey(key);
+  const label = `${SHORT_MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return d.getFullYear() === fromDateKey(today).getFullYear() ? label : `${label}, ${d.getFullYear()}`;
+}
+
+/** "Sep 23, 9:30 AM" - when something was written, for a quiet line under it. */
+export function shortDateTime(ms: number, now: number = Date.now()): string {
+  const d = new Date(ms);
+  return `${shortDate(toDateKey(d), todayKey(new Date(now)))}, ${clockLabel(ms)}`;
 }
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -86,9 +110,9 @@ export function describeDate(key: DateKey, today: DateKey = todayKey()): string 
   const weekday = WEEKDAYS[d.getDay()];
   if (diff > 1 && diff < 7) return `${weekday}, in ${diff} days`;
   if (diff < -1 && diff > -7) return `${weekday}, ${Math.abs(diff)} days ago`;
-  const label = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-  if (diff > 0) return `${label} (in ${diff} days)`;
-  return `${label} (${Math.abs(diff)} days ago)`;
+  const label = `${SHORT_WEEKDAYS[d.getDay()]}, ${shortDate(key, today)}`;
+  if (diff > 0) return `${label} · in ${diff} days`;
+  return `${label} · ${Math.abs(diff)} days ago`;
 }
 
 export function describeDuration(min: number): string {
