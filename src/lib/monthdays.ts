@@ -103,14 +103,16 @@ function ordinal(n: number): string {
 }
 
 /**
- * "the 1st and the 15th". A day that always clamps is called the last day,
- * because that is what it means to the person reading it - nobody thinks of
- * their February payday as "the 31st".
+ * "the 1st and the 15th". The 31st is called the last day, because that is
+ * exactly what it means - it clamps in every month without one, and nobody
+ * thinks of their February payday as "the 31st". The 29th and 30th are not:
+ * they are the last day only some of the time, and a charge on the 30th does
+ * not move to the 31st in March.
  */
 export function describeDays(days: number[]): string {
   const names = [...days]
     .sort((a, b) => a - b)
-    .map((d) => (d >= 29 ? 'the last day' : `the ${ordinal(d)}`));
+    .map((d) => (d >= 31 ? 'the last day' : `the ${ordinal(d)}`));
   if (names.length === 0) return '';
   if (names.length === 1) return names[0];
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;

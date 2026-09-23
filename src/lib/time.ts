@@ -59,6 +59,18 @@ export function timeKeyOf(ms: number): TimeKey {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/**
+ * "9:00 AM". Written out by hand rather than left to the phone's locale, so a
+ * reminder reads the same on the lock screen as it does in the app, and so the
+ * tests can pin it down.
+ */
+export function clockLabel(ms: number): string {
+  const d = new Date(ms);
+  const h = d.getHours();
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /**

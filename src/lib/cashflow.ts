@@ -1,7 +1,7 @@
 import type { DateKey, IncomeSource, Subscription } from '../types';
-import { isActive } from './money';
+import { isActive, netMonthlyMinor } from './money';
 import { dayInMonth } from './monthdays';
-import { isActiveIncome, paydaysBetween } from './pay';
+import { isActiveIncome, isIntervalFrequency, nextPayday, paydaysBetween } from './pay';
 import { billingDatesBetween } from './recurrence';
 import { addDays, daysBetween, fromDateKey, todayKey } from './time';
 
@@ -35,7 +35,9 @@ export interface BillDue {
 export function billsBetween(subs: Subscription[], from: DateKey, to: DateKey): BillDue[] {
   const out: BillDue[] = [];
   for (const sub of subs) {
-    if (!isActive(sub)) continue;
+    // A charge on or before the end date still counts; billingDatesBetween
+    // stops at the end date by itself.
+    if (!isActive(sub, from)) continue;
     for (const date of billingDatesBetween(sub, from, to)) {
       out.push({ sub, date, amountMinor: sub.amountMinor });
     }
@@ -87,7 +89,8 @@ interface Payday {
 export function allPaydays(incomes: IncomeSource[], from: DateKey, to: DateKey): Payday[] {
   const byDate = new Map<DateKey, Payday>();
   for (const source of incomes) {
-    if (!isActiveIncome(source)) continue;
+    // No "ended" check here: paydaysBetween already keeps a final payday on or
+    // before the end date and nothing after it, the same rule subscriptions use.
     for (const date of paydaysBetween(source, from, to)) {
       const at = byDate.get(date) ?? { date, incomeMinor: 0, paidBy: [] };
       at.incomeMinor += source.netMinor;
@@ -216,5 +219,56 @@ export function stillToCome(
       period && periodBills
         ? { minor: billsTotalMinor(periodBills), count: periodBills.length, until: period.end }
         : null,
+  };
+}
+
+export type NoPeriodReason =
+  | { kind: 'noIncome' }
+  | { kind: 'needsRecentPayday'; source: IncomeSource }
+  | { kind: 'unknown' };
+
+/**
+ * Why no pay period could be placed, so the screen can say what would fix it
+ * rather than asking for income that is already there.
+ *
+ * An every-week or every-2-weeks job counts its paydays from one that has
+ * already happened. Without one - or with only a future one - there is
+ * nothing to count back from, so the period you are in cannot be known.
+ */
+export function whyNoPayPeriod(incomes: IncomeSource[], from: DateKey = todayKey()): NoPeriodReason {
+  const running = incomes.filter(isActiveIncome);
+  if (running.length === 0) return { kind: 'noIncome' };
+  const unplaced = running.find(
+    (s) => isIntervalFrequency(s.frequency) && (!s.firstPaid || daysBetween(s.firstPaid, from) < 0),
+  );
+  return unplaced ? { kind: 'needsRecentPayday', source: unplaced } : { kind: 'unknown' };
+}
+
+export interface PaydaysFrom {
+  /** Jobs paid today. */
+  today: { source: IncomeSource; date: DateKey }[];
+  /** Every other job's next payday, soonest first. */
+  soon: { source: IncomeSource; date: DateKey }[];
+  /** Take-home a month across all of them - today's included. */
+  monthlyMinor: number;
+}
+
+/**
+ * The next payday of each running job, for Today.
+ *
+ * The monthly figure covers every job with a payday, including one paid
+ * today. It used to be summed over the "still to come" list only, so on a
+ * payday the job that had just paid dropped out of "about $X a month".
+ */
+export function paydaysFrom(incomes: IncomeSource[], today: DateKey = todayKey()): PaydaysFrom {
+  const all = incomes
+    .filter(isActiveIncome)
+    .map((source) => ({ source, date: nextPayday(source, today) }))
+    .filter((p): p is { source: IncomeSource; date: DateKey } => p.date !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    today: all.filter((p) => p.date === today),
+    soon: all.filter((p) => p.date !== today),
+    monthlyMinor: all.reduce((sum, p) => sum + netMonthlyMinor(p.source), 0),
   };
 }

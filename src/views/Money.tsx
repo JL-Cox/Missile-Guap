@@ -6,6 +6,7 @@ import {
   byCategoryYearly,
   deductionsByLabel,
   formatMoney,
+  isActive,
   leftoverMonthlyMinor,
   netMonthlyMinor,
   totalGrossYearlyMinor,
@@ -25,7 +26,7 @@ import {
   nextBilling,
 } from '../lib/recurrence';
 import { normaliseDays } from '../lib/monthdays';
-import { outlook, stillToCome } from '../lib/cashflow';
+import { outlook, stillToCome, whyNoPayPeriod } from '../lib/cashflow';
 import { upcomingBills } from '../lib/agenda';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
@@ -37,8 +38,8 @@ import {
   cycleUnit,
   CYCLE_PRESETS,
   findCyclePreset,
-  findPreset,
   matchPresets,
+  whenNameTyped,
   type ServicePreset,
 } from '../lib/subscriptions';
 import { addDays, describeDate, todayKey } from '../lib/time';
@@ -59,6 +60,7 @@ export default function Money({ settings }: { settings: Settings }) {
   const [editingIncome, setEditingIncome] = useState<IncomeSource | null>(null);
   const [justSaved, setJustSaved] = useState<Subscription | null>(null);
   const [showEnded, setShowEnded] = useState(false);
+  const [showEndedIncome, setShowEndedIncome] = useState(false);
   const today = todayKey();
 
   const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], [] as Subscription[]) ?? [];
@@ -72,20 +74,28 @@ export default function Money({ settings }: { settings: Settings }) {
   };
 
   if (editingIncome) {
+    // Delete only means something for an income that has been saved.
+    const saved = incomes.some((i) => i.id === editingIncome.id);
     return (
       <IncomeEditor
         source={editingIncome}
+        blurAmounts={settings.blurAmounts}
         onSaved={() => setEditingIncome(null)}
         onCancel={() => setEditingIncome(null)}
-        onDelete={async (s) => {
-          await db.incomes.delete(s.id);
-          setEditingIncome(null);
-        }}
+        onDelete={
+          saved
+            ? async (s) => {
+                await db.incomes.delete(s.id);
+                setEditingIncome(null);
+              }
+            : undefined
+        }
       />
     );
   }
 
   if (editing) {
+    const isSaved = subs.some((s) => s.id === editing.id);
     return (
       <SubscriptionEditor
         sub={editing}
@@ -95,10 +105,14 @@ export default function Money({ settings }: { settings: Settings }) {
           setJustSaved(saved);
         }}
         onCancel={() => setEditing(null)}
-        onDelete={async (s) => {
-          await db.subscriptions.delete(s.id);
-          setEditing(null);
-        }}
+        onDelete={
+          isSaved
+            ? async (s) => {
+                await db.subscriptions.delete(s.id);
+                setEditing(null);
+              }
+            : undefined
+        }
       />
     );
   }
@@ -125,6 +139,7 @@ export default function Money({ settings }: { settings: Settings }) {
   const soon = upcomingBills(subs, settings.lookaheadDays, today);
 
   const activeIncomes = incomes.filter(isActiveIncome);
+  const endedIncomes = incomes.filter((src) => !isActiveIncome(src));
   const netMonthly = totalNetMonthlyMinor(incomes);
   const leftover = leftoverMonthlyMinor(incomes, subs);
   const grossYearly = totalGrossYearlyMinor(incomes);
@@ -135,6 +150,7 @@ export default function Money({ settings }: { settings: Settings }) {
   // Real dates rather than monthly averages: what is still going to leave the
   // account before more money arrives, which is the question an average hides.
   const pending = stillToCome(incomes, subs, today);
+  const noPeriod = pending.period ? null : whyNoPayPeriod(incomes, today);
   const cheques = outlook(incomes, subs, today, 4);
 
   return (
@@ -166,7 +182,9 @@ export default function Money({ settings }: { settings: Settings }) {
                   <div className="row-tight faint">
                     <span>{describeFrequency(src)}</span>
                     {payday && <span>Next: {describeDate(payday, today)}</span>}
-                    <span>{formatMoney(netMonthlyMinor(src), src.currency)} a month</span>
+                    <span>
+                      <Amount text={`${formatMoney(netMonthlyMinor(src), src.currency)} a month`} blur={settings.blurAmounts} />
+                    </span>
                   </div>
                   <div className="btn-row">
                     <button type="button" className="btn btn-quiet btn-sm" onClick={() => setEditingIncome(src)}>
@@ -180,7 +198,7 @@ export default function Money({ settings }: { settings: Settings }) {
         )}
       </Section>
 
-      {subs.some((s) => !s.endedOn) && (
+      {subs.some((s) => isActive(s, today)) && (
         <Section title="Still to come out">
           <div className="card stack-sm">
             <div className="spread">
@@ -209,7 +227,11 @@ export default function Money({ settings }: { settings: Settings }) {
               </div>
             ) : (
               <p className="faint">
-                Add your income above and this will also show what is due before your next payday.
+                {noPeriod?.kind === 'needsRecentPayday'
+                  ? `Add a recent payday to ${noPeriod.source.name} so paydays can be worked out. Then this will also show what is due before your next payday.`
+                  : noPeriod?.kind === 'noIncome'
+                    ? 'Add your income above and this will also show what is due before your next payday.'
+                    : "Paydays can't be worked out from the income above yet, so what is due before your next payday is left out."}
               </p>
             )}
             <p className="faint">
@@ -250,7 +272,8 @@ export default function Money({ settings }: { settings: Settings }) {
               </div>
               {c.current && c.remainingMinor !== c.billsMinor && (
                 <p className="faint">
-                  {formatMoney(c.remainingMinor, settings.currency)} of that has not gone out yet.
+                  <Amount text={formatMoney(c.remainingMinor, settings.currency)} blur={settings.blurAmounts} /> of
+                  that has not gone out yet.
                 </p>
               )}
               {c.leftoverMinor < 0 && (
@@ -418,11 +441,46 @@ export default function Money({ settings }: { settings: Settings }) {
             </div>
           )}
           <p className="faint">Kept so you can see what you used to pay for, and restart one if you need it back.</p>
+          <p className="faint">{CALENDAR_ENTRY_STAYS}</p>
+        </Section>
+      )}
+
+      {endedIncomes.length > 0 && (
+        // The same as Cancelled, for income: kept rather than deleted, and
+        // reachable, so "It's current again" is one tap away if a job comes back.
+        <Section title="Ended">
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setShowEndedIncome((v) => !v)}>
+            {showEndedIncome ? 'Hide' : 'Show'} {endedIncomes.length} ended
+          </button>
+          {showEndedIncome && (
+            <div className="stack-sm">
+              {endedIncomes.map((src) => (
+                <div key={src.id} className="item">
+                  <div className="grow">
+                    <div className="item-title">{src.name}</div>
+                    <div className="faint">Ended {describeDate(src.endedOn!, today)}</div>
+                  </div>
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => setEditingIncome(src)}>
+                    Edit
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="faint">Kept so the history is there, and so you can bring one back if it starts again.</p>
         </Section>
       )}
     </>
   );
 }
+
+/**
+ * Said wherever a subscription is marked cancelled. A calendar entry added
+ * from here lives in the phone's calendar, which Steady cannot reach, so it
+ * keeps repeating until it is deleted there.
+ */
+const CALENDAR_ENTRY_STAYS =
+  "If you put this in your phone's calendar, delete the repeating entry there - Steady can't reach your calendar.";
 
 /**
  * The screen straight after saving. It exists because "$12.99 a month" and
@@ -478,7 +536,8 @@ function SavedConfirmation({
       </div>
 
       <AddToCalendar
-        build={() => calendarForSubscription(sub, formatMoney(sub.amountMinor, sub.currency))}
+        build={(options) => calendarForSubscription(sub, formatMoney(sub.amountMinor, sub.currency), Date.now(), options)}
+        kind="subscription"
         filename={icsFilename(sub.name)}
         className="btn btn-primary btn-wide"
         nothingToAdd="This one is cancelled, so there is nothing to put in a calendar."
@@ -570,7 +629,10 @@ function SubscriptionCard({
           )}
           {sub.notes.trim() && <p className="note-body">{sub.notes}</p>}
           <AddToCalendar
-            build={() => calendarForSubscription(sub, formatMoney(sub.amountMinor, sub.currency))}
+            build={(options) =>
+              calendarForSubscription(sub, formatMoney(sub.amountMinor, sub.currency), Date.now(), options)
+            }
+            kind="subscription"
             filename={icsFilename(sub.name)}
             nothingToAdd="This one is cancelled, so there is nothing to put in a calendar."
           />
@@ -585,6 +647,7 @@ function SubscriptionCard({
               onConfirm={() => void saveSubscription({ ...sub, endedOn: todayKey() })}
             />
           </div>
+          <p className="faint">{CALENDAR_ENTRY_STAYS}</p>
         </div>
       )}
     </div>
@@ -602,7 +665,8 @@ function SubscriptionEditor({
   knownCategories: string[];
   onSaved: (sub: Subscription) => void;
   onCancel: () => void;
-  onDelete: (sub: Subscription) => void;
+  /** Absent for a subscription that has not been saved yet: there is nothing to delete. */
+  onDelete?: (sub: Subscription) => void;
 }) {
   const [draft, setDraft] = useState(sub);
   const [amountText, setAmountText] = useState(sub.amountMinor ? (sub.amountMinor / 100).toFixed(2) : '');
@@ -649,12 +713,11 @@ function SubscriptionEditor({
       every: draft.cycle === 'monthly' ? 1 : draft.every,
     });
 
-  /** Typing the full name of a known service counts as picking it. */
-  const onNameChange = (name: string) => {
-    const preset = findPreset(name);
-    if (preset) return applyPreset(preset);
-    patch({ name });
-  };
+  /**
+   * Typing keeps exactly what you typed. A known name only fills in what you
+   * have not chosen yet - see whenNameTyped.
+   */
+  const onNameChange = (name: string) => patch(whenNameTyped({ ...draft, every: everyValue }, name));
 
   const today = todayKey();
 
@@ -715,6 +778,7 @@ function SubscriptionEditor({
         <div className="field">
           <label htmlFor="sub-amount">How much, each time</label>
           <input
+            autoComplete="off"
             id="sub-amount"
             type="text"
             inputMode="decimal"
@@ -729,6 +793,7 @@ function SubscriptionEditor({
         <div className="field">
           <label htmlFor="sub-currency">Currency</label>
           <input
+            autoComplete="off"
             id="sub-currency"
             type="text"
             value={draft.currency}
@@ -791,6 +856,7 @@ function SubscriptionEditor({
             ))}
           </div>
           <input
+            autoComplete="off"
             id="sub-days"
             type="text"
             inputMode="numeric"
@@ -835,6 +901,7 @@ function SubscriptionEditor({
           </button>
         </div>
         <input
+          autoComplete="off"
           id="sub-first"
           type="date"
           value={draft.firstBilled}
@@ -879,6 +946,7 @@ function SubscriptionEditor({
         </div>
         {customCategory && (
           <input
+            autoComplete="off"
             type="text"
             aria-label="Your own category"
             value={draft.category ?? ''}
@@ -916,6 +984,7 @@ function SubscriptionEditor({
           <div className="field">
             <label htmlFor="sub-cancel">How do you cancel it?</label>
             <textarea
+              autoComplete="off"
               id="sub-cancel"
               value={draft.cancelHow}
               onChange={(e) => patch({ cancelHow: e.target.value })}
@@ -931,6 +1000,7 @@ function SubscriptionEditor({
             <div className="field">
               <label htmlFor="sub-every">Bill every how many {cycleUnit(draft.cycle)}?</label>
               <input
+                autoComplete="off"
                 id="sub-every"
                 type="number"
                 min={1}
@@ -947,6 +1017,7 @@ function SubscriptionEditor({
           <div className="field">
             <label htmlFor="sub-notes">Notes</label>
             <textarea
+              autoComplete="off"
               id="sub-notes"
               value={draft.notes}
               onChange={(e) => patch({ notes: e.target.value })}
@@ -958,7 +1029,9 @@ function SubscriptionEditor({
 
       {draft.endedOn && (
         <div className="card card-quiet spread">
-          <span className="small">Marked as cancelled on {describeDate(draft.endedOn)}.</span>
+          <span className="small">
+            Marked as cancelled on {describeDate(draft.endedOn)}. {CALENDAR_ENTRY_STAYS}
+          </span>
           <button type="button" className="btn btn-sm" onClick={() => patch({ endedOn: undefined })}>
             It's active again
           </button>
@@ -974,12 +1047,14 @@ function SubscriptionEditor({
             Cancel
           </button>
         </div>
-        <ConfirmButton
-          label="Delete"
-          confirmLabel="Yes, delete it"
-          className="btn btn-quiet btn-sm"
-          onConfirm={() => onDelete(draft)}
-        />
+        {onDelete && (
+          <ConfirmButton
+            label="Delete"
+            confirmLabel="Yes, delete it"
+            className="btn btn-quiet btn-sm"
+            onConfirm={() => onDelete(draft)}
+          />
+        )}
       </div>
     </form>
   );

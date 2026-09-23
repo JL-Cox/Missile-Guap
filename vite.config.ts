@@ -118,6 +118,10 @@ export default defineConfig({
   plugins: [react(), relaxCspInDev(), rewriteManifest(), precacheServiceWorker()],
   build: {
     target: 'es2020',
+    // Vite's preload helper polyfill carries a fetch() call. The page's CSP
+    // would block it anyway, but the app bundle should contain no network
+    // code at all, so tools/privacy-check.mjs can refuse any that appears.
+    modulePreload: { polyfill: false },
     // Keep the output auditable for anyone who wants to check the claims above.
     sourcemap: true,
   },

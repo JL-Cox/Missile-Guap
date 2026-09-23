@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isActive,
+  isOngoing,
   byCategoryYearly,
   deductionsByLabel,
   formatMoney,
@@ -269,5 +271,21 @@ describe('income against expenses', () => {
   it('is just the negative of expenses when there is no income yet', () => {
     const subs = [sub({ amountMinor: 1_000, cycle: 'monthly' })];
     expect(leftoverMonthlyMinor([], subs)).toBe(-totalMonthlyMinor(subs));
+  });
+});
+
+
+describe('isActive and isOngoing', () => {
+  it('counts a subscription as able to charge up to and including its end date', () => {
+    expect(isActive(sub({ endedOn: '2026-09-23' }), '2026-09-23')).toBe(true);
+    expect(isActive(sub({ endedOn: '2026-09-23' }), '2026-09-24')).toBe(false);
+    expect(isActive(sub(), '2030-01-01')).toBe(true);
+  });
+
+  // Averages are about what a subscription costs from here on, and a
+  // cancelled one costs nothing from here on.
+  it('leaves anything marked cancelled out of the monthly and yearly averages', () => {
+    expect(isOngoing(sub({ endedOn: '2026-09-23' }))).toBe(false);
+    expect(totalMonthlyMinor([sub({ amountMinor: 1_000 }), sub({ amountMinor: 1_000, endedOn: '2099-01-01' })])).toBe(1_000);
   });
 });

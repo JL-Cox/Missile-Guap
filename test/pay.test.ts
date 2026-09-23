@@ -380,3 +380,38 @@ describe('income saved before holidays existed', () => {
     expect(nextPayday(legacy, '2027-12-20')).toBe('2027-12-30');
   });
 });
+
+/*
+  A monthly job is paid once a month. The income editor used to pre-fill
+  "15, 31" and keep both when you picked Monthly, so the Money screen showed
+  two paydays a month while the totals counted twelve a year - two numbers on
+  one screen that could not both be true.
+*/
+describe('one payday a month means one', () => {
+  const year = (partial: Partial<IncomeSource>) =>
+    paydaysBetween(income({ firstPaid: undefined, ...partial }), '2026-01-01', '2026-12-31');
+
+  it('gives a monthly job 12 paydays a year, matching what the totals count', () => {
+    for (const days of [[1], [15], [31], [15, 31], [1, 15, 28]]) {
+      expect(year({ frequency: 'monthly', daysOfMonth: days })).toHaveLength(PERIODS_PER_YEAR.monthly);
+    }
+  });
+
+  it('keeps the first day entered and ignores the rest', () => {
+    expect(year({ frequency: 'monthly', daysOfMonth: [15, 31] })[0]).toBe('2026-01-15');
+    expect(year({ frequency: 'monthly', daysOfMonth: [28, 5] })[0]).toBe('2026-01-28');
+  });
+
+  it('falls back to the 1st when no day is given', () => {
+    expect(year({ frequency: 'monthly', daysOfMonth: [] })[0]).toBe('2026-01-01');
+  });
+
+  it('gives a twice-a-month job 24, using its first two days', () => {
+    expect(year({ frequency: 'semimonthly', daysOfMonth: [15, 31] })).toHaveLength(PERIODS_PER_YEAR.semimonthly);
+    expect(year({ frequency: 'semimonthly', daysOfMonth: [1, 15, 28] })).toHaveLength(PERIODS_PER_YEAR.semimonthly);
+  });
+
+  it('describes a monthly job by its one day', () => {
+    expect(describeFrequency(income({ frequency: 'monthly', daysOfMonth: [15, 31] }))).toBe('monthly, on the 15th');
+  });
+});

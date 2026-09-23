@@ -2,9 +2,8 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, blankTask } from '../db';
 import type { IncomeSource, Settings, Task } from '../types';
-import { isActiveIncome, nextPayday } from '../lib/pay';
-import { netMonthlyMinor } from '../lib/money';
 import { agendaFor, stillOpen, unscheduled, upcomingBills } from '../lib/agenda';
+import { paydaysFrom } from '../lib/cashflow';
 import { sortTasks } from '../lib/priority';
 import { describeDate, describeDuration, todayKey } from '../lib/time';
 import { formatMoney } from '../lib/money';
@@ -38,13 +37,10 @@ export default function Today({ settings }: { settings: Settings }) {
   const bills = upcomingBills(subs, settings.lookaheadDays, today).filter((b) => b.inDays > 0);
 
   // "Can this wait until I get paid?" is only answerable if payday is on screen.
-  const paydays = incomes
-    .filter(isActiveIncome)
-    .map((src) => ({ src, date: nextPayday(src, today) }))
-    .filter((p): p is { src: IncomeSource; date: string } => p.date !== null)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const paidToday = paydays.filter((p) => p.date === today);
-  const paidSoon = paydays.filter((p) => p.date !== today);
+  // The monthly figure counts every job, including one paid today.
+  const { today: paidToday, soon: paidSoon, monthlyMinor: monthlyFromAll } = paydaysFrom(incomes, today);
+  /** How many upcoming charges fit before the list says "more on the Money screen". */
+  const BILLS_SHOWN = 6;
 
   if (editing) {
     return (
@@ -130,7 +126,7 @@ export default function Today({ settings }: { settings: Settings }) {
       {paidToday.length > 0 && (
         <Section title="Payday">
           <div className="stack-sm">
-            {paidToday.map(({ src }) => (
+            {paidToday.map(({ source: src }) => (
               <div key={src.id} className="item">
                 <span className="pill">Today</span>
                 <div className="grow">
@@ -147,7 +143,7 @@ export default function Today({ settings }: { settings: Settings }) {
       {bills.length > 0 && (
         <Section title={`Money leaving soon (next ${settings.lookaheadDays} days)`}>
           <div className="stack-sm">
-            {bills.slice(0, 6).map((b) => (
+            {bills.slice(0, BILLS_SHOWN).map((b) => (
               <div key={`${b.sub.id}-${b.date}`} className="item">
                 <div className="grow">
                   <div className="item-title">{b.sub.name}</div>
@@ -157,13 +153,16 @@ export default function Today({ settings }: { settings: Settings }) {
               </div>
             ))}
           </div>
+          {bills.length > BILLS_SHOWN && (
+            <p className="faint">{bills.length - BILLS_SHOWN} more on the Money screen.</p>
+          )}
         </Section>
       )}
 
       {paidSoon.length > 0 && (
         <Section title="Next payday">
           <div className="stack-sm">
-            {paidSoon.map(({ src, date }) => (
+            {paidSoon.map(({ source: src, date }) => (
               <div key={src.id} className="item">
                 <div className="grow">
                   <div className="item-title">{src.name}</div>
@@ -174,12 +173,9 @@ export default function Today({ settings }: { settings: Settings }) {
             ))}
           </div>
           <p className="faint">
-            Weekends and the holidays you set for each job are already accounted for.
-            {paidSoon.length > 0 &&
-              ` About ${formatMoney(
-                paidSoon.reduce((sum, p) => sum + netMonthlyMinor(p.src), 0),
-                settings.currency,
-              )} a month between them.`}
+            Weekends and the holidays you set for each job are already accounted for. About{' '}
+            <Amount text={formatMoney(monthlyFromAll, settings.currency)} blur={settings.blurAmounts} /> a month
+            between them.
           </p>
         </Section>
       )}

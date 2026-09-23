@@ -56,6 +56,13 @@ export interface Recurrence {
   every: number;
   /** For weekly: 0=Sunday .. 6=Saturday. Empty means "same weekday as the start date". */
   weekdays?: number[];
+  /**
+   * For monthly and yearly: the day of the month it belongs on, 1-31. Kept so a
+   * repeat on the 31st goes 31 Jan -> 28 Feb -> 31 Mar, rather than stepping
+   * from the 28th and staying there. Absent on repeats saved before this
+   * existed; they take it from their date the next time they roll forward.
+   */
+  anchorDay?: number;
 }
 
 export interface Task {
@@ -82,6 +89,12 @@ export interface Task {
   recurrence?: Recurrence;
 
   doneAt?: number;
+  /**
+   * For a repeating task: when it was last ticked off. A repeat rolls forward
+   * rather than staying done, so without this "did I already take it today?"
+   * has no answer on screen. A plain fact - never a streak or a count.
+   */
+  lastDoneAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -251,6 +264,16 @@ export interface CustomTheme {
   accent: AccentId;
 }
 
+/**
+ * What a reminder notification says. It can show on the lock screen and on a
+ * paired watch, so the default says only the title and the time - never notes.
+ *
+ *   titleTime  - "Ring the dentist", "Reminder for 9:00 AM"
+ *   generic    - "Steady", "You have a reminder"
+ *   titleNotes - the title, and the task's notes as the body
+ */
+export type ReminderContent = 'titleTime' | 'generic' | 'titleNotes';
+
 export interface Settings {
   id: 'settings';
   theme: ThemeName;
@@ -279,6 +302,18 @@ export interface Settings {
   suggestTags: boolean;
   /** How the Backlog was last sorted. Remembered so the list opens as you left it. */
   backlogSort: BacklogSort;
+  /**
+   * What a reminder notification shows. Added after release: settings are
+   * merged over DEFAULT_SETTINGS, so a phone that never stored it reads the
+   * default and nothing needs migrating.
+   */
+  reminderContent: ReminderContent;
+  /**
+   * Whether calendar entries carry notes, steps and how-to-cancel text. Off by
+   * default: a calendar is often copied to a Google account, and cancel steps
+   * can hold logins. Titles, dates and amounts go in either way.
+   */
+  calendarIncludeNotes: boolean;
   /** Bumped by backup import so views know to refetch. */
   rev: number;
 }
@@ -294,5 +329,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationsAsked: false,
   suggestTags: true,
   backlogSort: 'priority',
+  reminderContent: 'titleTime',
+  calendarIncludeNotes: false,
   rev: 0,
 };

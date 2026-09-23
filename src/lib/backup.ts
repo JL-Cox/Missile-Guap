@@ -22,24 +22,26 @@ export interface Backup {
   settings: Record<string, unknown>;
 }
 
+/**
+ * The tables a backup carries: everything you wrote. Settings travel
+ * separately, merged rather than replaced. test/data-coverage.test.ts fails if
+ * this ever stops matching the database's own list, so a table added later
+ * cannot be quietly left out of the backup file.
+ */
+export const BACKUP_TABLES = ['captures', 'tasks', 'notes', 'subscriptions', 'incomes'] as const;
+export type BackupTable = (typeof BACKUP_TABLES)[number];
+
 export async function exportBackup(): Promise<Backup> {
-  const [captures, tasks, notes, subscriptions, incomes, settings] = await Promise.all([
-    db.captures.toArray(),
-    db.tasks.toArray(),
-    db.notes.toArray(),
-    db.subscriptions.toArray(),
-    db.incomes.toArray(),
+  const [rows, settings] = await Promise.all([
+    Promise.all(BACKUP_TABLES.map((name) => db.table(name).toArray())),
     getSettings(),
   ]);
+  const tables = Object.fromEntries(BACKUP_TABLES.map((name, i) => [name, rows[i]])) as Pick<Backup, BackupTable>;
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    captures,
-    tasks,
-    notes,
-    subscriptions,
-    incomes,
+    ...tables,
     settings: settings as unknown as Record<string, unknown>,
   };
 }
@@ -77,22 +79,60 @@ export function parseBackup(raw: string): Backup {
 
 export type ImportMode = 'merge' | 'replace';
 
-export interface ImportResult {
-  captures: number;
-  tasks: number;
-  notes: number;
-  subscriptions: number;
-  incomes: number;
+/** How many records of each kind: in a file, on the phone, or just restored. */
+export type RecordCounts = Record<BackupTable, number>;
+export type ImportResult = RecordCounts;
+
+/** What a backup file holds, counted before anything is touched. */
+export function countBackup(backup: Backup): RecordCounts {
+  return Object.fromEntries(
+    BACKUP_TABLES.map((name) => [name, Array.isArray(backup[name]) ? backup[name].length : 0]),
+  ) as RecordCounts;
+}
+
+export function totalRecords(counts: Partial<RecordCounts>): number {
+  return BACKUP_TABLES.reduce((sum, name) => sum + (counts[name] ?? 0), 0);
+}
+
+const NOUNS: Record<BackupTable, [string, string]> = {
+  tasks: ['task', 'tasks'],
+  notes: ['note', 'notes'],
+  subscriptions: ['subscription', 'subscriptions'],
+  incomes: ['income', 'incomes'],
+  captures: ['inbox item', 'inbox items'],
+};
+
+/** The order things are named in, most-used first. */
+const SPOKEN_ORDER: BackupTable[] = ['tasks', 'notes', 'subscriptions', 'incomes', 'captures'];
+
+/**
+ * "42 tasks, 18 notes, 9 subscriptions, 1 income, 3 inbox items".
+ *
+ * Every kind is named, even at zero, so a count never silently skips one - the
+ * old line left income out, which is how nobody noticed "Delete everything"
+ * was leaving it behind.
+ */
+export function describeCounts(counts: Partial<RecordCounts>): string {
+  return SPOKEN_ORDER.map((name) => {
+    const n = counts[name] ?? 0;
+    return `${n} ${NOUNS[name][n === 1 ? 0 : 1]}`;
+  }).join(', ');
+}
+
+/** "21 Sep 2026", in the phone's own date style, or '' if the file has no date. */
+export function backupDate(backup: Backup): string {
+  const when = backup.exportedAt ? new Date(backup.exportedAt) : null;
+  if (!when || Number.isNaN(when.getTime())) return '';
+  return when.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 /**
  * `merge` keeps anything already here and only adds records whose id is new,
  * so restoring an old backup can never silently delete this week's work.
- * `replace` is the deliberate "wipe and restore" and says so in the UI.
+ * `replace` is the deliberate "wipe and restore": the screen shows what the
+ * file holds and asks before this is ever called with it.
  */
 export async function importBackup(backup: Backup, mode: ImportMode): Promise<ImportResult> {
-  const result: ImportResult = { captures: 0, tasks: 0, notes: 0, subscriptions: 0, incomes: 0 };
-
   /** Restores one table and reports how many rows it actually wrote. */
   async function restore<T extends { id: string }>(table: Table<T, string>, rows: unknown[]): Promise<number> {
     if (!Array.isArray(rows)) return 0;
@@ -107,22 +147,14 @@ export async function importBackup(backup: Backup, mode: ImportMode): Promise<Im
     return fresh.length;
   }
 
-  await db.transaction('rw', [db.captures, db.tasks, db.notes, db.subscriptions, db.incomes], async () => {
-    if (mode === 'replace') {
-      await Promise.all([
-        db.captures.clear(),
-        db.tasks.clear(),
-        db.notes.clear(),
-        db.subscriptions.clear(),
-        db.incomes.clear(),
-      ]);
-    }
-    result.captures = await restore(db.captures, backup.captures);
-    result.tasks = await restore(db.tasks, backup.tasks);
-    result.notes = await restore(db.notes, backup.notes);
-    result.subscriptions = await restore(db.subscriptions, backup.subscriptions);
-    result.incomes = await restore(db.incomes, backup.incomes);
+  const tables = BACKUP_TABLES.map((name) => db.table(name) as Table<{ id: string }, string>);
+  const written: number[] = [];
+  await db.transaction('rw', tables, async () => {
+    if (mode === 'replace') await Promise.all(tables.map((t) => t.clear()));
+    // One at a time, so the counts line up with the names.
+    for (let i = 0; i < tables.length; i++) written[i] = await restore(tables[i], backup[BACKUP_TABLES[i]]);
   });
+  const result = Object.fromEntries(BACKUP_TABLES.map((name, i) => [name, written[i] ?? 0])) as ImportResult;
 
   if (mode === 'replace' && backup.settings && typeof backup.settings === 'object') {
     const { id: _ignored, ...rest } = backup.settings as Record<string, unknown>;

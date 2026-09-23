@@ -143,9 +143,18 @@ describe('describeDays', () => {
     expect(describeDays([1, 10, 20])).toBe('the 1st, the 10th and the 20th');
   });
 
-  it('calls a clamped day the last day, because that is what it means', () => {
+  it('calls the 31st the last day, because that is what it means', () => {
     expect(describeDays([15, 31])).toBe('the 15th and the last day');
-    expect(describeDays([29])).toBe('the last day');
+    expect(describeDays([31])).toBe('the last day');
+  });
+
+  // The 29th and 30th are the last day only in February (and, for the 30th,
+  // in the 30-day months). Calling them "the last day" told you a charge on
+  // the 30th would land on the 31st in March, which it does not.
+  it('names the 29th and 30th as themselves', () => {
+    expect(describeDays([29])).toBe('the 29th');
+    expect(describeDays([30])).toBe('the 30th');
+    expect(describeDays([15, 30])).toBe('the 15th and the 30th');
   });
 
   it('gets the awkward ordinals right', () => {

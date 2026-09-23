@@ -1,5 +1,5 @@
 import type { BillingCycle, DateKey, FixedDayCycle, IntervalCycle, Recurrence, Subscription } from '../types';
-import { describeDays, monthsBetween, normaliseDays, nthMonthDay } from './monthdays';
+import { dayInMonth, describeDays, monthsBetween, normaliseDays, nthMonthDay } from './monthdays';
 import { addDays, addMonths, daysBetween, fromDateKey, toDateKey, todayKey } from './time';
 
 const CYCLE_MONTHS: Partial<Record<IntervalCycle, number>> = {
@@ -116,8 +116,23 @@ export function billingDatesBetween(sub: Subscription, from: DateKey, to: DateKe
 }
 
 /**
+ * `addMonths`, then put back on the anchor day where the month allows it.
+ *
+ * Stepping one month at a time from a clamped date loses the day for good:
+ * 31 Jan -> 28 Feb -> 28 Mar. Pinning each step to the anchor gives 31 Mar,
+ * which is what "every month on the 31st" means.
+ */
+function addMonthsAnchored(after: DateKey, months: number, anchorDay?: number): DateKey {
+  const stepped = addMonths(after, months);
+  if (!anchorDay) return stepped;
+  const d = fromDateKey(stepped);
+  return dayInMonth(d.getFullYear(), d.getMonth(), anchorDay);
+}
+
+/**
  * The next date a recurring task should appear on, strictly after `after`.
- * Weekly recurrences may name specific weekdays.
+ * Weekly recurrences may name specific weekdays; monthly and yearly ones stay
+ * on their anchor day when they have one.
  */
 export function nextOccurrence(rec: Recurrence, after: DateKey): DateKey {
   const every = Math.max(1, Math.floor(rec.every));
@@ -135,9 +150,9 @@ export function nextOccurrence(rec: Recurrence, after: DateKey): DateKey {
       return addDays(after, daysToWeekStart + 7 * (every - 1) + days[0]);
     }
     case 'monthly':
-      return addMonths(after, every);
+      return addMonthsAnchored(after, every, rec.anchorDay);
     case 'yearly':
-      return addMonths(after, 12 * every);
+      return addMonthsAnchored(after, 12 * every, rec.anchorDay);
   }
 }
 

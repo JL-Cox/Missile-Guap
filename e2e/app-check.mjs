@@ -70,8 +70,66 @@ const check = (label, actual, expected) => {
 };
 
 const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
-const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 2 });
+const ctx = await browser.newContext({
+  viewport: { width: 412, height: 915 },
+  deviceScaleFactor: 2,
+  acceptDownloads: true,
+});
+const ORIGIN = `http://127.0.0.1:${PORT}`;
+await ctx.grantPermissions(['notifications'], { origin: ORIGIN });
+
+// Every request the page or its service worker makes, for the whole run. The
+// app's promise is that nothing goes anywhere but its own server; this is the
+// run-long record that checks it, alongside the CSP test further down.
+const offOrigin = [];
+ctx.on('request', (req) => {
+  const url = req.url();
+  // blob: and data: URLs are made in the page itself - a download of a file
+  // built on the phone - and never touch the network.
+  if (url.startsWith('blob:') || url.startsWith('data:')) return;
+  if (new URL(url).origin !== ORIGIN) offOrigin.push(url);
+});
+
+// Record what reminder notifications would show, without relying on the
+// headless browser's notification UI. Both routes the app can use are wrapped.
+await ctx.addInitScript(() => {
+  window.__shown = [];
+  const record = (title, options) => window.__shown.push({ title, body: options?.body ?? '' });
+  if (typeof ServiceWorkerRegistration !== 'undefined') {
+    const original = ServiceWorkerRegistration.prototype.showNotification;
+    ServiceWorkerRegistration.prototype.showNotification = function (title, options) {
+      record(title, options);
+      return original.call(this, title, options).catch(() => undefined);
+    };
+  }
+  if (typeof Notification !== 'undefined') {
+    window.Notification = new Proxy(Notification, {
+      construct(target, args) {
+        record(args[0], args[1]);
+        return Reflect.construct(target, args);
+      },
+    });
+  }
+});
+
 const page = await ctx.newPage();
+
+/** Every row of one IndexedDB store, read straight from the database. */
+const readStore = (store) =>
+  page.evaluate(
+    (name) =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('steady');
+        req.onsuccess = () => {
+          const all = req.result.transaction(name, 'readonly').objectStore(name).getAll();
+          all.onsuccess = () => {
+            req.result.close();
+            resolve(all.result);
+          };
+        };
+      }),
+    store,
+  );
 
 const consoleErrors = [];
 page.on('console', (m) => {
@@ -143,6 +201,37 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
 check('does not repeat on the next launch', await page.locator('text=Steady updated').count(), 0);
 
+// --- a reminder notification says nothing private ------------------------
+// A lock screen and a watch can be read by whoever is nearby. Seed a task
+// whose reminder is due now, with something private in its notes, and check
+// what the notification actually says.
+await page.evaluate(
+  (today) =>
+    new Promise((resolve) => {
+      const req = indexedDB.open('steady');
+      req.onsuccess = () => {
+        const tx = req.result.transaction('tasks', 'readwrite');
+        const at = Date.now() - 60_000;
+        tx.objectStore('tasks').put({
+          id: 'e2e-reminder', title: 'Pick up the prescription', notes: 'Card ending 4417, PIN in wallet',
+          steps: [], tags: [], date: today, remindAt: at, createdAt: at, updatedAt: at,
+        });
+        tx.oncomplete = () => {
+          req.result.close();
+          resolve();
+        };
+      };
+    }),
+  todayKey,
+);
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1500);
+const shown = await page.evaluate(() => window.__shown);
+const reminder = shown.find((n) => n.title === 'Pick up the prescription');
+check('a due reminder shows a notification', Boolean(reminder), true);
+check('the notification does not carry the notes', JSON.stringify(shown).includes('4417'), false);
+check('it says the time instead, on a 12-hour clock', /^Reminder for \d{1,2}:\d{2} (AM|PM)$/.test(reminder?.body ?? ''), true);
+
 // --- capture -------------------------------------------------------------
 await page.fill('#capture-input', 'Ring the dentist about the referral');
 await page.click('button:has-text("Save to inbox")');
@@ -164,6 +253,26 @@ await page.click('button:has-text("10 min before")');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
 check('inbox is emptied once the item becomes a task', await page.locator('.nav-count').count(), 0);
+
+// --- a reminder follows the task when its time changes ----------------------
+// "10 min before" 9:30 is 9:20. Moving the task to 11:00 must move the
+// reminder to 10:50, not leave it behind on the old time.
+const dentistRemindAt = async () =>
+  (await readStore('tasks')).find((t) => t.title.startsWith('Ring the dentist'))?.remindAt;
+const localMs = (hh, mm) => page.evaluate(([h, m]) => {
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.getTime();
+}, [hh, mm]);
+check('the reminder is set from the time chosen', await dentistRemindAt(), await localMs(9, 20));
+await page.click('.nav-btn:has-text("Today")');
+await page.click('button.item-title:has-text("Ring the dentist")');
+await page.click('button:text-is("Edit")');
+await page.waitForSelector('#task-time');
+await page.fill('#task-time', '11:00');
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+check('moving the time moves the reminder with it', await dentistRemindAt(), await localMs(10, 50));
 
 // --- a subscription, in one journey -------------------------------------
 await page.click('.nav-btn:has-text("Money")');
@@ -214,12 +323,35 @@ check('the calendar is well formed', icsText.startsWith('BEGIN:VCALENDAR'), true
 check('it holds exactly one event', (icsText.match(/BEGIN:VEVENT/g) ?? []).length, 1);
 check('it repeats monthly', icsText.includes('RRULE:FREQ=MONTHLY;INTERVAL=1'), true);
 check('it carries the 3-day warning', icsText.includes('TRIGGER:-PT4320M'), true);
-check('it carries the cancellation steps', icsText.replace(/\r\n /g, '').includes('To cancel: Account'), true);
+// Cancel steps can hold a login, and a calendar is often copied to a Google
+// account, so they stay out unless switched on in Settings.
+check('it leaves the cancellation steps out by default', icsText.includes('To cancel'), false);
+check(
+  'and the button says what goes in before you tap it',
+  (await page.textContent('.main')).includes('Goes in: the name, the dates and the amount'),
+  true,
+);
 await page.screenshot({ path: `${OUT}/subscription-saved.png`, fullPage: true });
 
 await page.click('button:has-text("Done")');
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${OUT}/money.png`, fullPage: true });
+
+// --- a name is saved exactly as typed --------------------------------------
+// "Gym membership" used to be saved as "Gymmembership": the moment the box held
+// "Gym " it matched the Gym preset and was overwritten, space and all.
+await page.click('.nav-btn:has-text("Money")');
+await page.click('button:has-text("Add a subscription")');
+await page.waitForSelector('#sub-name');
+await page.locator('#sub-name').pressSequentially('Gym membership', { delay: 15 });
+check('a typed name keeps its spaces', await page.inputValue('#sub-name'), 'Gym membership');
+check(
+  'a new, unsaved subscription has no Delete button',
+  await page.locator('form.card button:text-is("Delete")').count(),
+  0,
+);
+await page.click('form.card button:text-is("Cancel")');
+await page.waitForTimeout(300);
 
 // --- an every-2-weeks subscription ----------------------------------------
 // The yearly figure is the one that would be quietly wrong if any of the
@@ -340,6 +472,7 @@ await page.waitForTimeout(300);
 await page.click('.nav-btn:has-text("Money")');
 await page.click('button:has-text("Add income")');
 await page.waitForSelector('#income-name');
+check('a new, unsaved income has no Delete button', await page.locator('form.card button:text-is("Delete")').count(), 0);
 await page.fill('#income-name', 'Main job');
 await page.click('button:has-text("Twice a month")');
 await page.click('button:has-text("15th and last day")');
@@ -541,6 +674,22 @@ await page.screenshot({ path: `${OUT}/tidy-up.png`, fullPage: true });
 await page.click('button:has-text("Done")');
 await page.waitForTimeout(200);
 
+// --- "Put it back" after "Keep as a note" leaves no duplicate --------------
+const libraryNotes = async () =>
+  (await readStore('notes')).filter((n) => n.title === 'Library card number 29384').length;
+await page.fill('#capture-input', 'Library card number 29384');
+await page.click('button:has-text("Save to inbox")');
+await page.click('.nav-btn:has-text("Inbox")');
+await page.click('button:has-text("Keep as a note")');
+await page.waitForTimeout(300);
+check('keeping it as a note makes one note', await libraryNotes(), 1);
+await page.click('button:has-text("Put it back")');
+await page.waitForTimeout(300);
+check('putting it back takes that note away again', await libraryNotes(), 0);
+await page.click('button:has-text("Keep as a note")');
+await page.waitForTimeout(300);
+check('so filing it again leaves exactly one', await libraryNotes(), 1);
+
 // --- today pulls it all together ----------------------------------------
 await page.click('.nav-btn:has-text("Today")');
 await page.waitForTimeout(400);
@@ -664,6 +813,120 @@ await page.click('button:text-is("Calm")');
 await page.waitForTimeout(200);
 check('and switching back to a CSS theme clears them', await page.evaluate(() => document.documentElement.style.getPropertyValue('--bg')), '');
 
+// --- blurring hides every amount, not just most of them ------------------
+// Still on Settings from the theme checks above.
+await page.click('text=Blur money amounts until I tap them');
+await page.waitForTimeout(200);
+/** Dollar figures on screen that are not inside a blurred amount. */
+const unblurred = () =>
+  page.evaluate(() => {
+    const out = [];
+    const walker = document.createTreeWalker(document.querySelector('.main'), NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (/\$\s?\d/.test(node.textContent) && !node.parentElement.closest('.amount.blurred')) out.push(node.textContent.trim());
+    }
+    return out;
+  });
+await page.click('.nav-btn:has-text("Today")');
+await page.waitForTimeout(300);
+check('with blur on, Today shows no amount in the clear', (await unblurred()).join(' | '), '');
+await page.click('.nav-btn:has-text("Money")');
+await page.waitForTimeout(300);
+check('with blur on, Money shows no amount in the clear', (await unblurred()).join(' | '), '');
+await page.click('.header button:has-text("Settings")');
+await page.click('text=Blur money amounts until I tap them');
+await page.waitForTimeout(200);
+
+// --- an ended job can be brought back ------------------------------------
+await page.click('.nav-btn:has-text("Money")');
+await page.click('.card:has-text("Main job") button:text-is("Edit")');
+await page.waitForSelector('#income-name');
+await page.click('button:text-is("This has ended")');
+await page.click('button:text-is("Yes, it has ended")');
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+check('an ended job is listed under Ended, not lost', await page.locator('section[aria-label="Ended"]').count(), 1);
+await page.click('button:has-text("Show 1 ended")');
+await page.click('section[aria-label="Ended"] button:text-is("Edit")');
+await page.click('button:text-is("It\'s current again")');
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+check('and made current again from there', (await page.textContent('.main')).includes('Next:'), true);
+
+// --- calendar notes are opt-in, and the switch works ---------------------
+await page.click('.header button:has-text("Settings")');
+await page.waitForTimeout(200);
+check(
+  'the export says notes stay out',
+  (await page.textContent('.main')).includes('Notes, steps and how to cancel stay here'),
+  true,
+);
+await page.click('text=Put notes, steps and how to cancel into calendar entries');
+await page.waitForTimeout(200);
+const fullExport = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('button:has-text("Export everything to my calendar")'),
+]).then(([d]) => d);
+const fullIcs = await fullExport.createReadStream().then(async (stream) => {
+  let out = '';
+  for await (const chunk of stream) out += chunk;
+  return out.replace(/\r\n /g, '');
+});
+check('with notes switched on, the cancel steps go in', fullIcs.includes('To cancel: Account'), true);
+await page.click('text=Put notes, steps and how to cancel into calendar entries');
+await page.waitForTimeout(200);
+
+// --- backup, restore and delete everything --------------------------------
+const tableNames = await page.evaluate(
+  () =>
+    new Promise((resolve) => {
+      const req = indexedDB.open('steady');
+      req.onsuccess = () => {
+        const names = [...req.result.objectStoreNames];
+        req.result.close();
+        resolve(names);
+      };
+    }),
+);
+const dataTables = tableNames.filter((n) => n !== 'settings');
+const rowCounts = async () => Object.fromEntries(await Promise.all(dataTables.map(async (n) => [n, (await readStore(n)).length])));
+const before = await rowCounts();
+check('income is counted on this device', (await page.textContent('.main')).includes('1 income'), true);
+
+const backupDownload = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('button:has-text("Save a backup file")'),
+]).then(([d]) => d);
+const backupPath = `${OUT}/e2e-backup.json`;
+await backupDownload.saveAs(backupPath);
+
+// Picking a file in replace mode must not wipe anything yet.
+await page.click('button:text-is("Wipe and replace")');
+await page.setInputFiles('input[type="file"]', backupPath);
+await page.waitForTimeout(400);
+const preview = await page.textContent('.main');
+check('replacing shows what the file holds first', preview.includes('Replace everything on this phone with it?'), true);
+check('including the income in it', preview.includes('1 income'), true);
+check('and nothing has been touched yet', JSON.stringify(await rowCounts()), JSON.stringify(before));
+await page.click('button:has-text("Don\'t restore it")');
+
+await page.click('button:has-text("Delete everything on this device")');
+await page.click('button:has-text("Yes, delete all of it")');
+await page.waitForTimeout(500);
+const afterWipe = await rowCounts();
+check(
+  'delete everything empties every table, income included',
+  Object.entries(afterWipe).filter(([, n]) => n > 0).map(([t]) => t).join(', '),
+  '',
+);
+
+await page.setInputFiles('input[type="file"]', backupPath);
+await page.waitForTimeout(400);
+await page.click('button:has-text("Replace everything with this file")');
+await page.click('button:has-text("Yes, replace everything")');
+await page.waitForTimeout(600);
+check('and the backup puts every table back', JSON.stringify(await rowCounts()), JSON.stringify(before));
+
 // --- the privacy claim ---------------------------------------------------
 // The whole promise is that this page cannot send your data anywhere. Prove it
 // by trying, from inside the page, exactly what a tracker would do.
@@ -676,6 +939,21 @@ const exfiltration = await page.evaluate(async () => {
   }
 });
 check('the browser refuses to let the page phone home', exfiltration, 'BLOCKED');
+
+// --- framed by another page, it shows nothing ------------------------------
+// A <meta> CSP cannot forbid framing, and GitHub Pages will not send the
+// header, so the app refuses to render inside someone else's page instead.
+const framer = await ctx.newPage();
+await framer.setContent(`<iframe src="${BASE}" style="width:400px;height:700px"></iframe>`);
+await framer.waitForTimeout(2500);
+const framed = framer.frames().find((f) => f.url().startsWith(BASE));
+check('the app loads inside a frame at all (so the next check means something)', Boolean(framed), true);
+check(
+  'and renders nothing there',
+  framed ? await framed.evaluate(() => document.getElementById('root')?.childElementCount ?? -1) : -1,
+  0,
+);
+await framer.close();
 
 // --- offline -------------------------------------------------------------
 // Stop the server outright rather than emulating offline, so this also proves
@@ -690,6 +968,10 @@ check('the app still renders with no server', await page.evaluate(() => Boolean(
 check('the whole nav is there', await page.evaluate(() => document.querySelectorAll('.nav-btn').length), 6);
 check('the data is still there', (await page.textContent('.main')).includes('Ring the dentist'), true);
 await page.screenshot({ path: `${OUT}/offline.png`, fullPage: true });
+
+// Across the whole run - every screen, every download, the service worker -
+// nothing went anywhere but the app's own server.
+check('no request left the app\'s own server', offOrigin.join(' '), '');
 
 // The only console errors we tolerate are our own deliberate exfiltration test.
 const unexpected = consoleErrors.filter((e) => !e.includes('example.com'));

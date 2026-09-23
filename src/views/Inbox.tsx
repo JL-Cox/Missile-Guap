@@ -5,6 +5,7 @@ import type { Capture, Note, Settings, Task } from '../types';
 import TaskEditor from '../components/TaskEditor';
 import { Empty, Section } from '../components/ui';
 import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSuggestions';
+import { undoFiling } from '../lib/inbox';
 
 /**
  * Where everything you typed into the capture box lands. Three buttons per
@@ -15,8 +16,14 @@ export default function Inbox({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<{ task: Task; captureId: string } | null>(null);
   const [showCleared, setShowCleared] = useState(false);
   const [lastCleared, setLastCleared] = useState<Capture | null>(null);
-  /** The note just filed, so we can offer it tags without adding a step. */
+  /**
+   * The note just filed, kept up to date as tags are added here, so it can be
+   * offered tags without adding a step - and so "Put it back" knows which
+   * note to take away again.
+   */
   const [justFiled, setJustFiled] = useState<Note | null>(null);
+  /** A quiet line saying what "Put it back" did with the note, when it kept it. */
+  const [undoNotice, setUndoNotice] = useState('');
   const model = useTagModel();
   const suggestions = useSuggestions(
     model,
@@ -32,6 +39,20 @@ export default function Inbox({ settings }: { settings: Settings }) {
     setEditing({ task: blankTask({ title: capture.text }), captureId: capture.id });
   };
 
+  const putBack = async () => {
+    if (!lastCleared) return;
+    await unclearCapture(lastCleared.id);
+    // A capture kept as a note comes back without its note, so filing it again
+    // does not leave two. A note changed since is left alone.
+    if (justFiled && !(await undoFiling(justFiled))) {
+      setUndoNotice('The note made from it is still in Notes, because it has been changed since.');
+    } else {
+      setUndoNotice('');
+    }
+    setLastCleared(null);
+    setJustFiled(null);
+  };
+
   const toNote = async (capture: Capture) => {
     const firstLine = capture.text.split('\n')[0].slice(0, 80);
     // Filing stays a single tap. Tags are offered afterwards, on the panel
@@ -40,12 +61,14 @@ export default function Inbox({ settings }: { settings: Settings }) {
     await clearCapture(capture.id);
     setLastCleared(capture);
     setJustFiled(saved);
+    setUndoNotice('');
   };
 
   const dismiss = async (capture: Capture) => {
     await clearCapture(capture.id);
     setLastCleared(capture);
     setJustFiled(null);
+    setUndoNotice('');
   };
 
   if (editing) {
@@ -106,11 +129,7 @@ export default function Inbox({ settings }: { settings: Settings }) {
             <button
               type="button"
               className="btn btn-sm"
-              onClick={async () => {
-                await unclearCapture(lastCleared.id);
-                setLastCleared(null);
-                setJustFiled(null);
-              }}
+              onClick={() => void putBack()}
             >
               Put it back
             </button>
@@ -126,6 +145,8 @@ export default function Inbox({ settings }: { settings: Settings }) {
           )}
         </div>
       )}
+
+      {undoNotice && <p className="faint">{undoNotice}</p>}
 
       {cleared.length > 0 && (
         <Section title="Already dealt with">

@@ -28,7 +28,10 @@ const seeded = await page.evaluate(() => new Promise((resolve, reject) => {
   };
   req.onsuccess = () => {
     const db = req.result;
-    const tx = db.transaction(['notes', 'tasks', 'subscriptions'], 'readwrite');
+    const tx = db.transaction(['notes', 'tasks', 'subscriptions', 'settings'], 'readwrite');
+    // Settings saved before any of the newer options existed. They must keep
+    // what they hold, and the newer options must simply read their defaults.
+    tx.objectStore('settings').put({ id: 'settings', theme: 'dark', textScale: 1.3, blurAmounts: true, rev: 4 });
     tx.objectStore('notes').put({ id: 'n1', title: 'Old note', body: 'from before the upgrade', tags: ['health'], pinned: false, createdAt: 1, updatedAt: 1 });
     tx.objectStore('tasks').put({ id: 't1', title: 'Old task', notes: '', steps: [], tags: [], createdAt: 1, updatedAt: 1 });
     tx.objectStore('subscriptions').put({ id: 's1', name: 'Old sub', amountMinor: 1299, currency: 'USD', cycle: 'monthly', every: 1, firstBilled: '2026-01-15', notes: '', cancelHow: '', remindDaysBefore: 3, createdAt: 1, updatedAt: 1 });
@@ -49,8 +52,9 @@ const after = await page.evaluate(() => new Promise((resolve) => {
   req.onsuccess = () => {
     const db = req.result;
     const stores = [...db.objectStoreNames];
-    const tx = db.transaction(['notes', 'tasks', 'subscriptions'], 'readonly');
+    const tx = db.transaction(['notes', 'tasks', 'subscriptions', 'settings'], 'readonly');
     const out = {};
+    tx.objectStore('settings').get('settings').onsuccess = (e) => { out.settings = e.target.result; };
     tx.objectStore('notes').getAll().onsuccess = (e) => { out.notes = e.target.result; };
     tx.objectStore('tasks').getAll().onsuccess = (e) => { out.tasks = e.target.result; };
     tx.objectStore('subscriptions').getAll().onsuccess = (e) => { out.subs = e.target.result; };
@@ -71,6 +75,14 @@ check('its tags survived', after.notes?.[0]?.tags?.join(','), 'health');
 check('the task survived', after.tasks?.[0]?.title, 'Old task');
 check('the subscription survived', after.subs?.[0]?.name, 'Old sub');
 check('and kept its amount', after.subs?.[0]?.amountMinor, 1299);
+check('old settings kept their theme', after.settings?.theme, 'dark');
+check('and their text size', after.settings?.textScale, 1.3);
+check('and still blur amounts', after.settings?.blurAmounts, true);
+check(
+  'the app is showing the saved theme, not a default',
+  await page.evaluate(() => document.documentElement.dataset.theme),
+  'dark',
+);
 check('nothing else was dropped', ['captures','tasks','notes','subscriptions','settings'].every((s) => after.stores.includes(s)), true);
 
 await browser.close();

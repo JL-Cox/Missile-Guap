@@ -91,10 +91,15 @@ the category. The yearly figure is there because it is the number that actually
 changes your mind.
 
 On that screen is one more button: **Add to my calendar.** It puts a repeating
-entry on every future charge date, carrying the lead-time warning you chose and
-the cancellation steps in the notes. On Android this opens the share sheet, so
-Google Calendar is one tap away. From then on your phone's own alarms do the
+entry on every future charge date, carrying the name, the amount and the
+lead-time warning you chose. On Android this opens the share sheet, so Google
+Calendar is one tap away. From then on your phone's own alarms do the
 reminding, whether or not Steady is open.
+
+Notes and the cancellation steps stay out of the calendar unless you turn them
+on in Settings: a calendar is often copied to a Google account, and cancel steps
+can hold a login. Every calendar button says, in one line next to it, exactly
+what the file will carry before you tap it.
 
 If you skipped it, every subscription card has the same button, and dated tasks
 have it too. *Settings → Export everything to my calendar* still exports the lot
@@ -125,8 +130,8 @@ capture (filing stays one tap), and on *Notes → Tidy up untagged notes* for
 catching up on old ones. Turn the whole thing off in Settings.
 
 There is no network call in any of this, and nothing to call. `connect-src
-'none'` is untouched — the browser check proves it by still failing to
-exfiltrate data with the feature switched on.
+'none'` is untouched, and the browser check runs with the feature switched on
+while recording every request the page makes.
 
 ### Income, from the paystub
 
@@ -183,12 +188,28 @@ The page ships with this Content Security Policy:
 connect-src 'none'
 ```
 
-That single directive means the page is forbidden from opening a network
+That single directive means the page's code is forbidden from opening a network
 connection of any kind — no `fetch`, no `XMLHttpRequest`, no WebSocket, no
 `navigator.sendBeacon`. If any code in this app ever tried to send your notes
-somewhere, the browser would block the request and log the attempt to the
-console. `e2e/app-check.mjs` tests exactly this, by trying to exfiltrate data
-from inside the running page and asserting that it fails.
+somewhere that way, the browser would block the request and log the attempt to
+the console.
+
+Two checks hold the app to that:
+
+- **`npm run privacy`** (`tools/privacy-check.mjs`) reads the built files and
+  fails if the policy has been changed by so much as a character, if any
+  shipped file contains code that could reach the network or open another site
+  (`fetch` is allowed once, in the service worker, for the app's own files), if
+  a web address appears that is not on a short list of inert strings, or if the
+  service worker grows a push or sync handler. The deploy workflow runs it after
+  the build and **before** the upload, so a failure means nothing is published.
+- **`e2e/app-check.mjs`** drives the real app in a browser and records every
+  request the page and its service worker make for the whole run, failing if a
+  single one goes anywhere but the app's own server. It also calls `fetch()` to
+  an outside address from inside the page and checks the browser refuses it.
+
+Neither is a proof that nothing could ever leak - they check this code, as
+built, for the ways out that exist today.
 
 Everything else follows from that:
 
@@ -196,12 +217,27 @@ Everything else follows from that:
 - **No analytics, no crash reporting, no ads, no third-party scripts.** Every
   dependency is bundled at build time; nothing is loaded from a CDN at runtime.
 - **No push notifications**, because a push server would mean routing your
-  reminders through someone else's computer. See *Reminders* below.
+  reminders through someone else's computer. See *Reminders* below. The
+  notifications Steady does show say only the task's title and time by default,
+  never its notes, because a lock screen and a watch can be read by whoever is
+  nearby. Settings can make them say less, or more.
+- **Data leaves only when you tap a button that says so**: *Save a backup file*
+  (a readable file with everything in it) and *Add to my calendar* (the lines
+  next to each button say what goes in). Deleting something in the app does not
+  reach into a backup file you saved earlier or a calendar entry you added.
 - **Works in aeroplane mode.** The service worker caches the app itself on first
   visit, so every feature works with no signal at all.
 
 Your data lives in this browser's IndexedDB storage, on this device, in a
 database called `steady`, filed under the origin the app is served from.
+Storage belongs to the whole origin, not to one app: every GitHub Pages site
+published from the same account shares `https://<account>.github.io`, and any of
+them could read Steady's data. Don't publish other Pages sites from the account
+that hosts Steady, or give it its own domain.
+
+If the installed icon on an Android phone has a small briefcase badge, it went
+into the work profile, which an employer manages and can wipe. Install it from
+Chrome in the personal profile instead.
 
 On first run the app asks the browser for **persistent storage**. Without that,
 IndexedDB is "best-effort" and the browser is allowed to evict it when the
@@ -238,6 +274,7 @@ npm install
 npm run dev          # http://localhost:5173
 npm run build        # production build into dist/
 npm test             # unit tests
+npm run privacy      # after a build: refuses a build that could send anything
 ```
 
 To put it on your phone, see **[DEPLOY.md](DEPLOY.md)** — a click-by-click
@@ -259,7 +296,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-472 unit tests cover the parts where a quiet wrong answer would make the app
+598 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between
@@ -276,9 +313,13 @@ node e2e/app-check.mjs
 ```
 
 It drives a real browser through capture → task → subscription → note,
-**downloads the generated .ics and checks its contents**, verifies the privacy
-claim by attempting to exfiltrate data, then **kills the server** and reloads to
-prove the app still works with nothing behind it.
+**downloads the generated .ics and checks its contents** (notes stay out unless
+switched on), checks a reminder notification carries no notes, restores a
+backup only after showing what is in it, and checks *Delete everything* leaves
+every table empty. Throughout, it records every request the page makes and
+fails on any that leaves the app's own server; it also calls `fetch()` to an
+outside address and checks the browser refuses. Finally it **kills the server**
+and reloads to prove the app still works with nothing behind it.
 
 ## Layout
 
@@ -300,14 +341,16 @@ src/
     ics.ts            Calendar export, whole-app or one item at a time
     agenda.ts         Builds one ordered list for a day
     tasks.ts          Completion, rolling repeats forward, moving days
-    notify.ts         The in-app scheduler, and its honest limits
-    backup.ts         Export, and an import that cannot silently destroy
+    notify.ts         The in-app scheduler, its honest limits, and what a lock screen shows
+    backup.ts         Export, and an import that shows what it holds before it replaces anything
+    inbox.ts          Undoing "Keep as a note" without leaving a duplicate
   components/         Capture bar, task editor, task row, shared bits
   views/              Today, Inbox, Tasks, Notes, Money, Settings
 public/
   sw.js               Service worker: caches this app, talks to nothing else
   manifest.webmanifest
 tools/make-icons.py   Regenerates the icons with no image library
+tools/privacy-check.mjs  The privacy gate the deploy runs before publishing
 ```
 
 ## Making it yours

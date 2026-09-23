@@ -58,6 +58,7 @@ export default function Notes({ settings }: { settings: Settings }) {
         }
       >
         <input
+          autoComplete="off"
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -232,6 +233,7 @@ function NoteEditor({
       <div className="field">
         <label htmlFor="note-title">Title</label>
         <input
+          autoComplete="off"
           id="note-title"
           ref={titleRef}
           type="text"
@@ -243,6 +245,7 @@ function NoteEditor({
       <div className="field">
         <label htmlFor="note-body">The note</label>
         <textarea
+          autoComplete="off"
           id="note-body"
           value={draft.body}
           onChange={(e) => setDraft({ ...draft, body: e.target.value })}
@@ -253,6 +256,7 @@ function NoteEditor({
       <div className="field">
         <label htmlFor="note-tags">Tags, separated by commas</label>
         <input
+          autoComplete="off"
           id="note-tags"
           type="text"
           value={tagText}

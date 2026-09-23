@@ -15,6 +15,20 @@ const SHELL = `${BASE}index.html`;
 const CACHE = `steady-${self.__BUILD__ || 'dev'}`;
 const PRECACHE = self.__PRECACHE__ || [BASE, SHELL, `${BASE}manifest.webmanifest`];
 
+/*
+  Every cache this app has ever made is named steady-<build>. Only those are
+  ever deleted: the cache storage belongs to the whole address, and anything
+  else in it is not ours to throw away.
+*/
+const OURS = 'steady-';
+
+/*
+  The one place this worker touches the network, for this app's own files.
+  Kept to a single call on purpose: tools/privacy-check.mjs counts them, so a
+  second one cannot be added without somebody noticing.
+*/
+const network = (request) => fetch(request);
+
 self.addEventListener('install', (event) => {
   // Take over immediately rather than waiting for every tab to close.
   self.skipWaiting();
@@ -31,7 +45,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       const names = await caches.keys();
-      await Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n)));
+      await Promise.all(names.filter((n) => n.startsWith(OURS) && n !== CACHE).map((n) => caches.delete(n)));
       await self.clients.claim();
     })(),
   );
@@ -59,10 +73,18 @@ self.addEventListener('fetch', (event) => {
   // Navigations: try the network so updates land, fall back to cache offline.
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
+      network(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(SHELL, copy));
+          /*
+            Only a real page replaces the offline copy. Caching whatever came
+            back meant one 404, captive-portal login page or server error while
+            online became the app you got every time you were offline.
+          */
+          const type = response.headers.get('Content-Type') || '';
+          if (response.ok && type.includes('text/html')) {
+            const copy = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(SHELL, copy));
+          }
           return response;
         })
         .catch(async () => {
@@ -80,7 +102,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fromCache(request).then((hit) => {
       if (hit) return hit;
-      return fetch(request)
+      return network(request)
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();

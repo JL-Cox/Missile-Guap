@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalendar, calendarForSubscription, calendarForTask, icsFilename } from '../src/lib/ics';
+import {
+  buildCalendar,
+  calendarContents,
+  calendarForIncome,
+  calendarForSubscription,
+  calendarForTask,
+  icsFilename,
+} from '../src/lib/ics';
 import type { IncomeSource, Subscription, Task } from '../src/types';
 
 function task(partial: Partial<Task> = {}): Task {
@@ -13,8 +20,8 @@ function sub(partial: Partial<Subscription> = {}): Subscription {
   };
 }
 
-const build = (tasks: Task[], subscriptions: Subscription[] = []) =>
-  buildCalendar({ tasks, subscriptions, formatAmount: () => '£12.99', now: Date.UTC(2026, 8, 15, 10, 0, 0) });
+const build = (tasks: Task[], subscriptions: Subscription[] = [], includeNotes = false) =>
+  buildCalendar({ tasks, subscriptions, formatAmount: () => '£12.99', now: Date.UTC(2026, 8, 15, 10, 0, 0), includeNotes });
 
 describe('calendar structure', () => {
   it('produces a well-formed calendar with CRLF line endings', () => {
@@ -85,8 +92,8 @@ describe('subscriptions become repeating all-day events', () => {
     expect(build([], [sub({ remindDaysBefore: 0 })])).not.toContain('BEGIN:VALARM');
   });
 
-  it('carries the cancellation steps into the description, where you will need them', () => {
-    const ics = build([], [sub({ cancelHow: 'Account > Membership > Cancel' })]);
+  it('carries the cancellation steps into the description when you turn notes on', () => {
+    const ics = build([], [sub({ cancelHow: 'Account > Membership > Cancel' })], true);
     expect(ics.replace(/\r\n /g, '')).toContain('To cancel: Account > Membership > Cancel');
   });
 
@@ -98,11 +105,14 @@ describe('subscriptions become repeating all-day events', () => {
 describe('escaping and folding', () => {
   it('escapes the characters that would otherwise break the file', () => {
     const ics = build([task({ date: '2026-09-20', title: 'Buy milk, bread; and eggs' })]);
-    expect(ics).toContain('SUMMARY:Buy milk\\, bread\; and eggs');
+    // RFC 5545 escapes both commas and semicolons with a backslash. The old
+    // test wrote '\\;' as '\;', which JavaScript reads as a bare ';' - so it
+    // asserted the bug.
+    expect(ics).toContain('SUMMARY:Buy milk\\, bread\\; and eggs');
   });
 
   it('turns newlines into the literal escape rather than a raw break', () => {
-    const ics = build([task({ date: '2026-09-20', notes: 'line one\nline two' })]);
+    const ics = build([task({ date: '2026-09-20', notes: 'line one\nline two' })], [], true);
     expect(ics).toContain('\\nline two');
   });
 
@@ -254,5 +264,176 @@ describe('paydays in the calendar', () => {
 
   it('leaves an ended job out', () => {
     expect(cal([job({ endedOn: '2025-12-01' })])).not.toContain('Main job');
+  });
+});
+
+
+/*
+  A calendar is often copied to a Google account, sometimes to a work one, and
+  it is read on screens Steady does not control. Cancel steps can hold a login;
+  notes hold whatever you put in them. So by default only the title, the date
+  and the amount go in - the owner's decision - and the rest is opt-in.
+*/
+describe('what goes into a calendar entry', () => {
+  const secret = 'password hunter2';
+  const at = Date.UTC(2026, 8, 15, 10, 0, 0);
+  const noisyTask = task({
+    date: '2026-09-20',
+    notes: `Portal ${secret}`,
+    steps: [{ id: 's', text: `Log in with ${secret}`, done: false }],
+  });
+  const noisySub = sub({ notes: `Card ${secret}`, cancelHow: `Log in, ${secret}` });
+  const noisyJob: IncomeSource = {
+    id: 'i1', name: 'Main job', frequency: 'semimonthly', daysOfMonth: [15, 31],
+    grossMinor: 250_000, netMinor: 185_000, deductions: [], currency: 'USD', notes: `HR ${secret}`,
+    weekendShift: 'none', createdAt: 0, updatedAt: 0,
+  };
+  const everything = (includeNotes?: boolean) =>
+    buildCalendar({
+      tasks: [noisyTask],
+      subscriptions: [noisySub],
+      incomes: [noisyJob],
+      formatAmount: () => '$12.99',
+      formatPay: () => '$1,850.00',
+      now: at,
+      includeNotes,
+    }).replace(/\r\n /g, '');
+
+  it('leaves notes, steps and cancel steps out unless asked', () => {
+    const ics = everything();
+    expect(ics).not.toContain('hunter2');
+    expect(ics).not.toContain('To cancel');
+    expect(ics).not.toMatch(/^DESCRIPTION:(?!Ring|Netflix|Main)/m);
+  });
+
+  it('still carries the title, the date and the amount', () => {
+    const ics = everything();
+    expect(ics).toContain('SUMMARY:Ring the dentist');
+    expect(ics).toContain('SUMMARY:Netflix - $12.99');
+    expect(ics).toContain('SUMMARY:Main job - $1\\,850.00');
+  });
+
+  it('puts them in when you turn notes on', () => {
+    const ics = everything(true);
+    expect(ics).toContain('Portal password hunter2');
+    expect(ics).toContain('To cancel: Log in\\, password hunter2');
+    expect(ics).toContain('HR password hunter2');
+  });
+
+  it('holds to the same rule for the one-item buttons', () => {
+    expect(calendarForTask(noisyTask, at)).not.toContain('hunter2');
+    expect(calendarForSubscription(noisySub, '$12.99', at)).not.toContain('hunter2');
+    expect(calendarForIncome(noisyJob, '$1,850.00', at)).not.toContain('hunter2');
+    expect(calendarForTask(noisyTask, at, { includeNotes: true })).toContain('hunter2');
+    expect(calendarForSubscription(noisySub, '$12.99', at, { includeNotes: true })).toContain('hunter2');
+  });
+
+  it('says in plain words what goes in, before anything leaves', () => {
+    expect(calendarContents('subscription', false)).toBe(
+      'Goes in: the name, the dates and the amount. Notes and how to cancel stay here unless you turn them on in Settings.',
+    );
+    expect(calendarContents('task', false)).toBe(
+      'Goes in: the title, the day and the time. Notes and steps stay here unless you turn them on in Settings.',
+    );
+    expect(calendarContents('all', true)).toContain('notes');
+  });
+});
+
+
+/*
+  A calendar has no idea of "clamped to the end of the month". FREQ=MONTHLY
+  from the 31st skips every month without one - February, April, June - and
+  from the 30th it skips February and never lands on the 28th. Steady's own
+  dates do clamp, so the calendar and the app disagreed on a third of the
+  months. The 31st is exactly "the last day", which a rule can say
+  (BYMONTHDAY=-1). The 29th and 30th have no such rule, so they are written
+  out as two years of explicit dates, the way shifted paydays already are.
+*/
+describe('month-end days in the calendar', () => {
+  const at = Date.UTC(2026, 0, 5, 10, 0, 0);
+  const cal = (subs: Subscription[] = [], tasks: Task[] = [], incomes: IncomeSource[] = []) =>
+    buildCalendar({ tasks, subscriptions: subs, incomes, formatAmount: () => '$9.99', formatPay: () => '$1', now: at }).replace(
+      /\r\n /g,
+      '',
+    );
+  const rdates = (ics: string) => (/RDATE[^:]*:([\dTZ,]+)/.exec(ics)?.[1] ?? '').split(',').filter(Boolean);
+
+  it('says "the last day" for a subscription on the 31st, for every interval', () => {
+    expect(cal([sub({ firstBilled: '2026-01-31' })])).toContain('RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=-1');
+    expect(cal([sub({ firstBilled: '2026-01-31', cycle: 'quarterly' })])).toContain('RRULE:FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=-1');
+    expect(cal([sub({ firstBilled: '2026-01-31', cycle: 'monthly', every: 6 })])).toContain(
+      'RRULE:FREQ=MONTHLY;INTERVAL=6;BYMONTHDAY=-1',
+    );
+    expect(cal([sub({ firstBilled: '2026-01-31', cycle: 'yearly' })])).toContain('RRULE:FREQ=MONTHLY;INTERVAL=12;BYMONTHDAY=-1');
+  });
+
+  it('writes the real dates for a subscription on the 30th, February included', () => {
+    const ics = cal([sub({ firstBilled: '2026-01-30' })]);
+    expect(ics).not.toContain('RRULE');
+    expect(ics).toContain('DTSTART;VALUE=DATE:20260130');
+    const dates = rdates(ics);
+    expect(dates).toContain('20260228');
+    expect(dates).toContain('20260330');
+    expect(dates).not.toContain('20260331');
+    expect(dates.length).toBeGreaterThanOrEqual(23); // two years, less the first
+  });
+
+  it('does the same for the 29th, landing on the 28th in February', () => {
+    const dates = rdates(cal([sub({ firstBilled: '2026-01-29' })]));
+    expect(dates).toContain('20260228');
+    expect(dates).toContain('20260329');
+  });
+
+  it('leaves an ordinary day alone', () => {
+    const ics = cal([sub({ firstBilled: '2026-01-15' })]);
+    expect(ics).toContain('RRULE:FREQ=MONTHLY;INTERVAL=1\r\n');
+    expect(ics).not.toContain('BYMONTHDAY');
+  });
+
+  it('treats a twice-a-month pair with the 30th the same way', () => {
+    const ics = cal([sub({ cycle: 'semimonthly', daysOfMonth: [15, 30], firstBilled: '2026-01-01' })]);
+    expect(ics).not.toContain('RRULE');
+    expect(rdates(ics)).toContain('20260228');
+  });
+
+  it('holds a monthly task on the 31st to the last day', () => {
+    const t = task({ date: '2026-01-31', recurrence: { kind: 'monthly', every: 1, anchorDay: 31 } });
+    expect(cal([], [t])).toContain('RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=-1');
+  });
+
+  it('knows a rolled-forward task still belongs on the 31st', () => {
+    const t = task({ date: '2026-02-28', recurrence: { kind: 'monthly', every: 1, anchorDay: 31 } });
+    expect(cal([], [t])).toContain('BYMONTHDAY=-1');
+  });
+
+  it('writes out the dates of a monthly task on the 30th', () => {
+    const t = task({ date: '2026-01-30', recurrence: { kind: 'monthly', every: 1, anchorDay: 30 } });
+    const ics = cal([], [t]);
+    expect(ics).not.toContain('RRULE');
+    expect(rdates(ics)).toContain('20260228');
+  });
+
+  it('writes timed extra dates as times, at the same local time each day', () => {
+    const t = task({ date: '2026-01-30', startTime: '09:00', recurrence: { kind: 'monthly', every: 1, anchorDay: 30 } });
+    const ics = cal([], [t]);
+    const feb = new Date(2026, 1, 28, 9, 0).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    expect(ics).toMatch(/RDATE:\d{8}T\d{6}Z/);
+    expect(rdates(ics)).toContain(feb);
+  });
+
+  it('keeps a 29 February yearly task on the last day of February', () => {
+    const t = task({ date: '2028-02-29', recurrence: { kind: 'yearly', every: 1, anchorDay: 29 } });
+    expect(cal([], [t])).toContain('RRULE:FREQ=YEARLY;INTERVAL=1;BYMONTH=2;BYMONTHDAY=-1');
+  });
+
+  it('pays on the last day for a job paid on the 31st', () => {
+    const job: IncomeSource = {
+      id: 'i1', name: 'Main job', frequency: 'monthly', daysOfMonth: [31], grossMinor: 1, netMinor: 1,
+      deductions: [], currency: 'USD', notes: '', weekendShift: 'none', createdAt: 0, updatedAt: 0,
+    };
+    expect(cal([], [], [job])).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=-1');
+    expect(cal([], [], [{ ...job, daysOfMonth: [30] }])).not.toContain('RRULE');
+    // A monthly job holding two days is paid on the first of them, once.
+    expect(cal([], [], [{ ...job, daysOfMonth: [15, 31] }])).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=15\r\n');
   });
 });

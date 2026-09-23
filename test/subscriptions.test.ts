@@ -9,8 +9,10 @@ import {
   findPreset,
   matchPresets,
   SERVICE_PRESETS,
+  whenNameTyped,
 } from '../src/lib/subscriptions';
 import { FREQUENCY_LABELS } from '../src/lib/pay';
+import type { Subscription } from '../src/types';
 
 describe('findPreset', () => {
   it('matches regardless of case or stray spaces', () => {
@@ -189,5 +191,48 @@ describe('matchPresets', () => {
     for (const preset of matchPresets('e', 10)) {
       expect(preset.name.trim().length).toBeGreaterThan(0);
     }
+  });
+});
+
+/*
+  Typing "Gym membership" used to save "Gymmembership". The moment the box
+  held "Gym " - a known service name plus a space - the exact-match lookup
+  trimmed it, matched Gym, and wrote the preset's name back over what you had
+  typed, space and all. Whatever is typed is now what is stored; a match may
+  only fill in things you have not chosen yet.
+*/
+describe('whenNameTyped', () => {
+  type Draft = Pick<Subscription, 'name' | 'category' | 'cycle' | 'every'>;
+  const blank: Draft = { name: '', category: undefined, cycle: 'monthly', every: 1 };
+
+  /** Feeds a name in one keystroke at a time, the way a person types it. */
+  const typeOut = (text: string, start: Draft = blank): Draft => {
+    let draft = { ...start };
+    for (let i = 1; i <= text.length; i++) draft = { ...draft, ...whenNameTyped(draft, text.slice(0, i)) };
+    return draft;
+  };
+
+  it('keeps every character typed, spaces included', () => {
+    expect(typeOut('Gym membership').name).toBe('Gym membership');
+    expect(typeOut('netflix ').name).toBe('netflix ');
+  });
+
+  it('fills in the category of a known service when none is chosen', () => {
+    expect(whenNameTyped(blank, 'Netflix').category).toBe('TV & film');
+  });
+
+  it('fills in the usual rhythm while the rhythm is still the default', () => {
+    expect(whenNameTyped(blank, 'Microsoft 365').cycle).toBe('yearly');
+  });
+
+  it('never overwrites a category or rhythm you picked', () => {
+    const chosen: Draft = { ...blank, category: 'Games', cycle: 'weekly' };
+    const patch = whenNameTyped(chosen, 'Netflix');
+    expect(patch.category).toBeUndefined();
+    expect(patch.cycle).toBeUndefined();
+  });
+
+  it('treats an unusual interval as a choice, not a default', () => {
+    expect(whenNameTyped({ ...blank, every: 2 }, 'Microsoft 365').cycle).toBeUndefined();
   });
 });

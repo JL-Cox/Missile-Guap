@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { getSettings } from '../db';
+import { CALENDAR_CAUTION, calendarContents, type CalendarKind, type CalendarOptions } from '../lib/ics';
 import { shareOrDownload } from '../lib/share';
 
 /**
@@ -8,23 +11,32 @@ import { shareOrDownload } from '../lib/share';
  *
  * `build` returns null when there is nothing to add - a cancelled subscription,
  * or a task with no date - and the button says so instead of doing nothing.
+ *
+ * Whether notes go in is read from Settings here rather than passed down, so
+ * every calendar button follows the one switch, and the line under the button
+ * always says what that switch means for this particular file.
  */
 export default function AddToCalendar({
   build,
+  kind,
   filename,
   className = 'btn btn-sm',
   nothingToAdd,
 }: {
-  build: () => string | null;
+  build: (options: CalendarOptions) => string | null;
+  kind: CalendarKind;
   filename: string;
   className?: string;
   nothingToAdd: string;
 }) {
   const [state, setState] = useState<'idle' | 'working' | 'done' | 'nothing'>('idle');
+  const includeNotes = useLiveQuery(async () => (await getSettings()).calendarIncludeNotes, [], false) ?? false;
 
   const go = async () => {
     setState('working');
-    const ics = build();
+    // Read again at the moment of sending, so the file matches the switch
+    // even if it changed a second ago on another screen.
+    const ics = build({ includeNotes: (await getSettings()).calendarIncludeNotes });
     if (!ics) {
       setState('nothing');
       return;
@@ -45,6 +57,9 @@ export default function AddToCalendar({
           Sent. If it saved as a file instead of opening, tap the download and pick your calendar app.
         </span>
       )}
+      <span className="faint">
+        {calendarContents(kind, includeNotes)} {CALENDAR_CAUTION}
+      </span>
     </span>
   );
 }

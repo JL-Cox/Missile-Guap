@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { newId, saveTask } from '../db';
 import type { Recurrence, Task } from '../types';
-import { atTime, describeDuration, todayKey } from '../lib/time';
+import { describeDuration, todayKey } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
+import { reminderOffset, withAnchor, withReminder } from '../lib/tasks';
 import { ConfirmButton, parseTags, useAutoFocus } from './ui';
 import { PRIORITIES, PRIORITY_LABELS } from '../lib/priority';
 
@@ -41,25 +42,22 @@ export default function TaskEditor({
   );
   const titleRef = useAutoFocus<HTMLInputElement>();
 
+  /*
+    "Remind me 30 min before" is kept as the 30, not as a moment. The moment is
+    worked out from the day and time when you save, so changing either after
+    picking a reminder moves the reminder with them, and taking the day off
+    takes the reminder off too.
+  */
+  const [offset, setOffset] = useState<number | null>(() => reminderOffset(task));
+
   const patch = (changes: Partial<Task>) => setDraft((d) => ({ ...d, ...changes }));
-
-  const setRemindOffset = (minutesBefore: number | null) => {
-    if (minutesBefore === null || !draft.date) return patch({ remindAt: undefined, remindedAt: undefined });
-    const anchor = draft.startTime ? atTime(draft.date, draft.startTime) : atTime(draft.date, '09:00');
-    patch({ remindAt: anchor - minutesBefore * 60_000, remindedAt: undefined });
-  };
-
-  const currentOffset = (): number | null => {
-    if (draft.remindAt === undefined || !draft.date) return null;
-    const anchor = draft.startTime ? atTime(draft.date, draft.startTime) : atTime(draft.date, '09:00');
-    return Math.round((anchor - draft.remindAt) / 60_000);
-  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const title = draft.title.trim();
     if (!title) return;
-    const saved = await saveTask({ ...draft, title, tags: parseTags(tagText) });
+    const next = withAnchor(withReminder({ ...draft, title, tags: parseTags(tagText) }, offset, task), task);
+    const saved = await saveTask(next);
     onSaved(saved);
   };
 
@@ -71,13 +69,12 @@ export default function TaskEditor({
     patch({ recurrence: { ...rec, kind: 'weekly', weekdays: [...days].sort((a, b) => a - b) } });
   };
 
-  const offset = currentOffset();
-
   return (
     <form className="card stack" onSubmit={submit}>
       <div className="field">
         <label htmlFor="task-title">What is it?</label>
         <input
+          autoComplete="off"
           id="task-title"
           ref={titleRef}
           type="text"
@@ -96,6 +93,7 @@ export default function TaskEditor({
         <div className="field">
           <label htmlFor="task-date">Day (optional)</label>
           <input
+            autoComplete="off"
             id="task-date"
             type="date"
             value={draft.date ?? ''}
@@ -105,6 +103,7 @@ export default function TaskEditor({
         <div className="field">
           <label htmlFor="task-time">Time (optional)</label>
           <input
+            autoComplete="off"
             id="task-time"
             type="time"
             value={draft.startTime ?? ''}
@@ -173,7 +172,7 @@ export default function TaskEditor({
                 type="button"
                 aria-pressed={offset === null}
                 className={`btn btn-sm${offset === null ? ' btn-primary' : ''}`}
-                onClick={() => setRemindOffset(null)}
+                onClick={() => setOffset(null)}
               >
                 Don't remind me
               </button>
@@ -183,7 +182,7 @@ export default function TaskEditor({
                   type="button"
                   aria-pressed={offset === m}
                   className={`btn btn-sm${offset === m ? ' btn-primary' : ''}`}
-                  onClick={() => setRemindOffset(m)}
+                  onClick={() => setOffset(m)}
                 >
                   {offsetLabel(m)}
                 </button>
@@ -270,6 +269,7 @@ export default function TaskEditor({
           <div className="field">
             <label htmlFor="task-notes">Notes</label>
             <textarea
+              autoComplete="off"
               id="task-notes"
               value={draft.notes}
               onChange={(e) => patch({ notes: e.target.value })}
@@ -280,6 +280,7 @@ export default function TaskEditor({
           <div className="field">
             <label htmlFor="task-tags">Tags, separated by commas</label>
             <input
+              autoComplete="off"
               id="task-tags"
               type="text"
               value={tagText}
@@ -359,6 +360,7 @@ function StepsEditor({ steps, onChange }: { steps: Task['steps']; onChange: (ste
       )}
       <div className="row-tight">
         <input
+          autoComplete="off"
           id="task-step"
           type="text"
           className="grow"

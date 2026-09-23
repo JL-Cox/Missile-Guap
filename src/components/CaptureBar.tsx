@@ -33,6 +33,7 @@ export default function CaptureBar({ onSaved }: { onSaved: (text: string) => voi
     >
       <label htmlFor="capture-input">Write it down</label>
       <textarea
+        autoComplete="off"
         id="capture-input"
         value={text}
         onChange={(e) => setText(e.target.value)}

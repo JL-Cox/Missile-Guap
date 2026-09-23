@@ -8,6 +8,8 @@ import {
   outlook,
   payPeriods,
   stillToCome,
+  paydaysFrom,
+  whyNoPayPeriod,
 } from '../src/lib/cashflow';
 import type { IncomeSource, Subscription } from '../src/types';
 
@@ -301,5 +303,85 @@ describe('stillToCome', () => {
     const { month } = stillToCome([job], [], '2026-09-17');
     expect(month.minor).toBe(0);
     expect(month.count).toBe(0);
+  });
+});
+
+/*
+  "Mark as cancelled" sets the end date to today. The next-charge line still
+  showed today's charge - correctly, since a charge on the day you cancel has
+  usually already gone - but every total built on real dates dropped the whole
+  subscription the moment it had an end date, so the screen said a charge was
+  due today and left it out of what was still to come out. They now agree: a
+  charge on or before the end date counts.
+*/
+describe('a charge on the day you cancel', () => {
+  const cancelledToday = sub({ firstBilled: '2026-01-23', endedOn: '2026-09-23' });
+
+  it('is still counted in what comes out that day', () => {
+    const bills = billsBetween([cancelledToday], '2026-09-23', '2026-09-30');
+    expect(bills.map((b) => b.date)).toEqual(['2026-09-23']);
+  });
+
+  it('agrees with the next-charge line', async () => {
+    const { nextBilling } = await import('../src/lib/recurrence');
+    expect(nextBilling(cancelledToday, '2026-09-23')).toBe('2026-09-23');
+    expect(stillToCome([], [cancelledToday], '2026-09-23').month.count).toBe(1);
+  });
+
+  it('is gone the day after', () => {
+    expect(billsBetween([cancelledToday], '2026-09-24', '2026-12-31')).toEqual([]);
+  });
+});
+
+describe('a job that has ended', () => {
+  it('still counts its last payday, on or before the end date', () => {
+    const job = income({ endedOn: '2026-09-15' });
+    expect(allPaydays([job], '2026-09-01', '2026-10-31').map((p) => p.date)).toEqual(['2026-09-15']);
+  });
+});
+
+/*
+  "Before your next payday" used to say "Add your income above" whenever it
+  could not place a payday - including when the income was right there, and
+  the only thing missing was a payday to count from.
+*/
+describe('why there is no pay period', () => {
+  const everyTwoWeeks = (firstPaid?: string) =>
+    income({ name: 'Main job', frequency: 'biweekly', daysOfMonth: undefined, firstPaid });
+
+  it('asks for income when there is none', () => {
+    expect(whyNoPayPeriod([], '2026-09-23')).toEqual({ kind: 'noIncome' });
+    expect(whyNoPayPeriod([income({ endedOn: '2026-01-01' })], '2026-09-23')).toEqual({ kind: 'noIncome' });
+  });
+
+  it('names the job that needs a payday to count from', () => {
+    const job = everyTwoWeeks(undefined);
+    expect(currentPayPeriod([job], '2026-09-23')).toBeNull();
+    expect(whyNoPayPeriod([job], '2026-09-23')).toEqual({ kind: 'needsRecentPayday', source: job });
+  });
+
+  it('treats a first payday still in the future the same way', () => {
+    const job = everyTwoWeeks('2026-10-02');
+    expect(currentPayPeriod([job], '2026-09-23')).toBeNull();
+    expect(whyNoPayPeriod([job], '2026-09-23')).toEqual({ kind: 'needsRecentPayday', source: job });
+  });
+});
+
+describe('paydaysFrom', () => {
+  // 15th and last day; on the 15th itself one job is paid today.
+  const paidToday = income({ name: 'Main job', daysOfMonth: [15, 31], netMinor: 185_000 });
+  const paidLater = income({ name: 'Weekend job', frequency: 'monthly', daysOfMonth: [20], netMinor: 40_000 });
+
+  it('splits paydays into today and still to come', () => {
+    const p = paydaysFrom([paidToday, paidLater], '2026-09-15');
+    expect(p.today.map((x) => x.source.name)).toEqual(['Main job']);
+    expect(p.soon.map((x) => x.source.name)).toEqual(['Weekend job']);
+  });
+
+  // "About $X a month between them" left out a job whose payday was today,
+  // understating the month by a whole paycheck's worth of income.
+  it('counts every job in the monthly figure, including one paid today', () => {
+    const p = paydaysFrom([paidToday, paidLater], '2026-09-15');
+    expect(p.monthlyMinor).toBe(185_000 * 2 + 40_000);
   });
 });

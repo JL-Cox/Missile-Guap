@@ -20,6 +20,13 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'self'; object-src 'none'"
     />
 
+    <!--
+      Never tell anywhere where it was linked from. The app has no outbound
+      links, so this should never matter - it is here so that stays true even if
+      one is ever added by mistake.
+    -->
+    <meta name="referrer" content="no-referrer" />
+
     <title>Steady</title>
     <meta name="description" content="Notes, day plan, reminders and subscriptions. Stored only on this device." />
     <link rel="manifest" href="/manifest.webmanifest" />

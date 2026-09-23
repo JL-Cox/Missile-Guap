@@ -16,7 +16,9 @@ you push, using `.github/workflows/deploy.yml`. Your job is to turn that on once
 
 ## Step 0: the one decision
 
-Your repo is **private**, and that matters:
+This repo is **public** - anyone can read its source code on GitHub. That is
+what lets GitHub Pages host it for free. If it were ever made private, the
+choice looks like this:
 
 | | Works with a private repo? | Cost |
 | --- | --- | --- |
@@ -25,12 +27,12 @@ Your repo is **private**, and that matters:
 | **Cloudflare Pages** | Yes | Free |
 | **Netlify** | Yes | Free |
 
-**Making the repo public does not expose your data.** The repo contains the
-app's *source code* — the same code you can read in `src/`. Your notes, tasks
-and subscriptions live in your phone's browser storage and are never uploaded
-anywhere, by anyone, including you. There is no database in this project to
-leak. Someone reading the repo learns how the app works, not what you wrote in
-it.
+**A public repo does not expose your data.** The repo contains the app's
+*source code* — the same code you can read in `src/`. Your notes, tasks,
+subscriptions and income live in your phone's browser storage and are not in
+the repo. The app itself never uploads them; the only way anything leaves the
+phone is a backup file you save or a calendar entry you add. Someone reading
+the repo learns how the app works, not what you wrote in it.
 
 That said, if a public repo feels wrong, **Cloudflare Pages is free, works with
 private repos, and takes about the same number of clicks.** Jump to
@@ -40,7 +42,9 @@ private repos, and takes about the same number of clicks.** Jump to
 
 ## Option A: GitHub Pages
 
-### 1. Make the repo public *(skip if you have GitHub Pro)*
+### 1. Make the repo public *(already done for this repo - skip it)*
+
+Only needed if the repo is private and you do not have GitHub Pro:
 
 1. Go to **https://github.com/JL-Cox/Missile-Guap/settings**
 2. Scroll to the very bottom, to the red **Danger Zone** box
@@ -64,7 +68,7 @@ integration`. Ten seconds of clicking, once, and never again.
 > publishes a broken page. "GitHub Actions" tells it to run the build first.
 >
 > **If you see an upgrade prompt instead of a Source dropdown**, the repository
-> is still private. Do step 1 first — the dropdown does not exist until then.
+> has been made private. Do step 1 first — the dropdown does not exist until then.
 
 ### 3. Run the build
 
@@ -103,6 +107,11 @@ https://jl-cox.github.io/Missile-Guap/
 You now have a Steady icon in your app drawer. Opening it launches full screen,
 with no browser address bar. Long-press the icon for shortcuts straight to
 *Write something down* or *Add a subscription*.
+
+**Check the icon for a small briefcase badge.** On a phone with a work profile,
+that badge means it went into the work profile, which your employer manages and
+can wipe. Remove it, and install it again from Chrome in your *personal*
+profile (the Chrome icon without the badge).
 
 ### 6. Turn on notifications
 
@@ -169,6 +178,13 @@ offline support and reminders.
 Pages is not switched on yet — step 2. A workflow genuinely cannot do this part
 for you, whatever the `configure-pages` action's `enablement` option suggests.
 
+**A red ❌ at the *Privacy check* step.**
+That is the gate doing its job: the build contains code that could send data
+somewhere or open another site, or the page's security policy has changed.
+Nothing was published - the phone keeps the last good version. The step's log
+names each problem on a `FAIL` line. Run `npm run build && npm run privacy`
+locally to see the same list.
+
 **Blank white screen after installing.**
 Almost always a base-path problem — the app built for the wrong folder. The
 workflow handles this automatically; if you built by hand, use
@@ -217,11 +233,12 @@ data are separate stores, so an update never touches your data, and clearing the
 cache never speeds one up.
 
 There is nothing to clear by hand in any case: the service worker deletes its own
-stale cache every time a new version activates.
+stale cache every time a new version activates - and only its own, the caches
+named `steady-…`, since cache storage belongs to the whole address.
 
 ```js
 const names = await caches.keys();
-await Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n)));
+await Promise.all(names.filter((n) => n.startsWith(OURS) && n !== CACHE).map((n) => caches.delete(n)));
 ```
 
 If you ever want to know which build is on the phone, the cache name is the
@@ -232,11 +249,18 @@ commit it was built from.
 There is **no copy of your data anywhere except that phone**. Clearing Chrome's
 site data deletes everything. So does losing the phone.
 
-Storage is shared per *origin*, not per folder. Everything you publish under
-`jl-cox.github.io` shares one storage area, so another app you host there could
-read Steady's database. Nobody else can - not other apps on the phone, not other
-websites - but if that bothers you, put Steady on its own custom domain, or on
-Cloudflare Pages where it gets its own hostname.
+Storage is shared per *origin*, not per folder. Every GitHub Pages site
+published from the `JL-Cox` account lives under `jl-cox.github.io` and shares
+one storage area, so another site you publish there could read Steady's
+database. **Don't publish any other Pages site from this account.** Other apps
+on the phone and websites at other addresses cannot read it. If you ever want
+other Pages sites, put Steady on its own custom domain first, or on Cloudflare
+Pages where it gets its own hostname.
+
+The backup file holds everything, as plain readable text - anyone who opens it
+can read all of it. Deleting something in the app does not delete it from a
+backup file you saved earlier, or from a calendar entry you added; delete those
+separately if you want them gone.
 
 **Settings → Save a backup file** writes a plain JSON file you can open in any
 text editor. Do it occasionally, and keep it somewhere you trust. Restoring
@@ -244,7 +268,9 @@ offers two modes:
 
 - **Add what's missing** — keeps everything on the device, only adds records it
   hasn't seen. Safe to run twice; can't delete anything.
-- **Wipe and replace** — deletes everything first, then restores the file
+- **Wipe and replace** — first shows what the file holds ("From 21 Sep: 42
+  tasks, 18 notes…") and asks. Only when you say yes does it delete everything
+  and restore the file
   exactly. This is the "new phone" option.
 
 A file Steady didn't write is rejected with an explanation, and nothing changes.

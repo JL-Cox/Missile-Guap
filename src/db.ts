@@ -42,6 +42,34 @@ class SteadyDb extends Dexie {
 
 export const db = new SteadyDb();
 
+/**
+ * Every table that holds something you wrote - which is every table except
+ * settings. Read off the schema above rather than listed by hand, because a
+ * hand-kept list is how "Delete everything" once cleared four tables of five
+ * and left every paycheck behind while saying it had deleted everything.
+ */
+export function dataTables(): Table<{ id: string }, string>[] {
+  return db.tables.filter((t) => t.name !== 'settings') as Table<{ id: string }, string>[];
+}
+
+/**
+ * Deletes everything you wrote from this device, in one transaction so it is
+ * all or nothing. Settings stay, so the app still looks the way you left it.
+ */
+export async function wipeAll(): Promise<void> {
+  const tables = dataTables();
+  await db.transaction('rw', tables, async () => {
+    await Promise.all(tables.map((t) => t.clear()));
+  });
+}
+
+/** How many records each table holds, keyed by table name. */
+export async function countAll(): Promise<Record<string, number>> {
+  const tables = dataTables();
+  const counts = await Promise.all(tables.map((t) => t.count()));
+  return Object.fromEntries(tables.map((t, i) => [t.name, counts[i]]));
+}
+
 export function newId(): string {
   // crypto.randomUUID is available in every browser that can install a PWA.
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();

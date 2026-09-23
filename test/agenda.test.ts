@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { finishedWithoutDate, unscheduled } from '../src/lib/agenda';
-import type { Task } from '../src/types';
+import { agendaFor, finishedWithoutDate, unscheduled, upcomingBills } from '../src/lib/agenda';
+import type { Subscription, Task } from '../src/types';
 
 /**
  * These two selectors decide what the Backlog contains. Until now agenda.ts had
@@ -76,5 +76,23 @@ describe('finishedWithoutDate', () => {
     const open = new Set(unscheduled(items).map((t) => t.id));
     const done = new Set(finishedWithoutDate(items).map((t) => t.id));
     expect([...open].filter((id) => done.has(id))).toEqual([]);
+  });
+});
+
+describe('a subscription cancelled today', () => {
+  const cancelledToday: Subscription = {
+    id: 's1', name: 'Gym', amountMinor: 3_000, currency: 'USD', cycle: 'monthly', every: 1,
+    firstBilled: '2026-01-23', notes: '', cancelHow: '', remindDaysBefore: 3, createdAt: 0, updatedAt: 0,
+    endedOn: '2026-09-23',
+  };
+
+  it('still shows its charge on Today, the same as the next-charge line does', () => {
+    expect(agendaFor('2026-09-23', [], [cancelledToday]).map((i) => i.title)).toEqual(['Gym renews']);
+    expect(upcomingBills([cancelledToday], 14, '2026-09-23').map((b) => b.date)).toEqual(['2026-09-23']);
+  });
+
+  it('has nothing after that', () => {
+    expect(agendaFor('2026-10-23', [], [cancelledToday])).toEqual([]);
+    expect(upcomingBills([cancelledToday], 60, '2026-09-24')).toEqual([]);
   });
 });

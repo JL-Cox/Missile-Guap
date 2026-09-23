@@ -1,7 +1,7 @@
 import type { DateKey, Subscription, Task } from '../types';
 import { billingDatesBetween, nextBilling } from './recurrence';
 import { addDays, atTime, daysBetween, todayKey } from './time';
-import { yearlyMinor } from './money';
+import { isActive, isOngoing, yearlyMinor } from './money';
 
 /**
  * One ordered list for a day: timed things in time order, then untimed things.
@@ -44,7 +44,8 @@ export function agendaFor(date: DateKey, tasks: Task[], subs: Subscription[]): A
   }
 
   for (const sub of subs) {
-    if (sub.endedOn) continue;
+    // Cancelled today still charges today, as the next-charge line says.
+    if (!isActive(sub, date)) continue;
     if (billingDatesBetween(sub, date, date).length === 0) continue;
     items.push({
       key: `bill-${sub.id}`,
@@ -74,7 +75,7 @@ export function upcomingBills(subs: Subscription[], days: number, from: DateKey 
   const to = addDays(from, days);
   const out: UpcomingBill[] = [];
   for (const sub of subs) {
-    if (sub.endedOn) continue;
+    if (!isActive(sub, from)) continue;
     for (const date of billingDatesBetween(sub, from, to)) {
       out.push({ sub, date, inDays: daysBetween(from, date) });
     }
@@ -114,7 +115,7 @@ export function finishedWithoutDate(tasks: Task[], limit = 10): Task[] {
 
 /** The single most expensive active subscription, for the "worth a look?" prompt. */
 export function priciest(subs: Subscription[]): Subscription | null {
-  const active = subs.filter((s) => !s.endedOn);
+  const active = subs.filter(isOngoing);
   if (active.length === 0) return null;
   return active.reduce((max, s) => (yearlyMinor(s) > yearlyMinor(max) ? s : max));
 }

@@ -1,6 +1,7 @@
-import type { BillingCycle, IncomeSource, Subscription } from '../types';
+import type { BillingCycle, DateKey, IncomeSource, Subscription } from '../types';
 import { isActiveIncome, PERIODS_PER_YEAR as PAY_PERIODS_PER_YEAR } from './pay';
 import { isFixedDayCycle } from './recurrence';
+import { daysBetween, todayKey } from './time';
 
 /** Average number of billing periods in a year, for normalising costs. */
 const PERIODS_PER_YEAR: Record<BillingCycle, number> = {
@@ -11,7 +12,27 @@ const PERIODS_PER_YEAR: Record<BillingCycle, number> = {
   yearly: 1,
 };
 
-export function isActive(sub: Subscription): boolean {
+/**
+ * Whether a subscription can still take money on or after `on`.
+ *
+ * A charge on or before the end date counts - the same rule `nextBilling`
+ * uses. "Mark as cancelled" sets the end date to today, and today's charge has
+ * usually gone already; it used to vanish from every real-date total the
+ * moment it was marked, while the next-charge line still showed it.
+ */
+export function isActive(sub: Subscription, on: DateKey = todayKey()): boolean {
+  return !sub.endedOn || daysBetween(on, sub.endedOn) >= 0;
+}
+
+/**
+ * Whether a subscription is still running at all - not marked as cancelled.
+ *
+ * Used for the averages ("every month, roughly") and the lists, which are
+ * about what it costs from here on. A cancelled subscription costs nothing
+ * from here on, even on the day you cancel it; any charge still due that day
+ * is counted by the real-date totals through `isActive`.
+ */
+export function isOngoing(sub: Subscription): boolean {
   return !sub.endedOn;
 }
 
@@ -36,7 +57,7 @@ export function monthlyMinor(sub: Subscription): number {
 }
 
 export function totalYearlyMinor(subs: Subscription[]): number {
-  return subs.filter(isActive).reduce((sum, s) => sum + yearlyMinor(s), 0);
+  return subs.filter(isOngoing).reduce((sum, s) => sum + yearlyMinor(s), 0);
 }
 
 export function totalMonthlyMinor(subs: Subscription[]): number {
@@ -46,7 +67,7 @@ export function totalMonthlyMinor(subs: Subscription[]): number {
 /** Group active subscriptions by category, most expensive first. */
 export function byCategoryYearly(subs: Subscription[]): { category: string; minor: number }[] {
   const map = new Map<string, number>();
-  for (const s of subs.filter(isActive)) {
+  for (const s of subs.filter(isOngoing)) {
     const key = s.category?.trim() || 'Uncategorised';
     map.set(key, (map.get(key) ?? 0) + yearlyMinor(s));
   }

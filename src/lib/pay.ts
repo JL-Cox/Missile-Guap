@@ -51,10 +51,21 @@ function paydaysInMonth(days: number[], year: number, monthIndex: number): DateK
   return [...new Set(monthDays(days, year, monthIndex))];
 }
 
-function anchorDays(source: IncomeSource): number[] {
+/**
+ * The days of the month this job pays on: one for monthly, two for twice a
+ * month. The first ones entered win, so a monthly job left holding "15, 31"
+ * from an earlier choice is paid on the 15th - once, as the totals already
+ * assumed - rather than twice.
+ */
+export function anchorDays(source: Pick<IncomeSource, 'frequency' | 'daysOfMonth'>): number[] {
+  const entered = (source.daysOfMonth ?? [])
+    .filter((d) => Number.isFinite(d))
+    .map((d) => Math.min(31, Math.max(1, Math.floor(d))));
+  const distinct = [...new Set(entered)];
+  if (source.frequency === 'monthly') return [distinct[0] ?? 1];
   // A sensible default rather than nothing: the 15th and the last day is the
   // most common US twice-a-month schedule.
-  return normaliseDays(source.daysOfMonth, source.frequency === 'semimonthly' ? [15, 31] : [1]);
+  return normaliseDays(distinct.slice(0, 2), [15, 31]);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Task } from '../types';
-import { completeTask, stepProgress, toggleStep, uncompleteTask } from '../lib/tasks';
+import { completeTask, describeLastDone, stepProgress, toggleStep, uncompleteTask } from '../lib/tasks';
 import { describeDate, describeDuration } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
 import { TagList } from './ui';
@@ -59,6 +59,9 @@ export default function TaskRow({
           {showDate && task.date && <span>{describeDate(task.date)}</span>}
           {task.durationMin && <span>{describeDuration(task.durationMin)}</span>}
           {task.recurrence && <span>{describeRecurrence(task.recurrence)}</span>}
+          {/* A repeat rolls forward when ticked, so this is the only place
+              "did I already do it?" can be answered. A fact, never a streak. */}
+          {task.recurrence && task.lastDoneAt && <span>{describeLastDone(task.lastDoneAt)}</span>}
           {task.energy && <span>{task.energy} energy</span>}
           {progress.total > 0 && (
             <span>
@@ -87,7 +90,8 @@ export default function TaskRow({
             </div>
             {task.date && (
               <AddToCalendar
-                build={() => calendarForTask(task)}
+                build={(options) => calendarForTask(task, Date.now(), options)}
+                kind="task"
                 filename={icsFilename(task.title)}
                 nothingToAdd="Give this a day first, then it can go in your calendar."
               />

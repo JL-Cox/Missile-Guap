@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { db, getSettings, saveSettings } from '../db';
-import type { CustomTheme, Settings as SettingsType, ThemeName } from '../types';
+import { countAll, db, getSettings, saveSettings, wipeAll } from '../db';
+import type { CustomTheme, ReminderContent, Settings as SettingsType, ThemeName } from '../types';
 import {
   ACCENTS,
   ACCENT_IDS,
@@ -9,8 +9,21 @@ import {
   GROUND_IDS,
   resolveCustom,
 } from '../lib/theme';
-import { BackupError, backupFilename, downloadFile, exportBackup, importBackup, parseBackup, type ImportMode } from '../lib/backup';
-import { buildCalendar } from '../lib/ics';
+import {
+  BackupError,
+  backupDate,
+  backupFilename,
+  countBackup,
+  describeCounts,
+  downloadFile,
+  exportBackup,
+  importBackup,
+  parseBackup,
+  totalRecords,
+  type Backup,
+  type ImportMode,
+} from '../lib/backup';
+import { buildCalendar, CALENDAR_CAUTION, calendarContents } from '../lib/ics';
 import { formatMoney } from '../lib/money';
 import { notificationSupport, requestPermission, type PermissionState } from '../lib/notify';
 import { formatBytes, requestPersistence, storageOrigin, storageStatus, type StorageStatus } from '../lib/storage';
@@ -28,6 +41,17 @@ const THEMES: { id: ThemeName; label: string; hint: string }[] = [
   { id: 'midnight', label: 'Midnight', hint: 'Nearly black, so the screen gives off as little light as it can.' },
   { id: 'contrast', label: 'High contrast', hint: 'Black on white, heavier borders. For when nothing else is clear enough.' },
   { id: 'custom', label: 'Custom', hint: 'Your own paper and your own colour. Set them just below.' },
+];
+
+/**
+ * What a reminder shows on the lock screen. The default names the task and the
+ * time and nothing more; notes are opt-in, because a lock screen and a watch
+ * face can be read by whoever is nearby.
+ */
+const REMINDER_CHOICES: { id: ReminderContent; label: string }[] = [
+  { id: 'titleTime', label: 'Title and time' },
+  { id: 'generic', label: 'Just "You have a reminder"' },
+  { id: 'titleNotes', label: 'Title and notes' },
 ];
 
 /**
@@ -58,7 +82,13 @@ export default function Settings({
   const [permission, setPermission] = useState<PermissionState>(notificationSupport());
   const [importMode, setImportMode] = useState<ImportMode>('merge');
   const [importError, setImportError] = useState('');
-  const [counts, setCounts] = useState({ captures: 0, tasks: 0, notes: 0, subscriptions: 0 });
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  /**
+   * A backup file that has been read but not yet restored. Replacing wipes the
+   * phone, so the file is opened and described first, and nothing is touched
+   * until you have seen what is in it and said yes.
+   */
+  const [pending, setPending] = useState<Backup | null>(null);
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   /** Subscriptions saved under a different currency than the one now set. */
   const [mismatched, setMismatched] = useState(0);
@@ -66,12 +96,7 @@ export default function Settings({
 
   useEffect(() => {
     void (async () => {
-      setCounts({
-        captures: await db.captures.count(),
-        tasks: await db.tasks.count(),
-        notes: await db.notes.count(),
-        subscriptions: await db.subscriptions.count(),
-      });
+      setCounts(await countAll());
       setStorage(await storageStatus());
       const subs = await db.subscriptions.toArray();
       setMismatched(subs.filter((s) => s.currency !== settings.currency).length);
@@ -113,20 +138,31 @@ export default function Settings({
       incomes,
       formatAmount: (sub) => formatMoney(sub.amountMinor, sub.currency),
       formatPay: (src) => formatMoney(src.netMinor, src.currency),
+      includeNotes: settings.calendarIncludeNotes,
     });
     downloadFile('steady.ics', ics, 'text/calendar');
     onToast('Calendar file saved. Open it to add everything to your phone calendar.');
   };
 
+  const restore = async (backup: Backup, mode: ImportMode) => {
+    const result = await importBackup(backup, mode);
+    onChange(await getSettings());
+    onToast(
+      mode === 'merge' && totalRecords(result) === 0
+        ? 'Nothing new - everything in this file is already here.'
+        : `Restored ${describeCounts(result)}.`,
+    );
+  };
+
   const doImport = async (file: File) => {
     setImportError('');
+    setPending(null);
     try {
       const backup = parseBackup(await file.text());
-      const result = await importBackup(backup, importMode);
-      onChange(await getSettings());
-      onToast(
-        `Restored ${result.tasks} tasks, ${result.notes} notes, ${result.subscriptions} subscriptions, ${result.captures} inbox items.`,
-      );
+      // Adding what's missing cannot delete anything, so it just runs. Wiping
+      // waits for a yes, below, with the file's contents in front of you.
+      if (importMode === 'replace') setPending(backup);
+      else await restore(backup, 'merge');
     } catch (err) {
       setImportError(err instanceof BackupError ? err.message : 'That file could not be read. Nothing has changed.');
     } finally {
@@ -134,8 +170,20 @@ export default function Settings({
     }
   };
 
+  const confirmReplace = async () => {
+    if (!pending) return;
+    const backup = pending;
+    setPending(null);
+    try {
+      await restore(backup, 'replace');
+    } catch {
+      // The restore runs in one transaction, so a failure leaves the phone as it was.
+      setImportError('That file could not be restored. Nothing has changed.');
+    }
+  };
+
   const wipe = async () => {
-    await Promise.all([db.captures.clear(), db.tasks.clear(), db.notes.clear(), db.subscriptions.clear()]);
+    await wipeAll();
     onChange(await saveSettings({ rev: settings.rev + 1 }));
     onToast('Everything has been deleted from this device.');
   };
@@ -187,6 +235,7 @@ export default function Settings({
         <div className="field">
           <label htmlFor="text-scale">Text size ({Math.round(settings.textScale * 100)}%)</label>
           <input
+            autoComplete="off"
             id="text-scale"
             type="range"
             min={0.9}
@@ -232,6 +281,7 @@ export default function Settings({
         <div className="field">
           <label htmlFor="lookahead">Show money leaving in the next {settings.lookaheadDays} days</label>
           <input
+            autoComplete="off"
             id="lookahead"
             type="range"
             min={3}
@@ -246,6 +296,7 @@ export default function Settings({
         <div className="field">
           <label htmlFor="currency">Currency</label>
           <input
+            autoComplete="off"
             id="currency"
             type="text"
             value={settings.currency}
@@ -305,24 +356,57 @@ export default function Settings({
           </button>
         )}
 
+        <div className="field">
+          <label>What a reminder shows</label>
+          <div className="btn-row" role="group" aria-label="What a reminder shows">
+            {REMINDER_CHOICES.map((choice) => (
+              <button
+                key={choice.id}
+                type="button"
+                aria-pressed={settings.reminderContent === choice.id}
+                className={`btn btn-sm${settings.reminderContent === choice.id ? ' btn-primary' : ''}`}
+                onClick={() => void patch({ reminderContent: choice.id })}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+          <p className="faint">
+            Reminders can show on your lock screen and on a paired watch, where anyone nearby can read them.
+          </p>
+        </div>
+
         <button type="button" className="btn" onClick={() => void doCalendar()}>
           Export everything to my calendar (.ics)
         </button>
         <p className="faint">
-          Makes one file with every dated task and every subscription renewal, including repeats and warnings.
+          Makes one file with every dated task, subscription renewal and payday, including repeats and warnings.
           Open it and your calendar app takes over the reminding.
+        </p>
+        <p className="faint">
+          {calendarContents('all', settings.calendarIncludeNotes)} {CALENDAR_CAUTION}
+        </p>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={settings.calendarIncludeNotes}
+            onChange={(e) => void patch({ calendarIncludeNotes: e.target.checked })}
+          />
+          <span>Put notes, steps and how to cancel into calendar entries</span>
+        </label>
+        <p className="faint">
+          Off unless you turn it on. How to cancel can hold a login, and a calendar is easy to share by accident.
+          This applies to every "Add to my calendar" button too.
         </p>
       </Section>
 
       <Section title="Your data">
         <div className="card stack-sm">
-          <p className="small">
-            On this device: {counts.tasks} tasks, {counts.notes} notes, {counts.subscriptions} subscriptions,{' '}
-            {counts.captures} inbox items.
-          </p>
+          <p className="small">On this device: {describeCounts(counts)}.</p>
           <p className="faint">
-            All of it lives in this browser's storage on this phone. It has never been sent anywhere, because this
-            app cannot send anything anywhere - see below.
+            All of it lives in this browser's storage on this phone. It has not been sent anywhere unless you sent
+            it yourself - as a backup file, or as entries added to your calendar. The app cannot send anything by
+            itself - see below.
           </p>
         </div>
 
@@ -330,12 +414,23 @@ export default function Settings({
           <h3>Where exactly it lives</h3>
           <p className="small">
             In your browser's own database, filed under <code>{storageOrigin()}</code>, inside Chrome's private
-            storage on this phone. No other app can read it. Neither can any other website. Neither can GitHub,
-            who only ever sent your phone the app's files.
+            storage on this phone. Other apps on the phone cannot read it, and neither can websites at other
+            addresses. GitHub only ever sent your phone the app's files; it never receives what you write.
+          </p>
+          <p className="small">
+            One exception, stated plainly: browser storage belongs to the whole address, not to this app. Any
+            other page published at <code>{storageOrigin()}</code> could read it.{' '}
+            {storageOrigin().endsWith('.github.io')
+              ? 'Every GitHub Pages site from the same GitHub account is published at that address, so do not publish any other Pages site from that account.'
+              : 'So do not publish anything else at that address.'}
+          </p>
+          <p className="small">
+            If the Steady icon on your home screen has a small briefcase badge, it is in your work profile, which
+            your employer manages and can wipe. Install it from Chrome in your personal profile instead.
           </p>
           {storage?.databaseBytes !== undefined ? (
             <p className="faint">
-              Your notes, tasks and subscriptions take up {formatBytes(storage.databaseBytes)}.
+              Everything you have written takes up {formatBytes(storage.databaseBytes)}.
               {storage.usageBytes !== undefined &&
                 ` The app's own offline copy of itself takes another ${formatBytes(Math.max(0, storage.usageBytes - storage.databaseBytes))}.`}
             </p>
@@ -384,7 +479,12 @@ export default function Settings({
         </button>
         <p className="faint">
           Do this now and then. If you clear your browser data or lose the phone, the backup file is the only copy.
-          Put it somewhere you trust.
+        </p>
+        <p className="faint">
+          The file holds everything - every task, note, subscription, income and inbox item, and your settings -
+          as plain readable text. Anyone who opens it can read all of it, so put it somewhere you trust.
+          Deleting something in the app does not delete it from backup files you saved earlier, or from calendar
+          entries you added.
         </p>
 
         <hr className="divider" />
@@ -412,7 +512,7 @@ export default function Settings({
           <p className="faint">
             {importMode === 'merge'
               ? 'Keeps everything already here and only adds records it has not seen before. Safe to run twice.'
-              : 'Deletes everything on this device first, then restores the file exactly. Use this on a new phone.'}
+              : 'Shows you what the file holds first. Only when you say yes does it delete everything on this device and restore the file exactly. Use this on a new phone.'}
           </p>
         </div>
 
@@ -427,6 +527,29 @@ export default function Settings({
           }}
         />
         {importError && <p className="pill pill-warn">{importError}</p>}
+        {pending && (
+          <div className="card stack-sm" role="status">
+            <p className="small">
+              {backupDate(pending) ? `From ${backupDate(pending)}: ` : 'This file holds: '}
+              {describeCounts(countBackup(pending))}.
+            </p>
+            <p className="small">
+              Replace everything on this phone with it? What is here now ({describeCounts(counts)}) will be
+              deleted.
+            </p>
+            <div className="btn-row">
+              <ConfirmButton
+                label="Replace everything with this file"
+                confirmLabel="Yes, replace everything"
+                className="btn btn-sm"
+                onConfirm={() => void confirmReplace()}
+              />
+              <button type="button" className="btn btn-quiet btn-sm" onClick={() => setPending(null)}>
+                Don't restore it
+              </button>
+            </div>
+          </div>
+        )}
 
         <hr className="divider" />
 
@@ -436,20 +559,27 @@ export default function Settings({
           className="btn"
           onConfirm={() => void wipe()}
         />
-        <p className="faint">Save a backup first. This cannot be undone and there is no copy anywhere else.</p>
+        <p className="faint">
+          Save a backup first if you might want any of it back - this cannot be undone. It does not touch backup
+          files you saved earlier or entries you added to your calendar; delete those separately if you want them
+          gone.
+        </p>
       </Section>
 
       <Section title="What this app does with your data">
         <div className="card stack-sm">
           <p className="small">
-            <strong>Nothing leaves this device.</strong> Not to us, not to anyone. There is no account, no login, no
-            server, no analytics, no crash reporting, no ads and no third-party code loaded from anywhere.
+            <strong>Nothing leaves this device unless you send it.</strong> Not to us, not to anyone. The only ways
+            out are the buttons that say so: saving a backup file, and adding things to your calendar. There is no
+            account, no login, no server, no analytics, no crash reporting, no ads and no third-party code loaded
+            from anywhere.
           </p>
           <p className="small">
             You do not have to take that on trust. The page ships with a Content Security Policy of{' '}
-            <code>connect-src 'none'</code>, which means the browser itself refuses to let this page open a network
-            connection. If any code ever tried to send your notes somewhere, the browser would block it and log the
-            attempt to the console.
+            <code>connect-src 'none'</code>, which means the browser itself refuses to let this page's code open a
+            network connection. If any code tried to send your notes somewhere that way, the browser would block it
+            and log the attempt to the console. Before every release, a check also refuses to publish a build that
+            contains code for sending anything or for opening another site.
           </p>
           <p className="small">
             The only network request in the whole app is your browser fetching the app's own files, and the service

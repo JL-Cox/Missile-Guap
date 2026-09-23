@@ -1,5 +1,6 @@
-import { db } from '../db';
-import type { Task } from '../types';
+import { db, getSettings } from '../db';
+import type { ReminderContent, Task } from '../types';
+import { clockLabel } from './time';
 
 /**
  * Honest limits, because a reminder you *think* is set is worse than none:
@@ -59,10 +60,41 @@ async function show(title: string, body: string, tag: string): Promise<void> {
   }
 }
 
+/**
+ * What a notification says. It can be read off a locked phone, or a watch, by
+ * whoever is nearby - so by default it is the title and the time and nothing
+ * else. Notes are where people keep card numbers and what the doctor said;
+ * they only appear if you chose that in Settings.
+ */
+export function reminderText(task: Task, content: ReminderContent): { title: string; body: string } {
+  if (content === 'generic') return { title: 'Steady', body: 'You have a reminder' };
+  const title = task.title.trim() || 'Reminder';
+  const when = `Reminder for ${clockLabel(task.remindAt ?? Date.now())}`;
+  if (content === 'titleNotes') return { title, body: task.notes?.trim() || when };
+  return { title, body: when };
+}
+
+/**
+ * Whether a task's reminder should go off at `at`.
+ *
+ * A reminder belongs to a day, so a task with no day never fires. The editor
+ * now clears the reminder when the date is taken off; this also quietens any
+ * left over from before it did.
+ */
+export function isDueReminder(task: Task, at: number): boolean {
+  return (
+    !task.doneAt &&
+    task.date !== undefined &&
+    task.remindAt !== undefined &&
+    task.remindAt <= at &&
+    !task.remindedAt
+  );
+}
+
 /** Tasks whose reminder time has arrived and which have not been notified yet. */
 export async function dueReminders(at: number = Date.now()): Promise<Task[]> {
   const candidates = await db.tasks.where('remindAt').belowOrEqual(at).toArray();
-  return candidates.filter((t) => !t.doneAt && t.remindAt !== undefined && !t.remindedAt);
+  return candidates.filter((t) => isDueReminder(t, at));
 }
 
 async function markReminded(tasks: Task[], at: number): Promise<void> {
@@ -84,7 +116,7 @@ export interface Tick {
  * notification; anything older is returned as `missed` so the UI can show it
  * calmly in one place rather than firing a pile of stale alerts at once.
  */
-export async function runOnce(at: number = Date.now()): Promise<Tick> {
+export async function runOnce(at: number = Date.now(), content: ReminderContent = 'titleTime'): Promise<Tick> {
   const due = await dueReminders(at);
   if (due.length === 0) return { fired: [], missed: [] };
 
@@ -92,8 +124,8 @@ export async function runOnce(at: number = Date.now()): Promise<Tick> {
   const missed = due.filter((t) => at - (t.remindAt ?? 0) > MISSED_AFTER_MS);
 
   for (const task of fired) {
-    const when = new Date(task.remindAt ?? at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    await show(task.title || 'Reminder', task.notes?.trim() || `Reminder set for ${when}`, `task-${task.id}`);
+    const { title, body } = reminderText(task, content);
+    await show(title, body, `task-${task.id}`);
   }
   await markReminded(due, at);
   return { fired, missed };
@@ -106,7 +138,10 @@ export function startScheduler(onTick: (tick: Tick) => void, intervalMs = 30_000
   const pass = async () => {
     if (stopped) return;
     try {
-      const tick = await runOnce();
+      // Read fresh each pass, so changing what reminders show applies to the
+      // very next one rather than after a restart.
+      const { reminderContent } = await getSettings();
+      const tick = await runOnce(Date.now(), reminderContent);
       if (!stopped && (tick.fired.length || tick.missed.length)) onTick(tick);
     } catch {
       // A failed pass must never take the app down; the next one will retry.

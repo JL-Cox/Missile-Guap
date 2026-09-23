@@ -1,4 +1,4 @@
-import type { BillingCycle, IntervalCycle } from '../types';
+import type { BillingCycle, IntervalCycle, Subscription } from '../types';
 
 /**
  * The billing rhythms offered as buttons.
@@ -156,6 +156,29 @@ export function findPreset(name: string): ServicePreset | undefined {
   const needle = name.trim().toLowerCase();
   if (!needle) return undefined;
   return SERVICE_PRESETS.find((p) => p.name.toLowerCase() === needle);
+}
+
+/**
+ * What changes when the name box changes.
+ *
+ * The name is always exactly what was typed. It used to be replaced by the
+ * matching preset's name the moment the box held one, trimmed: "Gym " became
+ * "Gym", and "Gym membership" was saved as "Gymmembership". A known name may
+ * still fill in the category and the usual rhythm, but only while you have not
+ * chosen them - it never overwrites a choice.
+ */
+export function whenNameTyped(
+  draft: Pick<Subscription, 'category' | 'cycle' | 'every'>,
+  typed: string,
+): Partial<Subscription> {
+  const patch: Partial<Subscription> = { name: typed };
+  const preset = findPreset(typed);
+  if (!preset) return patch;
+  if (!draft.category) patch.category = preset.category;
+  // Monthly, every 1, is what a new subscription starts on, so it is the one
+  // rhythm that counts as "not chosen yet".
+  if (draft.cycle === 'monthly' && draft.every === 1 && preset.cycle !== 'monthly') patch.cycle = preset.cycle;
+  return patch;
 }
 
 /** The category buttons to show: the common ones, plus any already in use. */

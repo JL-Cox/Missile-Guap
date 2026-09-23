@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { BACKUP_FORMAT, BackupError, backupFilename, parseBackup } from '../src/lib/backup';
+import {
+  BACKUP_FORMAT,
+  BackupError,
+  backupFilename,
+  countBackup,
+  describeCounts,
+  parseBackup,
+  totalRecords,
+} from '../src/lib/backup';
 
 const good = JSON.stringify({
   format: BACKUP_FORMAT,
@@ -81,5 +89,31 @@ describe('income in backups', () => {
   it('refuses a backup from a future version rather than losing what it cannot read', () => {
     const v3 = JSON.stringify({ format: BACKUP_FORMAT, version: 3 });
     expect(() => parseBackup(v3)).toThrow(/newer version/);
+  });
+});
+
+describe('what a backup holds, said before anything is touched', () => {
+  it('counts every kind of record in the file', () => {
+    const file = parseBackup(
+      JSON.stringify({
+        format: BACKUP_FORMAT,
+        version: 2,
+        tasks: [{ id: 't1' }, { id: 't2' }],
+        notes: [{ id: 'n1' }],
+        incomes: [{ id: 'i1' }],
+      }),
+    );
+    expect(countBackup(file)).toEqual({ captures: 0, tasks: 2, notes: 1, subscriptions: 0, incomes: 1 });
+    expect(totalRecords(countBackup(file))).toBe(4);
+  });
+
+  it('names income, which the old count line left out', () => {
+    expect(describeCounts({ tasks: 42, notes: 18, subscriptions: 9, incomes: 1, captures: 3 })).toBe(
+      '42 tasks, 18 notes, 9 subscriptions, 1 income, 3 inbox items',
+    );
+  });
+
+  it('uses the singular for one and still names a kind at zero', () => {
+    expect(describeCounts({ tasks: 1 })).toBe('1 task, 0 notes, 0 subscriptions, 0 incomes, 0 inbox items');
   });
 });
