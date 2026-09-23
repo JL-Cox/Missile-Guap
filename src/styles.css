@@ -1872,6 +1872,18 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   padding-left: var(--space-5);
 }
 
+/* About's list of recent updates: no markers, each line with its date under it. */
+.update-list {
+  margin: 0;
+  list-style: none;
+}
+
+.update-list > li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 /* The rows of a card that lists several things: space, and a hairline. */
 .card-rows > .divider {
   margin: var(--space-2) 0;

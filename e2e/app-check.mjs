@@ -309,6 +309,23 @@ await page.click('.header button:text-is("Done")');
 await page.waitForTimeout(200);
 check('Settings Done goes back where you were', await page.getAttribute('.nav-btn:has-text("Money")', 'aria-current'), 'page');
 
+// --- About: version, what's new, recent updates, and Back ------------------
+await page.click('.header button:text-is("Settings")');
+await page.click('button:text-is("About and what\'s new")');
+await page.waitForTimeout(200);
+check('About has its own title', await page.textContent('.header h1'), 'About');
+const aboutText = await page.textContent('.main');
+check('About shows a version number', /Version \d+/.test(aboutText), true);
+check("About lists what's new", (await page.locator('section[aria-label="What\'s new"] li').count()) > 0, true);
+const updates = await page.locator('ol[aria-label^="Last 10 updates"] li').count();
+check('About lists between 1 and 10 recent updates', updates >= 1 && updates <= 10, true);
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back from About returns to Settings', await page.locator('button:text-is("About and what\'s new")').count(), 1);
+await page.goBack();
+await page.waitForTimeout(300);
+check('and Back again closes Settings', await page.getAttribute('.nav-btn:has-text("Money")', 'aria-current'), 'page');
+
 // --- a subscription, in one journey -------------------------------------
 await page.click('.nav-btn:has-text("Money")');
 await page.click('button:has-text("Add a subscription")');

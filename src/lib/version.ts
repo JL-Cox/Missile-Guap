@@ -20,6 +20,25 @@ declare const __APP_BUILD__: string;
  */
 export const BUILD_ID: string = typeof __APP_BUILD__ === 'string' ? __APP_BUILD__ : 'dev';
 
+/** Substituted at build time from git (see tools/build-info.ts). */
+declare const __APP_VERSION__: number | null;
+declare const __APP_COMMITS__: { date: string; subject: string }[];
+
+/**
+ * The version number: how many changes the app has had, counting from the very
+ * first. Null when the build could not count them, which About says plainly.
+ */
+export const APP_VERSION: number | null = typeof __APP_VERSION__ === 'number' ? __APP_VERSION__ : null;
+
+/** The last ten changes, newest first: the day and the one-line description. */
+export const RECENT_COMMITS: { date: string; subject: string }[] =
+  typeof __APP_COMMITS__ !== 'undefined' && Array.isArray(__APP_COMMITS__) ? __APP_COMMITS__ : [];
+
+/** "Version 21", or a plain word when there is no number. */
+export function versionLabel(version: number | null = APP_VERSION): string {
+  return version === null ? 'Development version' : `Version ${version}`;
+}
+
 export interface UpdateNotice {
   /** Whether to show the "this app just updated" line. */
   show: boolean;

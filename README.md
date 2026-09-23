@@ -316,7 +316,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-647 unit tests cover the parts where a quiet wrong answer would make the app
+659 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between

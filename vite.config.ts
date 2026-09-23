@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { readBuildInfo } from './tools/build-info';
 
 /**
  * The shipped app declares `connect-src 'none'` so the browser itself refuses
@@ -45,6 +46,9 @@ const BASE = resolveBase();
  * build` distinct.
  */
 const BUILD_ID = process.env.GITHUB_SHA?.slice(0, 7) ?? `dev-${Date.now().toString(36)}`;
+
+/** The version number and recent changes the About screen shows. See tools/build-info.ts. */
+const BUILD_INFO = readBuildInfo();
 
 /**
  * The web manifest lives in public/ and is copied verbatim, so Vite cannot
@@ -114,6 +118,8 @@ export default defineConfig({
     // Lets the running app recognise that it is a different build than the one
     // it last showed the user. See src/lib/version.ts.
     __APP_BUILD__: JSON.stringify(BUILD_ID),
+    __APP_VERSION__: JSON.stringify(BUILD_INFO.version),
+    __APP_COMMITS__: JSON.stringify(BUILD_INFO.commits),
   },
   plugins: [react(), relaxCspInDev(), rewriteManifest(), precacheServiceWorker()],
   build: {

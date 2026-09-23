@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, type Settings as SettingsType, type Task } from './ty
 import { startScheduler } from './lib/notify';
 import { requestPersistence } from './lib/storage';
 import { THEME_TOKENS, resolveCustom } from './lib/theme';
-import { updateNotice } from './lib/version';
+import { updateNotice, versionLabel } from './lib/version';
 import { shortDateTime } from './lib/time';
 import CaptureBar from './components/CaptureBar';
 import {
@@ -25,6 +25,7 @@ import Backlog from './views/Backlog';
 import Notes from './views/Notes';
 import Money from './views/Money';
 import Settings from './views/Settings';
+import About from './views/About';
 
 type ViewId = 'today' | 'inbox' | 'tasks' | 'backlog' | 'notes' | 'money' | 'settings';
 
@@ -85,6 +86,8 @@ export default function App() {
   const toastId = useRef(0);
   const [missed, setMissed] = useState<Task[]>([]);
   const [updated, setUpdated] = useState(false);
+  /** Whether Settings is showing its About page. */
+  const [about, setAbout] = useState(false);
   /** Whether the saved settings have arrived. See the appearance effect below. */
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   /** A search handed to the Tasks screen from Notes. */
@@ -121,6 +124,7 @@ export default function App() {
   const goTo = useCallback(
     (next: ViewId) => {
       if (next === 'settings' && view !== 'settings') setBeforeSettings(view as TabId);
+      if (next !== 'settings') setAbout(false);
       setView(next);
     },
     [view],
@@ -136,6 +140,7 @@ export default function App() {
       the Today screen  (always the first entry - Back from here leaves)
       the tab you are on, if it is not Today
       Settings, if it is open
+      About, if it is open on top of Settings
       an editor or confirmation, if one is open on the tab you are looking at
 
     Back takes the top one away. That is the pattern Android's own apps use for
@@ -145,7 +150,8 @@ export default function App() {
   */
   const tab: TabId = view === 'settings' ? beforeSettings : view;
   const visibleLayer = view !== 'settings' && openLayers.includes(view);
-  const depth = (tab !== 'today' ? 1 : 0) + (view === 'settings' ? 1 : 0) + (visibleLayer ? 1 : 0);
+  const depth =
+    (tab !== 'today' ? 1 : 0) + (view === 'settings' ? (about ? 2 : 1) : 0) + (visibleLayer ? 1 : 0);
   const depthRef = useRef(historyDepth());
   const ignorePops = useRef(0);
 
@@ -173,6 +179,7 @@ export default function App() {
   const back = useLatest(() => {
     const close = view !== 'settings' ? closers.current[view] : undefined;
     if (close) close();
+    else if (view === 'settings' && about) setAbout(false);
     else if (view === 'settings') setView(beforeSettings);
     else if (view !== 'today') setView('today');
   });
@@ -307,13 +314,13 @@ export default function App() {
           <header className="header">
             <div className="header-inner">
               <div>
-                <h1>{TITLES[view]}</h1>
+                <h1>{view === 'settings' && about ? 'About' : TITLES[view]}</h1>
                 {view === 'today' && <p className="faint">{longDate()}</p>}
               </div>
               <button
                 type="button"
                 className={view === 'settings' ? 'btn btn-sm' : 'btn btn-quiet btn-sm'}
-                onClick={() => (view === 'settings' ? setView(beforeSettings) : goTo('settings'))}
+                onClick={() => (view === 'settings' ? goTo(beforeSettings) : goTo('settings'))}
               >
                 {view === 'settings' ? 'Done' : 'Settings'}
               </button>
@@ -326,11 +333,23 @@ export default function App() {
 
             {updated && (
               <div className="card stack-sm" role="status">
-                <div className="spread">
-                  <span className="grow">
-                    <strong>Steady updated.</strong> Your notes, tasks and subscriptions are untouched.
-                  </span>
-                  <button type="button" className="btn btn-sm" onClick={() => setUpdated(false)}>
+                <p>
+                  <strong>Steady updated to {versionLabel().toLowerCase()}.</strong> Your notes, tasks and
+                  subscriptions are untouched.
+                </p>
+                <div className="btn-row">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => {
+                      setUpdated(false);
+                      goTo('settings');
+                      setAbout(true);
+                    }}
+                  >
+                    What's new
+                  </button>
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => setUpdated(false)}>
                     Dismiss
                   </button>
                 </div>
@@ -365,7 +384,12 @@ export default function App() {
                 <LayerContext.Provider value={registrars[id]}>{renderTab(id)}</LayerContext.Provider>
               </div>
             ))}
-            {view === 'settings' && <Settings settings={settings} onChange={setSettings} />}
+            {view === 'settings' &&
+              (about ? (
+                <About onBack={() => setAbout(false)} />
+              ) : (
+                <Settings settings={settings} onChange={setSettings} onAbout={() => setAbout(true)} />
+              ))}
           </main>
 
           <nav className="nav" aria-label="Main">

@@ -27,6 +27,7 @@ import { formatMoney } from '../lib/money';
 import { notificationSupport, requestPermission, type PermissionState } from '../lib/notify';
 import { formatBytes, requestPersistence, storageOrigin, storageStatus, type StorageStatus } from '../lib/storage';
 import { shareOrDownload } from '../lib/share';
+import { versionLabel } from '../lib/version';
 import { ConfirmButton, FormError, Section, useToast } from '../components/ui';
 
 /**
@@ -93,9 +94,12 @@ function swatchStyle(tokens: Record<string, string>): CSSProperties {
 export default function Settings({
   settings,
   onChange,
+  onAbout,
 }: {
   settings: SettingsType;
   onChange: (settings: SettingsType) => void;
+  /** Opens the About page: version, what's new, recent updates. */
+  onAbout: () => void;
 }) {
   const onToast = useToast();
   const [permission, setPermission] = useState<PermissionState>(notificationSupport());
@@ -593,6 +597,17 @@ export default function Settings({
             The trade-off, stated plainly: no sync between devices, and no recovery if you lose the phone without a
             backup. That is the cost of there being nowhere else for your data to be.
           </p>
+        </div>
+      </Section>
+
+      <Section title="About">
+        <div className="card stack-sm">
+          <p>Steady, {versionLabel().toLowerCase()}</p>
+          <div className="btn-row">
+            <button type="button" className="btn btn-sm" onClick={onAbout}>
+              About and what's new
+            </button>
+          </div>
         </div>
       </Section>
     </>
