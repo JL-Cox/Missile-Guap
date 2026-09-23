@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeLastDone,
+  hasTickedStep,
   reminderAt,
   reminderOffset,
+  restartedSteps,
   rolledForward,
   withAnchor,
   withReminder,
@@ -211,6 +213,99 @@ describe('rolledForward', () => {
 
   it('simply finishes a repeat with no day to roll from', () => {
     expect(rolledForward(task({ recurrence: daily }), at).doneAt).toBe(at);
+  });
+
+  it('lets the next appointment have a note of its own', () => {
+    const t = task({ date: '2026-09-23', recurrence: daily, appointment: true, followUpNoteId: 'n1' });
+    const next = rolledForward(t, at);
+    expect(next.followUpNoteId).toBeUndefined();
+    expect('followUpNoteId' in next).toBe(false);
+    expect(next.appointment).toBe(true);
+  });
+
+  it('keeps the note link on an appointment that simply finishes', () => {
+    const t = task({ date: '2026-09-23', appointment: true, followUpNoteId: 'n1' });
+    expect(rolledForward(t, at).followUpNoteId).toBe('n1');
+  });
+});
+
+/*
+  A routine is a checklist you run again - leaving the house, the weekly shop.
+  Ticking it off must not make it disappear: it records when, unticks the
+  steps, and stays.
+*/
+describe('rolledForward, for a routine', () => {
+  const at = new Date(2026, 8, 23, 10, 5).getTime();
+  const steps = [
+    { id: 'a', text: 'Keys', done: true },
+    { id: 'b', text: 'Wallet', done: true },
+    { id: 'c', text: 'Phone', done: false },
+  ];
+
+  it('stays open with no day, records the tick and unticks every step', () => {
+    const next = rolledForward(task({ routine: true, steps }), at);
+    expect(next.doneAt).toBeUndefined();
+    expect(next.lastDoneAt).toBe(at);
+    expect(next.steps.map((s) => s.done)).toEqual([false, false, false]);
+    expect(next.steps.map((s) => s.text)).toEqual(['Keys', 'Wallet', 'Phone']);
+    expect(next.date).toBeUndefined();
+  });
+
+  it('stays on its day when it has one but does not repeat', () => {
+    const next = rolledForward(task({ routine: true, steps, date: '2026-09-23' }), at);
+    expect(next.doneAt).toBeUndefined();
+    expect(next.date).toBe('2026-09-23');
+    expect(next.steps.every((s) => !s.done)).toBe(true);
+  });
+
+  it('rolls forward like any repeat when it has a day and repeats', () => {
+    const next = rolledForward(
+      task({ routine: true, steps, date: '2026-09-23', recurrence: { kind: 'daily', every: 1 } }),
+      at,
+    );
+    expect(next.date).toBe('2026-09-24');
+    expect(next.doneAt).toBeUndefined();
+    expect(next.lastDoneAt).toBe(at);
+    expect(next.steps.every((s) => !s.done)).toBe(true);
+  });
+
+  it('stays open even as a repeat with no day to roll from', () => {
+    const next = rolledForward(task({ routine: true, steps, recurrence: { kind: 'daily', every: 1 } }), at);
+    expect(next.doneAt).toBeUndefined();
+    expect(next.lastDoneAt).toBe(at);
+  });
+
+  it('keeps everything else about it', () => {
+    const t = task({ routine: true, steps, title: 'Leaving the house', tags: ['home'], priority: 'high' });
+    const { steps: _s, lastDoneAt: _l, doneAt: _d, ...rest } = rolledForward(t, at);
+    const { steps: _s2, ...restBefore } = t;
+    expect(rest).toEqual(restBefore);
+  });
+});
+
+describe('starting the steps again', () => {
+  it('unticks every step and touches nothing else', () => {
+    const t = task({
+      title: 'Weekly shop',
+      steps: [
+        { id: 'a', text: 'List', done: true },
+        { id: 'b', text: 'Bags', done: false },
+      ],
+    });
+    const next = restartedSteps(t);
+    expect(next.steps).toEqual([
+      { id: 'a', text: 'List', done: false },
+      { id: 'b', text: 'Bags', done: false },
+    ]);
+    expect({ ...next, steps: t.steps }).toEqual(t);
+    // A copy, not the same task changed underneath whoever holds it.
+    expect(t.steps[0].done).toBe(true);
+  });
+
+  it('is only worth offering when a step is ticked', () => {
+    expect(hasTickedStep(task({ steps: [{ id: 'a', text: 'List', done: true }] }))).toBe(true);
+    expect(hasTickedStep(task({ steps: [{ id: 'a', text: 'List', done: false }] }))).toBe(false);
+    expect(hasTickedStep(task())).toBe(false);
   });
 });
 

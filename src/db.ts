@@ -2,6 +2,7 @@ import Dexie, { type Table } from 'dexie';
 import { DEFAULT_HOLIDAYS } from './lib/holidays';
 import {
   DEFAULT_SETTINGS,
+  type AppLock,
   type Capture,
   type IncomeSource,
   type Note,
@@ -54,7 +55,8 @@ export function dataTables(): Table<{ id: string }, string>[] {
 
 /**
  * Deletes everything you wrote from this device, in one transaction so it is
- * all or nothing. Settings stay, so the app still looks the way you left it.
+ * all or nothing. Settings stay, so the app still looks the way you left it -
+ * and so does the app lock, which lives in them. Settings says so.
  */
 export async function wipeAll(): Promise<void> {
   const tables = dataTables();
@@ -83,6 +85,33 @@ export async function getSettings(): Promise<Settings> {
 
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
   const next = { ...(await getSettings()), ...patch, id: 'settings' as const };
+  await db.settings.put(next);
+  return next;
+}
+
+/**
+ * Takes settings out of the stored record altogether. Saving `undefined` would
+ * leave the key behind; for something like a low day, "not stored" has to
+ * mean not stored. Only optional settings can be forgotten: the rest have a
+ * default that would simply come back.
+ */
+type OptionalSetting = { [K in keyof Settings]-?: undefined extends Settings[K] ? K : never }[keyof Settings];
+
+export async function forgetSettings(...keys: OptionalSetting[]): Promise<Settings> {
+  const next: Partial<Settings> = { ...(await getSettings()) };
+  for (const key of keys) delete next[key];
+  await db.settings.put(next as Settings);
+  return next as Settings;
+}
+
+/**
+ * Sets the app lock, or removes it. Removing deletes the field outright rather
+ * than writing `lock: undefined`, so a phone with no lock stores nothing about
+ * one. Every other setting is left exactly as it was.
+ */
+export async function saveLock(lock: AppLock | null): Promise<Settings> {
+  const { lock: _previous, ...rest } = await getSettings();
+  const next: Settings = lock ? { ...rest, lock } : rest;
   await db.settings.put(next);
   return next;
 }

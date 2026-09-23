@@ -163,8 +163,13 @@ html {
 
      The floor is 12.5px, not 11: at 1.0x the label was the smallest text in the
      app, on the one control you use on every visit. "Backlog" at 15px is about
-     58px, which still fits a 68px slot. */
-  --nav-label: clamp(12.5px, 0.76rem, 15px);
+     58px, but set bold - the tab you are on - it is closer to 64px, which does
+     not fit a 412px screen's 68px slot once its padding is taken off, and broke
+     as "Backlo / g". So the cap also follows the screen width: 3.4vw is 14px on
+     a 412px phone and hits the 12.5px floor on a 360px one, where bold
+     "Backlog" is about 53px in a 56px slot. At everyday text sizes the floor
+     wins either way, so nothing changes there. */
+  --nav-label: clamp(12.5px, min(0.76rem, 3.4vw), 15px);
   --nav-glyph: clamp(0px, calc((1.35 - var(--text-scale)) * 10rem), 1rem);
   --nav-gap: clamp(0px, calc((1.35 - var(--text-scale)) * 2rem), 3px);
 
@@ -779,6 +784,15 @@ code {
   column-gap: var(--gap);
   row-gap: var(--gap-row);
   flex-wrap: wrap;
+}
+
+/*
+  A Today section folded away for a low day: "hidden for today" runs on inside
+  its heading. It takes the faint role's size and colour from .faint; this only
+  drops the heading's weight, so the note reads as a note and not as more title.
+*/
+.folded-note {
+  font-weight: var(--w-normal);
 }
 
 /* ==========================================================================
@@ -1864,6 +1878,17 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   flex: none;
   display: flex;
   gap: var(--space-2);
+  margin-left: auto;
+}
+
+/*
+  The message asks for 10em before it will share its line with Undo and
+  Dismiss. At everyday sizes it always gets it; at 1.6x the buttons took most
+  of the width and a word like "questions" was split across two lines - so
+  instead the buttons drop under the message, still on the right.
+*/
+.toast .spread > .grow {
+  flex: 1 1 10em;
 }
 
 /* A list with a marker, set in by the same step as the page gutter. */
@@ -1981,6 +2006,144 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .swatch-accent::after {
   flex: 1;
   width: auto;
+}
+
+/* ==========================================================================
+   THE APP LOCK
+   Optional, off by default. It hides the screen; it does not encrypt anything
+   (src/lib/lock.ts says why). Nothing here adds a colour: the lock screen is
+   the page, a heading and a pad of ordinary buttons.
+   ========================================================================== */
+
+/*
+  Out of sight with a lock set, the whole app is blanked to the page colour,
+  so a task-switcher snapshot taken after this applies shows nothing. Opacity,
+  not visibility or display: those would pull focus out of a half-typed box,
+  and while the page is out of sight nobody can see the difference anyway.
+*/
+html.veiled #root {
+  opacity: 0;
+}
+
+/* Before the settings have loaded there is no knowing whether a lock is set,
+   so there is nothing to draw but the page colour. */
+.app-blank {
+  min-height: 100dvh;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: var(--gap-row);
+  flex-wrap: wrap;
+}
+
+/*
+  The lock screen. Content starts a fixed distance from the top rather than
+  being centred: centred, a message appearing under the pad would nudge every
+  key upwards, and a key must never move under a finger.
+*/
+.lock {
+  min-height: 100dvh;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: max(var(--space-5), 8dvh) var(--gutter) var(--space-5);
+  padding-top: calc(max(var(--space-5), 8dvh) + env(safe-area-inset-top, 0px));
+  padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
+  padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-section);
+}
+
+.lock h1 {
+  font-weight: var(--w-strong);
+}
+
+.pin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  max-width: 400px;
+}
+
+/* One dot per digit, never the digit. Recessed like any box you type into,
+   because that is what it is, even though the typing happens on the keys; and
+   it keeps its height while empty, so the pad does not jump on the first press. */
+.pin-dots {
+  min-height: calc(var(--fs-display) * var(--lh-tight) + 2 * var(--space-2) + 2px);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  letter-spacing: 0.35em;
+  text-align: center;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* 8px between keys: the smallest gap that leaves dead space between two
+   targets, so a tap between 5 and 6 presses neither. */
+.pin-pad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+/*
+  Keys are well over the 44px floor: they are the whole job of the screen,
+  pressed with a thumb, often in a hurry. They grow with the text size and stop
+  at 64px, so at 1.6x the pad, the heading and the way out still fit on a phone
+  screen together. A word is never broken across two lines inside a key.
+*/
+.pin-key {
+  min-height: clamp(52px, 3rem, 64px);
+  padding: var(--space-1);
+  font-size: var(--fs-lead);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
+}
+
+/* Delete and the action are words, and have to fit a third of a phone. */
+.pin-key.pin-word {
+  font-size: var(--fs-meta);
+}
+
+/* The recovery phrase, shown once. Large and numbered: two to a line while
+   they fit, one to a line at large text sizes, and the number inside each
+   item so a long word can never run into the next column's number. */
+.phrase-words {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8em, 1fr));
+  column-gap: var(--space-5);
+  row-gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style-position: inside;
+  font-size: var(--fs-lead);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-snug);
+}
+
+.phrase-words > li::marker {
+  color: var(--text-faint);
+  font-weight: var(--w-normal);
+}
+
+/* Read aloud, never drawn: the pad's "3 digits entered". */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ==========================================================================

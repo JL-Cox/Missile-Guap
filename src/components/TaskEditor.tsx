@@ -1,13 +1,16 @@
-import { useState } from 'react';
-import { newId, saveSettings, saveTask } from '../db';
+import { useEffect, useRef, useState } from 'react';
+import { db, newId, saveSettings, saveTask } from '../db';
 import type { Recurrence, Task } from '../types';
 import { describeDuration, todayKey } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
-import { reminderOffset, withAnchor, withReminder } from '../lib/tasks';
+import { hasTickedStep, reminderOffset, restartedSteps, withAnchor, withReminder } from '../lib/tasks';
 import { notificationSupport, requestPermission, type PermissionState } from '../lib/notify';
 import { calendarForTask, icsFilename } from '../lib/ics';
+import { prepMessage, withAppointmentPrep } from '../lib/appointment';
+import { STEPS_RESTARTED } from '../lib/feedback';
+import { canRestore, stillAsLeft, undoneMessage } from '../lib/undo';
 import AddToCalendar from './AddToCalendar';
-import { ConfirmButton, DateShortcuts, parseTags, useAutoFocus } from './ui';
+import { ConfirmButton, DateShortcuts, parseTags, useAutoFocus, useToast } from './ui';
 import { PRIORITIES, PRIORITY_LABELS } from '../lib/priority';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -39,8 +42,9 @@ function readEvery(text: string): number {
  * field may be offered, never required, and never rendered as missing.
  *
  * The order follows the questions as they come: what, the steps, which day,
- * how long, when to be reminded - and only then how pressing it is, which is a
- * question about the backlog rather than about the task.
+ * how long, when to be reminded, whether it is an appointment - and only then
+ * how pressing it is, which is a question about the backlog rather than about
+ * the task.
  */
 export default function TaskEditor({
   task,
@@ -77,6 +81,67 @@ export default function TaskEditor({
 
   const patch = (changes: Partial<Task>) => setDraft((d) => ({ ...d, ...changes }));
 
+  /*
+    Undo, for the buttons that change several things in the form at once.
+
+    The toast can outlive the form: Save closes it, and Undo is still on screen
+    for a few seconds after. So while the form is open Undo puts the draft
+    back, and once it has been saved it puts the saved task back. Either way
+    only if those fields are still as the button left them - the rule every
+    other Undo in the app follows - and if the form was closed without saving,
+    the change went with it and Undo says so.
+  */
+  const toast = useToast();
+  const latest = useRef(draft);
+  latest.current = draft;
+  const isOpen = useRef(true);
+  const savedAs = useRef<Task | null>(null);
+  useEffect(() => {
+    isOpen.current = true;
+    return () => {
+      isOpen.current = false;
+    };
+  }, []);
+
+  const changeWithUndo = (message: string, before: Partial<Task>, after: Partial<Task>) => {
+    patch(after);
+    toast(message, {
+      label: 'Undo',
+      run: async () => {
+        if (isOpen.current) {
+          if (!stillAsLeft(latest.current, after)) return toast(undoneMessage('changed'));
+          patch(before);
+          return toast(undoneMessage('restored'));
+        }
+        const saved = savedAs.current;
+        if (!saved) return toast('That form was closed without saving, so there was nothing to put back.');
+        const current = await db.tasks.get(saved.id);
+        if (!current || !canRestore(current, saved) || !stillAsLeft(current, after)) {
+          return toast(undoneMessage('changed'));
+        }
+        await saveTask({ ...current, ...before });
+        toast(undoneMessage('restored'));
+      },
+    });
+  };
+
+  /** Adds what an appointment usually needs - only what is not there already. */
+  const prepare = () => {
+    const { task: prepared, addedSteps, addedNotes } = withAppointmentPrep(draft, newId);
+    // The questions list goes in the notes, so the notes have to be showing.
+    setShowMore(true);
+    const message = prepMessage({ addedSteps, addedNotes });
+    if (!addedSteps.length && !addedNotes && draft.appointment) return toast(message);
+    changeWithUndo(
+      message,
+      { steps: draft.steps, notes: draft.notes, appointment: draft.appointment },
+      { steps: prepared.steps, notes: prepared.notes, appointment: true },
+    );
+  };
+
+  const restartSteps = () =>
+    changeWithUndo(STEPS_RESTARTED, { steps: draft.steps }, { steps: restartedSteps(draft).steps });
+
   /** The task as it would be saved right now. */
   const assembled = (): Task => {
     const recurrence = draft.recurrence ? { ...draft.recurrence, every: readEvery(everyText) } : undefined;
@@ -89,7 +154,9 @@ export default function TaskEditor({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!draft.title.trim()) return;
-    onSaved(await saveTask(assembled()));
+    const saved = await saveTask(assembled());
+    savedAs.current = saved;
+    onSaved(saved);
   };
 
   const toggleWeekday = (day: number) => {
@@ -119,6 +186,31 @@ export default function TaskEditor({
       </div>
 
       <StepsEditor steps={draft.steps} onChange={(steps) => patch({ steps })} />
+
+      {/* Only once there are steps to reuse. Unticking sets it back to unset
+          rather than false, the same as every other optional field here. */}
+      {(draft.steps.length > 0 || draft.routine) && (
+        <div className="field">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.routine)}
+              onChange={(e) => patch({ routine: e.target.checked || undefined })}
+            />
+            <span>Reuse these steps each time</span>
+          </label>
+          <p className="faint">
+            Ticking it off then unticks the steps and keeps it, ready for next time, instead of finishing it.
+          </p>
+          {hasTickedStep(draft) && (
+            <div className="btn-row">
+              <button type="button" className="btn btn-sm" onClick={restartSteps}>
+                Start the steps again
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       <fieldset className="field">
         <legend>Which day? (optional)</legend>
@@ -238,6 +330,34 @@ export default function TaskEditor({
               </div>
             )}
           </fieldset>
+
+          {/* An offer, never automatic, and after the questions that were
+              already here so nothing you are used to has moved. The line
+              under it says what it adds before you press it. */}
+          <fieldset className="field">
+            <legend>Is it an appointment?</legend>
+            <div className="btn-row">
+              <button type="button" className="btn btn-sm" onClick={prepare}>
+                Getting ready for an appointment
+              </button>
+              {draft.appointment && (
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-sm"
+                  onClick={() => patch({ appointment: undefined })}
+                >
+                  Not an appointment
+                </button>
+              )}
+            </div>
+            <p className="faint">
+              {draft.appointment
+                ? 'Marked as an appointment. From its day on, its row offers "Write down what was said".'
+                : 'Adds the usual steps (the questions to ask, insurance card, medication list, photo ID, ' +
+                  'working out when to leave) and a place in the notes for your questions. Only what is ' +
+                  'not already here.'}
+            </p>
+          </fieldset>
         </>
       )}
 
@@ -352,17 +472,20 @@ export default function TaskEditor({
           )}
 
           <div className="field">
-            <label htmlFor="task-energy">How much does this take out of you?</label>
+            {/* Asked as the question it is used to answer. The stored values
+                are still low, medium and high, so nothing saved changes. */}
+            <label htmlFor="task-energy">Can you do this on a low day?</label>
             <select
               id="task-energy"
               value={draft.energy ?? ''}
               onChange={(e) => patch({ energy: (e.target.value || undefined) as Task['energy'] })}
             >
               <option value="">Not saying</option>
-              <option value="low">Low - can do it tired</option>
-              <option value="medium">Medium</option>
-              <option value="high">High - needs a good day</option>
+              <option value="low">Yes, even on a low day</option>
+              <option value="medium">Maybe - it takes some energy</option>
+              <option value="high">No - it needs a good day</option>
             </select>
+            <p className="faint">On a low day, Today keeps the ones marked Yes in view.</p>
           </div>
 
           <div className="field">

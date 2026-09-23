@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
-const PORT = 4173;
+const PORT = Number(process.env.E2E_PORT ?? 4173);
 // Set VITE_BASE to check a subpath deployment (GitHub Pages serves a project
 // repo at /<repo>/, which is exactly where absolute paths go wrong).
 const PATH_BASE = process.env.VITE_BASE?.trim() ? `/${process.env.VITE_BASE.replace(/^\/+|\/+$/g, '')}/` : '/';
@@ -325,6 +325,29 @@ check('Back from About returns to Settings', await page.locator('button:text-is(
 await page.goBack();
 await page.waitForTimeout(300);
 check('and Back again closes Settings', await page.getAttribute('.nav-btn:has-text("Money")', 'aria-current'), 'page');
+
+// --- the nav at the largest text size: every label on one line -------------
+// The tab you are on is set bold, which is what used to break "Backlog" in two.
+await page.click('.header button:text-is("Settings")');
+await page.fill('#text-scale', '1.6');
+await page.click('.header button:text-is("Done")');
+const navLines = () =>
+  page.evaluate(() =>
+    [...document.querySelectorAll('.nav-btn > span:not(.nav-glyph):not(.nav-count)')].filter(
+      (label) => label.getBoundingClientRect().height > parseFloat(getComputedStyle(label).lineHeight) * 1.5,
+    ).length,
+  );
+for (const width of [412, 360]) {
+  await page.setViewportSize({ width, height: 915 });
+  await page.click('.nav-btn:has-text("Backlog")');
+  await page.waitForTimeout(150);
+  check(`at 1.6x and ${width}px, no tab label breaks onto two lines`, await navLines(), 0);
+}
+await page.setViewportSize({ width: 412, height: 915 });
+await page.click('.header button:text-is("Settings")');
+await page.fill('#text-scale', '1');
+await page.click('.header button:text-is("Done")');
+await page.click('.nav-btn:has-text("Money")');
 
 // --- a subscription, in one journey -------------------------------------
 await page.click('.nav-btn:has-text("Money")');
@@ -867,6 +890,306 @@ check(
   'and reappears when asked for',
   (await page.textContent('.main')).includes('Book the optician'),
   true,
+);
+
+// --- a low day --------------------------------------------------------------
+// One button, first on Today, every day. On, Today keeps what has a time, what
+// is Critical and what you can do on a low day, and folds everything else to
+// one line in its usual place. It ends at midnight and no record is kept: not
+// in a backup, and not once the day has passed.
+/** Writes straight into the settings record, as an older day would have left it. */
+const patchSettings = (patch) =>
+  page.evaluate(
+    (changes) =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('steady');
+        req.onsuccess = () => {
+          const tx = req.result.transaction('settings', 'readwrite');
+          const store = tx.objectStore('settings');
+          const get = store.get('settings');
+          get.onsuccess = () => store.put({ ...(get.result ?? { id: 'settings' }), ...changes });
+          tx.oncomplete = () => {
+            req.result.close();
+            resolve();
+          };
+        };
+      }),
+    patch,
+  );
+const storedSettings = async () => (await readStore('settings'))[0] ?? {};
+// A toast stops its timer while the pointer is on it, so a click aimed at a
+// Save button underneath one would wait for ever. Put it away first.
+const dismissToast = async () => {
+  if (await page.locator('.toast').count()) await page.click('.toast button:text-is("Dismiss")');
+};
+
+await page.evaluate(
+  (today) =>
+    new Promise((resolve) => {
+      const req = indexedDB.open('steady');
+      req.onsuccess = () => {
+        const tx = req.result.transaction('tasks', 'readwrite');
+        const at = Date.now();
+        const base = { notes: '', steps: [], tags: [], createdAt: at, updatedAt: at };
+        const store = tx.objectStore('tasks');
+        store.put({ ...base, id: 'e2e-low', title: 'Water the plants', date: today, energy: 'low' });
+        store.put({ ...base, id: 'e2e-high', title: 'Sort the recycling', date: today, energy: 'high' });
+        store.put({ ...base, id: 'e2e-critical', title: 'Renew the parking permit', priority: 'critical' });
+        tx.oncomplete = () => {
+          req.result.close();
+          resolve();
+        };
+      };
+    }),
+  todayKey,
+);
+// Written behind Dexie's back, so its live queries have not seen them: reload.
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+check('the three seeded tasks are on Today', (await page.textContent('.main')).includes('Sort the recycling'), true);
+/** Section headings on Today, without the note a folded one carries. */
+const todayHeadings = () =>
+  page.$$eval('.main h2', (hs) => hs.map((h) => h.textContent.replace(/\s*— hidden for today$/, '').trim()));
+const firstOnToday = () => page.$eval('.view:not([hidden]) > :first-child', (el) => el.textContent);
+const todaySection = () => page.textContent('section[aria-label="Today"]');
+
+check('Today offers a low day, as a labelled button', await page.locator('button:text-is("Today is a low day")').count(), 1);
+check('first on the screen', (await firstOnToday()).includes('Today is a low day'), true);
+const normalHeadings = await todayHeadings();
+await page.click('button:text-is("Today is a low day")');
+await page.waitForTimeout(400);
+check('turning it on keeps only today\'s date', (await storedSettings()).lowDay, todayKey);
+check('the same place says it is on, with a way to end it', (await firstOnToday()).includes('End low day'), true);
+check('and that it ends by itself at midnight', (await firstOnToday()).includes('ends by itself at midnight'), true);
+check('every section keeps its heading and its place', JSON.stringify(await todayHeadings()), JSON.stringify(normalHeadings));
+check('what has a time stays', (await todaySection()).includes('Call the dentist'), true);
+check('what you can do on a low day stays', (await todaySection()).includes('Water the plants'), true);
+check('Critical stays, even with no date', (await page.textContent('.main')).includes('Renew the parking permit'), true);
+check('the rest is folded away', (await page.textContent('.main')).includes('Sort the recycling'), false);
+check('money charged today is folded to one line', (await todaySection()).includes('Netflix'), false);
+check('which says so, with Show', await page.locator('button[aria-label="Show Charged today"]').count(), 1);
+await page.screenshot({ path: `${OUT}/low-day.png`, fullPage: true });
+
+await page.click('button[aria-label="Show Charged today"]');
+await page.waitForTimeout(300);
+check('Show opens that one section', (await todaySection()).includes('Netflix'), true);
+check('and leaves the rest folded', (await page.textContent('.main')).includes('Sort the recycling'), false);
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+check('the low day survives a reload', await page.locator('button:text-is("End low day")').count(), 1);
+check('but what you opened is not saved - it folds again', (await todaySection()).includes('Netflix'), false);
+
+// The energy question is asked as the question it answers; what is stored does not change.
+await page.locator('.item', { hasText: 'Water the plants' }).locator('.details-btn').click();
+await page.locator('.item', { hasText: 'Water the plants' }).locator('button:text-is("Edit")').click();
+await page.waitForSelector('#task-energy');
+check('the editor asks whether it can be done on a low day', await page.textContent('label[for="task-energy"]'), 'Can you do this on a low day?');
+check(
+  'and Low reads as "yes, even on a low day"',
+  await page.$eval('#task-energy', (s) => s.options[s.selectedIndex].text),
+  'Yes, even on a low day',
+);
+check('while the stored value is still low', (await readStore('tasks')).find((t) => t.id === 'e2e-low').energy, 'low');
+await page.click('form.card button:text-is("Cancel")');
+await page.waitForTimeout(200);
+
+// A backup is a file that can travel. It must not carry a record of low days.
+await page.click('.header button:text-is("Settings")');
+await page.waitForTimeout(300);
+const lowDayBackup = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('button:has-text("Save a backup file")'),
+]).then(([d]) => d);
+await lowDayBackup.saveAs(`${OUT}/e2e-low-day-backup.json`);
+const lowDayBackupText = readFileSync(`${OUT}/e2e-low-day-backup.json`, 'utf8');
+check('a backup made on a low day does not mention it', lowDayBackupText.includes('lowDay'), false);
+check('but still carries the settings', JSON.parse(lowDayBackupText).settings.backlogSort, 'az');
+await page.click('.header button:text-is("Done")');
+await page.waitForTimeout(300);
+
+await page.click('button:text-is("End low day")');
+await page.waitForTimeout(400);
+check('ending it puts the button back in the same place', (await firstOnToday()).includes('Today is a low day'), true);
+check('and deletes the date rather than keeping it', 'lowDay' in (await storedSettings()), false);
+check('everything is showing again', (await page.textContent('.main')).includes('Sort the recycling'), true);
+
+// Left over from yesterday - the app was closed across midnight.
+const yesterdayKey = await page.evaluate(() => {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+});
+await patchSettings({ lowDay: yesterdayKey });
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+check('yesterday\'s low day has ended by itself', await page.locator('button:text-is("Today is a low day")').count(), 1);
+check('and is deleted on opening, not kept', 'lowDay' in (await storedSettings()), false);
+
+// --- getting ready for an appointment ---------------------------------------
+// An offer in the editor, never automatic. It adds only what is missing, says
+// what it added, and Undo puts the form back exactly.
+await page.click('button:text-is("Add to today")');
+await page.waitForSelector('#task-title');
+await page.fill('#task-title', 'Dentist check-up');
+await page.fill('#task-time', '15:00');
+// One of the usual steps, written by hand first: it must not appear twice.
+await page.fill('#task-step', 'insurance card');
+await page.click('button:has-text("Add step")');
+const editorSteps = () => page.$$eval('form.card .step-row .check span', (els) => els.map((e) => e.textContent.trim()));
+await page.click('button:text-is("Getting ready for an appointment")');
+await page.waitForTimeout(300);
+check('prep says what it added', await page.locator('.toast:has-text("Added 4 steps and a questions list")').count(), 1);
+check(
+  'it adds only the steps not already there',
+  JSON.stringify(await editorSteps()),
+  JSON.stringify(['insurance card', 'Write down the questions to ask', 'Medication list', 'Photo ID', 'Work out when to leave']),
+);
+check('and a questions list in the empty notes', await page.inputValue('#task-notes'), 'Questions to ask:\n- \n\nTo bring:\n- ');
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(300);
+check('Undo takes the added steps away again', JSON.stringify(await editorSteps()), JSON.stringify(['insurance card']));
+check('and empties the notes it filled', await page.inputValue('#task-notes'), '');
+await page.click('button:text-is("Getting ready for an appointment")');
+await page.waitForTimeout(300);
+await page.click('button:text-is("Getting ready for an appointment")');
+await page.waitForTimeout(300);
+check('pressing it twice adds nothing twice', (await editorSteps()).length, 5);
+check('and says nothing was added', await page.locator('.toast:has-text("Nothing was added")').count(), 1);
+await page.fill('#task-notes', 'Questions to ask:\n- Do I need a filling?\n\nTo bring:\n- ');
+await page.fill('#task-tags', 'health');
+await dismissToast();
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(500);
+check('it is saved as an appointment', (await readStore('tasks')).find((t) => t.title === 'Dentist check-up')?.appointment, true);
+
+// From its day, the row offers a note for what was said.
+const apptRow = page.locator('.item', { hasText: 'Dentist check-up' });
+check('on its day, an appointment offers to write down what was said', await apptRow.locator('button:text-is("Write down what was said")').count(), 1);
+check('an ordinary task does not', await page.locator('.item', { hasText: 'Water the plants' }).locator('button:has-text("what was said")').count(), 0);
+await apptRow.locator('button:text-is("Write down what was said")').click();
+await page.waitForSelector('#note-title');
+const saidTitle = await page.inputValue('#note-title');
+check('it opens a note titled with the task and the day', /^Dentist check-up — [A-Z][a-z]{2} \d{1,2}: what was said$/.test(saidTitle), true);
+check('tagged like the task, plus appointment', await page.inputValue('#note-tags'), 'health, appointment');
+check(
+  'starting with the questions from the task',
+  (await page.inputValue('#note-body')).startsWith('Questions to ask:\n- Do I need a filling?\n\nWhat was said:'),
+  true,
+);
+await dismissToast();
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+const saidNote = async () => (await readStore('notes')).find((n) => n.title === saidTitle);
+check(
+  'the task keeps a link to the note',
+  (await readStore('tasks')).find((t) => t.title === 'Dentist check-up')?.followUpNoteId,
+  (await saidNote())?.id,
+);
+await page.click('.nav-btn:has-text("Today")');
+await page.waitForTimeout(300);
+check('the row then opens it instead', await apptRow.locator('button:text-is("Open what was said")').count(), 1);
+await apptRow.locator('button:text-is("Open what was said")').click();
+await page.waitForSelector('#note-title');
+check('and it opens that same note', await page.inputValue('#note-title'), saidTitle);
+await dismissToast();
+await page.click('form.card button:text-is("Delete")');
+await page.click('button:text-is("Yes, delete it")');
+await page.waitForTimeout(400);
+await page.click('.nav-btn:has-text("Today")');
+await page.waitForTimeout(300);
+check('with the note deleted, it offers to write one again', await apptRow.locator('button:text-is("Write down what was said")').count(), 1);
+await apptRow.locator('button:text-is("Write down what was said")').click();
+await page.waitForSelector('#note-title');
+await dismissToast();
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+await page.click('.nav-btn:has-text("Today")');
+await page.waitForTimeout(300);
+await apptRow.locator('.details-btn').click();
+await apptRow.locator('button:text-is("Edit")').click();
+await page.waitForSelector('#task-title');
+await dismissToast();
+await page.click('form.card button:text-is("Delete")');
+await page.click('button:text-is("Yes, delete it")');
+await page.waitForTimeout(400);
+check('the appointment is deleted', (await readStore('tasks')).some((t) => t.title === 'Dentist check-up'), false);
+check('and the note about it is not', (await readStore('notes')).filter((n) => n.title === saidTitle).length, 1);
+
+// --- a routine: steps you reuse ----------------------------------------------
+await page.click('.nav-btn:has-text("Backlog")');
+await page.waitForTimeout(300);
+await page.click('button:has-text("Add something")');
+await page.waitForSelector('#task-title');
+await page.fill('#task-title', 'Leaving the house');
+for (const step of ['Keys', 'Wallet', 'Phone']) {
+  await page.fill('#task-step', step);
+  await page.click('button:has-text("Add step")');
+}
+await page.click('text=Reuse these steps each time');
+await page.click('form.card button[type="submit"]:has-text("Save")');
+await page.waitForTimeout(400);
+const routinesGroup = page.locator('section[aria-label="Routines"]');
+check('routines have their own group on the Backlog', await routinesGroup.locator('.item').count(), 1);
+check('and are not listed a second time', await page.locator('.main .item', { hasText: 'Leaving the house' }).count(), 1);
+for (const label of ['Priority', 'Oldest', 'Newest', 'A–Z']) {
+  await page.click(`button:text-is("${label}")`);
+  await page.waitForTimeout(250);
+  check(`sorted by ${label}, the routines are still at the top`, (await page.locator('.main .item').first().textContent()).includes('Leaving the house'), true);
+}
+await page.screenshot({ path: `${OUT}/routines.png`, fullPage: true });
+
+const routineRow = page.locator('.item', { hasText: 'Leaving the house' });
+const routineRecord = async () => (await readStore('tasks')).find((t) => t.title === 'Leaving the house');
+await routineRow.locator('.details-btn').click();
+await routineRow.locator('.check:has-text("Keys") input').click();
+await page.waitForTimeout(300);
+await routineRow.locator('.check:has-text("Wallet") input').click();
+await page.waitForTimeout(300);
+const beforeRoutineTick = await routineRecord();
+await routineRow.locator('.item-check').click();
+await page.waitForTimeout(400);
+const afterRoutineTick = await routineRecord();
+check('ticking a routine keeps it open', afterRoutineTick.doneAt, undefined);
+check('records when it was done', typeof afterRoutineTick.lastDoneAt, 'number');
+check('and unticks its steps for next time', afterRoutineTick.steps.map((s) => s.done).join(','), 'false,false,false');
+check('the toast says it stays', await page.locator('.toast:has-text("ready for next time")').count(), 1);
+check('it is still in its group', await routinesGroup.locator('.item').count(), 1);
+check('saying when it was last ticked', (await routineRow.textContent()).includes('Last ticked today'), true);
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(400);
+check('Undo puts back exactly what was there', JSON.stringify(await routineRecord()), JSON.stringify(beforeRoutineTick));
+
+await routineRow.locator('button:text-is("Edit")').click();
+await page.waitForSelector('#task-title');
+const editorTicks = () => page.$$eval('form.card .step-row input[type="checkbox"]', (els) => els.map((e) => e.checked).join(','));
+check('with a step ticked, the editor offers to start the steps again', await page.locator('button:text-is("Start the steps again")').count(), 1);
+await page.click('button:text-is("Start the steps again")');
+await page.waitForTimeout(300);
+check('it unticks every step', await editorTicks(), 'false,false,false');
+check('and says so, with Undo', await page.locator('.toast:has-text("Every step is unticked") button:text-is("Undo")').count(), 1);
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(300);
+check('Undo ticks them back as they were', await editorTicks(), 'true,true,false');
+await page.click('button:text-is("Start the steps again")');
+// Saved with Enter, so the toast and its Undo are still up after the form closes.
+await page.focus('#task-title');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(400);
+check('saved, the steps start again', (await routineRecord()).steps.map((s) => s.done).join(','), 'false,false,false');
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(400);
+check(
+  'Undo still works once the form is saved and closed',
+  (await routineRecord()).steps.map((s) => s.done).join(','),
+  'true,true,false',
+);
+check('and says so', await page.locator('.toast:has-text("Put back as it was.")').count(), 1);
+await page.click('.nav-btn:has-text("Today")');
+await page.waitForTimeout(300);
+check(
+  'a routine is not offered among the undated things on Today',
+  (await page.textContent('section[aria-label="No date on these"]')).includes('Leaving the house'),
+  false,
 );
 
 // --- appearance settings really apply ------------------------------------

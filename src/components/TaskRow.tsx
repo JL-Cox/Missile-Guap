@@ -1,12 +1,14 @@
 import { useId, useState, type ReactNode } from 'react';
-import { db } from '../db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { blankNote, db, saveNote, saveTask } from '../db';
 import type { Task } from '../types';
 import { completeTask, describeLastDone, stepProgress, toggleStep, uncompleteTask } from '../lib/tasks';
 import { describeDate, describeDuration, timeLabel, todayKey } from '../lib/time';
 import { describeRecurrence } from '../lib/recurrence';
 import { doneMessage } from '../lib/feedback';
 import { undoAction } from '../lib/undo';
-import { DetailsButton, TagList, useToast } from './ui';
+import { followUpNote, offersFollowUp } from '../lib/appointment';
+import { DetailsButton, TagList, useNavigate, useToast } from './ui';
 import { PRIORITY_LABELS, priorityClass } from '../lib/priority';
 import AddToCalendar from './AddToCalendar';
 import { calendarForTask, icsFilename } from '../lib/ics';
@@ -38,8 +40,38 @@ export default function TaskRow({
   const [open, setOpen] = useState(false);
   const detailsId = useId();
   const toast = useToast();
+  const navigate = useNavigate();
   const progress = stepProgress(task);
   const done = Boolean(task.doneAt);
+
+  /*
+    An appointment, from its day on, offers a note for what was said. Once
+    there is one the row opens it instead - unless it has been deleted since,
+    in which case it offers to write one again. Only these rows look anything
+    up; the rest skip the query.
+  */
+  const followUp = offersFollowUp(task, todayKey());
+  const linkedNoteId = followUp ? task.followUpNoteId : undefined;
+  const noteExists = useLiveQuery(
+    async () => (linkedNoteId ? (await db.notes.get(linkedNoteId)) !== undefined : false),
+    [linkedNoteId],
+    // Until the answer arrives, assume the link is good rather than flicker
+    // between the two labels.
+    Boolean(linkedNoteId),
+  );
+
+  const writeWhatWasSaid = async () => {
+    const note = await saveNote(blankNote(followUpNote(task, todayKey())));
+    await saveTask({ ...task, followUpNoteId: note.id });
+    toast("Started a note — it's in Notes.");
+    navigate('notes', { note });
+  };
+
+  const openWhatWasSaid = async () => {
+    const note = linkedNoteId ? await db.notes.get(linkedNoteId) : undefined;
+    if (note) navigate('notes', { note });
+    else await writeWhatWasSaid();
+  };
 
   const tick = async () => {
     if (done) {
@@ -66,9 +98,14 @@ export default function TaskRow({
   if (task.startTime) meta.push(<span key="t">{timeLabel(task.startTime)}</span>);
   if (task.durationMin) meta.push(<span key="m">{describeDuration(task.durationMin)}</span>);
   if (task.recurrence) meta.push(<span key="r">{describeRecurrence(task.recurrence)}</span>);
-  // A repeat rolls forward when ticked, so this is the only place "did I
-  // already do it?" can be answered. A fact, never a streak.
-  if (task.recurrence && task.lastDoneAt) meta.push(<span key="l">{describeLastDone(task.lastDoneAt)}</span>);
+  // Said on the row, so a tick that leaves it where it is reads as meant.
+  if (task.routine) meta.push(<span key="o">Routine</span>);
+  // A repeat rolls forward and a routine unticks itself when ticked, so this
+  // is the only place "did I already do it?" can be answered. A fact, never a
+  // streak.
+  if ((task.recurrence || task.routine) && task.lastDoneAt) {
+    meta.push(<span key="l">{describeLastDone(task.lastDoneAt)}</span>);
+  }
   if (task.energy) meta.push(<span key="e">{task.energy} energy</span>);
   if (progress.total > 0) {
     meta.push(
@@ -137,7 +174,21 @@ export default function TaskRow({
           </div>
         )}
 
-        {actions && <div className="btn-row item-actions">{actions}</div>}
+        {(actions || followUp) && (
+          <div className="btn-row item-actions">
+            {actions}
+            {followUp &&
+              (linkedNoteId && noteExists ? (
+                <button type="button" className="btn btn-sm" onClick={() => void openWhatWasSaid()}>
+                  Open what was said
+                </button>
+              ) : (
+                <button type="button" className="btn btn-sm" onClick={() => void writeWhatWasSaid()}>
+                  Write down what was said
+                </button>
+              ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -28,7 +28,9 @@ import { notificationSupport, requestPermission, type PermissionState } from '..
 import { formatBytes, requestPersistence, storageOrigin, storageStatus, type StorageStatus } from '../lib/storage';
 import { shareOrDownload } from '../lib/share';
 import { versionLabel } from '../lib/version';
+import { readLock } from '../lib/lock';
 import { ConfirmButton, FormError, Section, useToast } from '../components/ui';
+import LockSettings from '../components/LockSettings';
 
 /**
  * Each theme says what it is FOR, not what colour it is. "Warm off-white" tells
@@ -407,6 +409,8 @@ export default function Settings({
         </p>
       </Section>
 
+      <LockSettings settings={settings} onChange={onChange} />
+
       <Section title="Your data">
         <div className="card stack-sm">
           <p className="small">On this device: {describeCounts(counts)}.</p>
@@ -489,7 +493,8 @@ export default function Settings({
         </p>
         <p className="faint">
           The file holds everything - every task, note, subscription, income and inbox item, and your settings -
-          as plain readable text. Anyone who opens it can read all of it, so put it somewhere you trust.
+          as plain readable text. Anyone who opens it can read all of it, so put it somewhere you trust. Two
+          things stay on this phone: the app lock, and a low day, which is never kept.
           Deleting something in the app does not delete it from backup files you saved earlier, or from calendar
           entries you added.
         </p>
@@ -570,6 +575,11 @@ export default function Settings({
           Save a backup first if you might want any of it back - this cannot be undone. It does not touch backup
           files you saved earlier or entries you added to your calendar; delete those separately if you want them
           gone.
+        </p>
+        <p className="faint">
+          {readLock(settings.lock)
+            ? 'Your settings stay as they are, and so does the app lock: Steady will still ask for your PIN. To remove the lock as well, turn it off under App lock above.'
+            : 'Your settings stay as they are.'}
         </p>
       </Section>
 

@@ -3,7 +3,7 @@ import { groupTasks, taskMatches } from '../src/lib/tasklist';
 import { splitCapture } from '../src/lib/inbox';
 import { SORTS } from '../src/lib/priority';
 import { cancelledMessage, doneMessage, movedManyMessage, movedMessage, savedTaskWhere } from '../src/lib/feedback';
-import { canRestore, undoneMessage } from '../src/lib/undo';
+import { canRestore, stillAsLeft, undoneMessage } from '../src/lib/undo';
 import type { Task } from '../src/types';
 
 const task = (id: string, extra: Partial<Task> = {}): Task => ({
@@ -131,6 +131,24 @@ describe('what a toast says after something moves', () => {
     expect(doneMessage({ date: '2026-09-24' }, today)).toBe('Done. Next: Tomorrow.');
   });
 
+  it('says a routine is staying, so the row still being there reads as meant', () => {
+    const step = { id: 's', text: 'Keys', done: false };
+    expect(doneMessage({ routine: true, steps: [step] }, today)).toBe(
+      'Done. The steps are unticked, ready for next time.',
+    );
+    expect(doneMessage({ routine: true, steps: [step], date: today }, today)).toBe(
+      'Done. The steps are unticked, ready for next time.',
+    );
+    expect(doneMessage({ routine: true, steps: [] }, today)).toBe('Done. It stays here for next time.');
+  });
+
+  it('says when a repeating routine comes round again, like any repeat', () => {
+    const recurrence = { kind: 'daily' as const, every: 1 };
+    expect(doneMessage({ routine: true, recurrence, date: '2026-09-24', steps: [] }, today)).toBe(
+      'Done. Next: Tomorrow.',
+    );
+  });
+
   it('names what was cancelled', () => {
     expect(cancelledMessage('Netflix')).toBe('Netflix marked cancelled.');
     expect(cancelledMessage('  ')).toBe('That subscription marked cancelled.');
@@ -158,5 +176,27 @@ describe('undo only puts back what is still as the change left it', () => {
   it('says plainly which of the two happened', () => {
     expect(undoneMessage('restored')).toBe('Put back as it was.');
     expect(undoneMessage('changed')).toMatch(/changed since/);
+  });
+});
+
+describe('undo inside an open form only puts back fields still as the change left them', () => {
+  const steps = [{ id: 'a', text: 'Keys', done: false }];
+
+  it('restores when nothing it set has changed since', () => {
+    expect(stillAsLeft({ steps, notes: 'x', title: 'Edited after' }, { steps, notes: 'x' })).toBe(true);
+  });
+
+  it('compares by value, so steps read back from the database still match', () => {
+    expect(stillAsLeft({ steps: JSON.parse(JSON.stringify(steps)) }, { steps })).toBe(true);
+  });
+
+  it('leaves it alone once you have changed one of those fields', () => {
+    expect(stillAsLeft({ steps: [{ ...steps[0], done: true }] }, { steps })).toBe(false);
+    expect(stillAsLeft({ steps, notes: 'typed more' }, { steps, notes: 'x' })).toBe(false);
+  });
+
+  it('treats a field the change set as gone the same way', () => {
+    expect(stillAsLeft({ appointment: undefined }, { appointment: undefined })).toBe(true);
+    expect(stillAsLeft({ appointment: true }, { appointment: undefined })).toBe(false);
   });
 });

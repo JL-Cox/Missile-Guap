@@ -56,7 +56,15 @@ export default function Backlog({
   }
 
   const sort = settings.backlogSort;
-  const open = sortTasks(unscheduled(tasks), sort);
+  const sorted = sortTasks(unscheduled(tasks), sort);
+  /*
+    Routines - checklists you run again and again - are not waiting for a day
+    the way the rest are, so they get a small group of their own, at the top
+    under every sort, in the order the sort gives them. They are not listed a
+    second time below.
+  */
+  const routines = sorted.filter((t) => t.routine);
+  const open = sorted.filter((t) => !t.routine);
   const finished = finishedWithoutDate(tasks);
   const today = todayKey();
 
@@ -89,6 +97,13 @@ export default function Backlog({
     />
   );
 
+  // A routine is used where it is: ticking it here records it and unticks its
+  // steps. "Do it today" is not offered, because ticking a routine keeps it
+  // open - pinned to today, it would be under Still waiting from tomorrow. The
+  // editor can still give it a day, or a repeat. Its priority shows on the row,
+  // because this group is not under priority headings.
+  const routineRow = (task: Task) => <TaskRow key={task.id} task={task} onEdit={setEditing} />;
+
   return (
     <>
       <Section
@@ -118,6 +133,13 @@ export default function Backlog({
           ))}
         </div>
       </Section>
+
+      {routines.length > 0 && (
+        <section className="stack-sm" aria-label="Routines">
+          <h3>Routines</h3>
+          {routines.map(routineRow)}
+        </section>
+      )}
 
       {open.length === 0 ? (
         <Empty>

@@ -43,6 +43,19 @@ export async function restore<T extends Versioned>(
   return skipped === 0 ? 'restored' : 'changed';
 }
 
+/**
+ * Whether the fields a change set are still as it left them. This is the same
+ * rule for a change made inside an open form, where there is no saved record
+ * yet - only the draft: if you have changed those fields since, your change
+ * wins. Compared by value, because a step list read back from the database is
+ * a new array with the same steps in it.
+ */
+export function stillAsLeft<T extends object>(current: T, after: Partial<T>): boolean {
+  return (Object.keys(after) as (keyof T)[]).every(
+    (key) => JSON.stringify(current[key]) === JSON.stringify(after[key]),
+  );
+}
+
 /** The line shown after Undo. */
 export function undoneMessage(outcome: UndoOutcome): string {
   return outcome === 'restored' ? 'Put back as it was.' : 'It had been changed since, so it was left as it is now.';

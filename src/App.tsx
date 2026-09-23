@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, getSettings, saveSettings } from './db';
-import { DEFAULT_SETTINGS, type Settings as SettingsType, type Task } from './types';
+import { db, forgetSettings, getSettings, saveLock, saveSettings } from './db';
+import { DEFAULT_SETTINGS, type Note, type Settings as SettingsType, type Task } from './types';
 import { startScheduler } from './lib/notify';
 import { requestPersistence } from './lib/storage';
 import { THEME_TOKENS, resolveCustom } from './lib/theme';
 import { updateNotice, versionLabel } from './lib/version';
-import { shortDateTime } from './lib/time';
+import { shortDateTime, todayKey } from './lib/time';
+import { isStaleLowDay } from './lib/lowday';
+import { lockAvailable, readLock, shouldLock } from './lib/lock';
 import CaptureBar from './components/CaptureBar';
+import LockScreen from './components/LockScreen';
 import {
   LayerContext,
   NavigateContext,
@@ -92,6 +96,25 @@ export default function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   /** A search handed to the Tasks screen from Notes. */
   const [taskQuery, setTaskQuery] = useState('');
+  /** A note handed to the Notes screen from a task row, to open in the editor. */
+  const [noteToOpen, setNoteToOpen] = useState<Note | null>(null);
+
+  /*
+    THE APP LOCK. See src/lib/lock.ts for what it is and is not.
+
+    `locked` starts true and is settled in the same render that first shows
+    anything, so there is never a frame where the app is up and the lock has
+    not been decided. It only matters while a lock is set: with none, it is
+    ignored. A lock that is damaged, or a browser that cannot check one, counts
+    as no lock - failing open, because failing closed would leave no way in.
+  */
+  const lock = useMemo(() => (lockAvailable() ? readLock(settings.lock) : null), [settings.lock]);
+  const [locked, setLocked] = useState(true);
+  const showLock = lock !== null && locked;
+  /** When the app went out of sight. Memory only: nothing about it is saved. */
+  const hiddenAt = useRef<number | null>(null);
+  /** Opened with the recovery phrase, so the lock came off. Said once, here. */
+  const [recovered, setRecovered] = useState(false);
 
   /*
     Something open on top of a tab - an editor, a confirmation - registers how
@@ -125,6 +148,9 @@ export default function App() {
     (next: ViewId) => {
       if (next === 'settings' && view !== 'settings') setBeforeSettings(view as TabId);
       if (next !== 'settings') setAbout(false);
+      // Opening Notes from the nav is opening Notes, not reopening the last
+      // note a task row sent you to.
+      setNoteToOpen(null);
       setView(next);
     },
     [view],
@@ -150,8 +176,12 @@ export default function App() {
   */
   const tab: TabId = view === 'settings' ? beforeSettings : view;
   const visibleLayer = view !== 'settings' && openLayers.includes(view);
-  const depth =
-    (tab !== 'today' ? 1 : 0) + (view === 'settings' ? (about ? 2 : 1) : 0) + (visibleLayer ? 1 : 0);
+  // The lock screen sits at the bottom with nothing above it, so Back from it
+  // leaves the app - as it would from the phone's own lock screen - rather
+  // than quietly changing tabs behind it.
+  const depth = showLock
+    ? 0
+    : (tab !== 'today' ? 1 : 0) + (view === 'settings' ? (about ? 2 : 1) : 0) + (visibleLayer ? 1 : 0);
   const depthRef = useRef(historyDepth());
   const ignorePops = useRef(0);
 
@@ -206,12 +236,16 @@ export default function App() {
 
   const navigate = useCallback<Navigate>((next, options) => {
     setTaskQuery(options?.query ?? '');
+    setNoteToOpen(options?.note ?? null);
     setView(next);
   }, []);
 
   useEffect(() => {
     void (async () => {
-      const loaded = await getSettings();
+      let loaded = await getSettings();
+      // A low day ends at midnight. One left from an earlier day is deleted
+      // here rather than kept, so no past low day is ever stored.
+      if (isStaleLowDay(loaded, todayKey())) loaded = await forgetSettings('lowDay');
       setSettings(loaded);
       // Record the build straight away, whether or not we say anything. The
       // notice is then guaranteed to appear at most once, even if the user
@@ -221,6 +255,9 @@ export default function App() {
         setSettings(await saveSettings({ lastSeenBuild: notice.next }));
       }
       setUpdated(notice.show);
+      // In the same batch as settingsLoaded, so the first thing drawn is
+      // already either the lock or the app - never the app, then the lock.
+      setLocked(readLock(loaded.lock) !== null);
       setSettingsLoaded(true);
     })();
     // Ask the browser not to treat this data as disposable. Chrome decides
@@ -276,6 +313,89 @@ export default function App() {
     settings.textScale,
   ]);
 
+  /*
+    Locking when the app goes out of sight.
+
+    Going out of sight - another app, the home screen, the screen turning off -
+    fires visibilitychange, and on some routes only pagehide. Either one notes
+    the time and veils the page at once (html.veiled in styles.css blanks it),
+    so that if Android snapshots the screen for its Recents view after this
+    runs, the snapshot is blank. Whether Android takes that snapshot before or
+    after a web page gets to react has not been tested on the phone.
+
+    Coming back compares the clock with the lock's timing (shouldLock). If it is
+    time, the lock is put up synchronously - flushSync - BEFORE the veil comes
+    off, so the page underneath is never painted on the way. "Immediately" locks
+    straight away on hiding, so while it is in the background the page holds the
+    lock screen and nothing else.
+  */
+  // Keyed on the timing alone: settings are re-read as a new object on every
+  // save, and re-wiring these listeners on each one could drop the veil while
+  // the app is out of sight.
+  const lockAfter = lock?.afterMinutes ?? null;
+  useEffect(() => {
+    if (lockAfter === null) return;
+    const root = document.documentElement;
+    const lockUp = () =>
+      flushSync(() => {
+        setLocked(true);
+        setToast(null);
+      });
+    const hide = () => {
+      if (hiddenAt.current === null) hiddenAt.current = Date.now();
+      root.classList.add('veiled');
+      if (shouldLock(hiddenAt.current, Date.now(), lockAfter)) lockUp();
+    };
+    const show = () => {
+      const since = hiddenAt.current;
+      hiddenAt.current = null;
+      if (since !== null && shouldLock(since, Date.now(), lockAfter)) lockUp();
+      root.classList.remove('veiled');
+    };
+    const onVisibility = () => (document.visibilityState === 'hidden' ? hide() : show());
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', hide);
+    window.addEventListener('pageshow', show);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', hide);
+      window.removeEventListener('pageshow', show);
+      root.classList.remove('veiled');
+    };
+  }, [lockAfter]);
+
+  /** The header's "Hide now": lock straight away, whatever the timing. */
+  const hideNow = useCallback(() => {
+    setLocked(true);
+    setToast(null);
+  }, []);
+
+  /** The recovery phrase opened the app: the lock comes off, and we say so. */
+  const recoverWithPhrase = useCallback(async () => {
+    setSettings(await saveLock(null));
+    setLocked(false);
+    setRecovered(true);
+  }, []);
+
+  /*
+    A new day while the app sat in the background. Everything that says "today"
+    - the header date, the Today screen, a low day - reads the date as it
+    renders, so all it needs is a render. Coming back into view gives it one
+    when the date has moved on; nothing is cleared on a timer.
+  */
+  const [, setDay] = useState(todayKey);
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState === 'visible') setDay(todayKey());
+    };
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
+    return () => {
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('focus', check);
+    };
+  }, []);
+
   useEffect(() => {
     return startScheduler((tick) => {
       if (tick.missed.length) setMissed((prev) => [...prev, ...tick.missed]);
@@ -293,7 +413,7 @@ export default function App() {
   const renderTab = (id: TabId): ReactNode => {
     switch (id) {
       case 'today':
-        return <Today settings={settings} />;
+        return <Today settings={settings} onChange={setSettings} />;
       case 'inbox':
         return <Inbox settings={settings} />;
       case 'tasks':
@@ -301,11 +421,21 @@ export default function App() {
       case 'backlog':
         return <Backlog settings={settings} onChange={setSettings} />;
       case 'notes':
-        return <Notes settings={settings} />;
+        return <Notes settings={settings} openNote={noteToOpen} />;
       case 'money':
         return <Money settings={settings} startAdding={start.add === 'subscription'} />;
     }
   };
+
+  /*
+    Until the saved settings arrive there is no way to know whether a lock is
+    set, so nothing of the app is drawn at all - just the page colour, for the
+    few milliseconds IndexedDB takes. Then it is the lock or the app, never the
+    app first. When locked, the lock screen is the whole page: no header, nav,
+    tab, toast or missed-reminders card is mounted behind it, not even hidden.
+  */
+  if (!settingsLoaded) return <div className="app-blank" aria-busy="true" />;
+  if (showLock) return <LockScreen lock={lock} onUnlock={() => setLocked(false)} onRecovered={recoverWithPhrase} />;
 
   return (
     <ToastContext.Provider value={showToast}>
@@ -317,19 +447,51 @@ export default function App() {
                 <h1>{view === 'settings' && about ? 'About' : TITLES[view]}</h1>
                 {view === 'today' && <p className="faint">{longDate()}</p>}
               </div>
-              <button
-                type="button"
-                className={view === 'settings' ? 'btn btn-sm' : 'btn btn-quiet btn-sm'}
-                onClick={() => (view === 'settings' ? goTo(beforeSettings) : goTo('settings'))}
-              >
-                {view === 'settings' ? 'Done' : 'Settings'}
-              </button>
+              <div className="header-actions">
+                {lock && (
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={hideNow}>
+                    Hide now
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={view === 'settings' ? 'btn btn-sm' : 'btn btn-quiet btn-sm'}
+                  onClick={() => (view === 'settings' ? goTo(beforeSettings) : goTo('settings'))}
+                >
+                  {view === 'settings' ? 'Done' : 'Settings'}
+                </button>
+              </div>
             </div>
           </header>
 
           <main className="main">
             {/* The capture box is on every screen except Settings, always first. */}
             {view !== 'settings' && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
+
+            {recovered && (
+              <div className="card stack-sm" role="status">
+                <p>
+                  <strong>The lock is off.</strong> You opened Steady with your recovery phrase, so the PIN has been
+                  removed. Everything you wrote is here, as it was.
+                </p>
+                <p className="small">You can set a new PIN in Settings, under App lock.</p>
+                <div className="btn-row">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => {
+                      setRecovered(false);
+                      goTo('settings');
+                    }}
+                  >
+                    Open Settings
+                  </button>
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => setRecovered(false)}>
+                    Got it
+                  </button>
+                </div>
+              </div>
+            )}
 
             {updated && (
               <div className="card stack-sm" role="status">

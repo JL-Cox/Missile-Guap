@@ -31,6 +31,28 @@ export interface Backup {
 export const BACKUP_TABLES = ['captures', 'tasks', 'notes', 'subscriptions', 'incomes'] as const;
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
+/**
+ * Settings that belong to this phone, or to this one day, rather than to what
+ * you wrote - so they never travel in a backup file and a restore never sets
+ * or clears them. saveSettings merges, so leaving a key out of a restore keeps
+ * whatever this phone has.
+ *
+ * - `lock`: a lock in a backup would put its hashes into a file that gets
+ *   emailed and copied to drives, for no gain; a restore that could set one
+ *   would let an old file lock you out of a new phone with a PIN you no longer
+ *   remember, and one that could clear it would make the lock meaningless.
+ * - `lowDay`: a backup that kept today's low day would be a record of low
+ *   days, which is the one thing that feature promises not to keep.
+ */
+export const DEVICE_SETTINGS = ['lock', 'lowDay'] as const;
+
+/** A copy of some settings with every device-only field taken out. */
+export function withoutDeviceSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...settings };
+  for (const key of DEVICE_SETTINGS) delete copy[key];
+  return copy;
+}
+
 export async function exportBackup(): Promise<Backup> {
   const [rows, settings] = await Promise.all([
     Promise.all(BACKUP_TABLES.map((name) => db.table(name).toArray())),
@@ -42,7 +64,7 @@ export async function exportBackup(): Promise<Backup> {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     ...tables,
-    settings: settings as unknown as Record<string, unknown>,
+    settings: withoutDeviceSettings(settings as unknown as Record<string, unknown>),
   };
 }
 
@@ -157,7 +179,9 @@ export async function importBackup(backup: Backup, mode: ImportMode): Promise<Im
   const result = Object.fromEntries(BACKUP_TABLES.map((name, i) => [name, written[i] ?? 0])) as ImportResult;
 
   if (mode === 'replace' && backup.settings && typeof backup.settings === 'object') {
-    const { id: _ignored, ...rest } = backup.settings as Record<string, unknown>;
+    // saveSettings merges, so leaving the lock out of the patch keeps this
+    // phone's lock - set or not - exactly as it was.
+    const { id: _ignored, ...rest } = withoutDeviceSettings(backup.settings as Record<string, unknown>);
     await saveSettings(rest as Partial<Settings>);
   }
   // Nudge every view to refetch after the tables changed underneath them.

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { DateKey } from '../types';
+import type { DateKey, Note } from '../types';
 import { addDays } from '../lib/time';
 
 /** Small shared pieces. Everything is labelled in words - no icon-only controls. */
@@ -131,7 +131,12 @@ export function useBackLayer(open: boolean, close: () => void): void {
    Moving between screens from inside one
    -------------------------------------------------------------------------- */
 
-export type Navigate = (view: 'tasks', options?: { query?: string }) => void;
+/**
+ * `query` opens Tasks with a search already in the box; `note` opens Notes with
+ * that note in the editor, which is how a task row gets you to the note it
+ * points at.
+ */
+export type Navigate = (view: 'tasks' | 'notes', options?: { query?: string; note?: Note }) => void;
 export const NavigateContext = createContext<Navigate>(() => undefined);
 export function useNavigate(): Navigate {
   return useContext(NavigateContext);

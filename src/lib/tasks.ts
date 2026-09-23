@@ -91,9 +91,16 @@ export function withAnchor(task: Task, previous?: Pick<Task, 'date' | 'recurrenc
  * behind you - "a day before" a task that is now tomorrow - it is marked as
  * already reminded, because you have just done the thing it was reminding you
  * about.
+ *
+ * A routine that does not roll forward stays open instead of finishing: the
+ * tick is recorded and its steps are unticked, ready for next time. One that
+ * repeats rolls forward like any other repeat, which already resets its steps.
  */
 export function rolledForward(task: Task, at: number = Date.now()): Task {
-  if (!task.recurrence || !task.date) return { ...task, doneAt: at };
+  if (!task.recurrence || !task.date) {
+    if (task.routine) return { ...task, doneAt: undefined, lastDoneAt: at, steps: untickedSteps(task.steps) };
+    return { ...task, doneAt: at };
+  }
 
   // Repeats saved before anchors existed take one from their day now, so they
   // stop drifting from here on.
@@ -115,16 +122,34 @@ export function rolledForward(task: Task, at: number = Date.now()): Task {
   const remindAt =
     task.remindAt !== undefined ? task.remindAt + (atTime(next, '12:00') - atTime(task.date, '12:00')) : undefined;
 
+  // The note from this appointment belongs to this one. The next time round
+  // gets a note of its own; the old one stays in Notes.
+  const { followUpNoteId: _thisTime, ...rest } = task;
+
   return {
-    ...task,
+    ...rest,
     recurrence: rec,
     date: next,
     doneAt: undefined,
     lastDoneAt: at,
     remindAt,
     remindedAt: remindAt !== undefined && remindAt <= at ? at : undefined,
-    steps: task.steps.map((s) => ({ ...s, done: false })),
+    steps: untickedSteps(task.steps),
   };
+}
+
+function untickedSteps(steps: Task['steps']): Task['steps'] {
+  return steps.map((s) => ({ ...s, done: false }));
+}
+
+/** Whether any step is ticked - the only time starting them again means anything. */
+export function hasTickedStep(task: Pick<Task, 'steps'>): boolean {
+  return task.steps.some((s) => s.done);
+}
+
+/** "Start the steps again": every step unticked, nothing else touched. */
+export function restartedSteps<T extends Pick<Task, 'steps'>>(task: T): T {
+  return { ...task, steps: untickedSteps(task.steps) };
 }
 
 /**

@@ -90,11 +90,31 @@ export interface Task {
 
   doneAt?: number;
   /**
-   * For a repeating task: when it was last ticked off. A repeat rolls forward
-   * rather than staying done, so without this "did I already take it today?"
-   * has no answer on screen. A plain fact - never a streak or a count.
+   * For a repeating task or a routine: when it was last ticked off. Neither
+   * stays done - a repeat rolls forward, a routine unticks its steps - so
+   * without this "did I already take it today?" has no answer on screen. A
+   * plain fact - never a streak or a count.
    */
   lastDoneAt?: number;
+  /**
+   * "Reuse these steps each time". Ticking it off records when, unticks the
+   * steps and keeps it, rather than finishing it - for the checklists you run
+   * again and again, like leaving the house or the weekly shop.
+   */
+  routine?: boolean;
+  /**
+   * Set only by "Getting ready for an appointment" in the editor, never guessed
+   * from the title. From the task's day onward its row offers to write down
+   * what was said.
+   */
+  appointment?: boolean;
+  /**
+   * The note written after the appointment, so the row opens it again rather
+   * than starting a second one. A link, not ownership: deleting the task
+   * leaves the note where it is, and a note deleted since just means the row
+   * offers to write one again.
+   */
+  followUpNoteId?: Id;
   createdAt: number;
   updatedAt: number;
 }
@@ -285,6 +305,30 @@ export interface CustomTheme {
  */
 export type ReminderContent = 'titleTime' | 'generic' | 'titleNotes';
 
+/** Minutes out of sight before the app lock closes over the screen. 0 is "immediately". */
+export type LockAfter = 0 | 1 | 5 | 15;
+
+/**
+ * The optional app lock, as stored. Everything needed to check a PIN or the
+ * recovery phrase, and nothing else: never the PIN, never the phrase, not how
+ * long the PIN is, and no record of attempts. See src/lib/lock.ts.
+ *
+ * It belongs to this phone, not to your data, so it never goes into a backup
+ * file and a restore can neither set it nor clear it.
+ */
+export interface AppLock {
+  /** PBKDF2-SHA256 of the PIN, base64. */
+  pinHash: string;
+  /** 16 random bytes, base64, made fresh every time a PIN is set. */
+  pinSalt: string;
+  /** PBKDF2-SHA256 of the recovery phrase, base64. */
+  phraseHash: string;
+  phraseSalt: string;
+  /** Stored rather than assumed, so a later version can raise it without locking anyone out. */
+  iterations: number;
+  afterMinutes: LockAfter;
+}
+
 export interface Settings {
   id: 'settings';
   theme: ThemeName;
@@ -325,6 +369,19 @@ export interface Settings {
    * can hold logins. Titles, dates and amounts go in either way.
    */
   calendarIncludeNotes: boolean;
+  /**
+   * The day "Today is a low day" was turned on for. It is compared with
+   * today's date rather than cleared by a timer, so it ends by itself at
+   * midnight. One left from an earlier day is deleted, it never goes into a
+   * backup and a restore never sets it: no record of low days is kept.
+   */
+  lowDay?: DateKey;
+  /**
+   * The app lock, if one is set. Optional with no default, like customTheme:
+   * absent means no lock, and nothing is stored for anyone who never sets one.
+   * Device-only - see DEVICE_SETTINGS in src/lib/backup.ts.
+   */
+  lock?: AppLock;
   /** Bumped by backup import so views know to refetch. */
   rev: number;
 }

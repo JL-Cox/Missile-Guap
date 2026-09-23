@@ -23,8 +23,14 @@ import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSu
  * number, what the nurse actually said. Plain text on purpose - no formatting
  * to fiddle with, nothing to get wrong, and it reads back exactly as typed.
  */
-export default function Notes({ settings }: { settings: Settings }) {
-  const [editing, setEditing] = useState<Note | null>(null);
+export default function Notes({ settings, openNote = null }: { settings: Settings; openNote?: Note | null }) {
+  /*
+    A task row can send you here with a note to open - "Write down what was
+    said". The screen is only still mounted when it has something open of its
+    own, and then that stays as it was: a half-written note is never swapped
+    out from under you, and the new one is waiting in the list.
+  */
+  const [editing, setEditing] = useState<Note | null>(openNote);
   const [tidying, setTidying] = useState(false);
   const [query, setQuery] = useState('');
   const toast = useToast();

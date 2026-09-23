@@ -27,11 +27,26 @@ export function movedManyMessage(count: number): string {
 /**
  * After ticking something off. A repeat does not finish - it rolls to its next
  * day - so it says when that is, which is also the answer to "did it take?".
+ * A routine that does not repeat does not finish either: it stays where it
+ * is with its steps unticked, and says so, so the row still being there reads
+ * as meant rather than as a tick that did not work.
  */
-export function doneMessage(after: Pick<Task, 'date' | 'doneAt'>, today: DateKey): string {
-  if (!after.doneAt && after.date) return `Done. Next: ${describeDate(after.date, today)}.`;
+export function doneMessage(
+  after: Pick<Task, 'date' | 'doneAt'> & Partial<Pick<Task, 'recurrence' | 'routine' | 'steps'>>,
+  today: DateKey,
+): string {
+  if (after.doneAt) return 'Done.';
+  if (after.routine && !(after.recurrence && after.date)) {
+    return after.steps?.length
+      ? 'Done. The steps are unticked, ready for next time.'
+      : 'Done. It stays here for next time.';
+  }
+  if (after.date) return `Done. Next: ${describeDate(after.date, today)}.`;
   return 'Done.';
 }
+
+/** After "Start the steps again". */
+export const STEPS_RESTARTED = 'Every step is unticked, ready to start again.';
 
 export function cancelledMessage(name: string): string {
   return `${name.trim() || 'That subscription'} marked cancelled.`;

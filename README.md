@@ -53,7 +53,7 @@ opposite on all three counts.
 | **Backlog** | Everything that needs doing and has no day on it — book the appointment, order the thing, chase the letter. Anything you write down without giving it a date lands here by itself, so there is no decision to make at the time. Four priority levels (Low, Medium, High, Critical, and "not said", which stays a valid answer), four sort orders, and the one you used last is remembered. Nothing here is ever called late. |
 | **Notes** | Plain text you will want to look up again. Reference numbers, phone scripts, what the nurse actually said. Pin the important ones. |
 | **Money** | Your income and your subscriptions, and what one leaves of the other. Real dates rather than averages: what is still to come out this month and before your next payday, and what each individual paycheck has to cover before the next one arrives. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
-| **Settings** | Appearance, notifications, backup and restore, calendar export, and a plain-English account of what happens to your data. |
+| **Settings** | Appearance, notifications, an optional app lock, backup and restore, calendar export, a plain-English account of what happens to your data, and About: the version number, what's new, and the last ten updates. |
 
 Two things hold across every screen:
 
@@ -69,6 +69,21 @@ Two things hold across every screen:
   you have open, then goes to Today, then leaves the app - never through every
   tab you happened to visit. A half-written task is kept if you switch tabs and
   come back.
+
+A few things are there for harder days, and none of them keeps score:
+
+- **"Today is a low day"** is one button, always in the same place on Today.
+  It shows only what has a time, what is Critical, and what you marked as
+  doable on a low day; everything else folds to one line in its usual place,
+  with a Show button. It ends by itself at midnight, and no record of low days
+  is kept anywhere - not even in a backup.
+- **Appointment prep.** On a dated task, one button adds the steps people
+  forget (questions, insurance card, medication list, photo ID, when to leave)
+  and a questions list in the notes. From the day of the appointment the task
+  offers **Write down what was said**, which starts a note already linked to it.
+- **Routines.** "Reuse these steps each time" turns a task with steps into a
+  checklist you can run again: ticking it records when, and unticks the steps
+  for next time. Undated routines sit together at the top of the Backlog.
 
 There are four buckets, not six: **a reminder is a property of a task**, not a
 separate kind of thing, so there is never a moment of "is this a task or a
@@ -245,6 +260,17 @@ Everything else follows from that:
   sheet opens and you pick where it goes; otherwise it is saved to your
   downloads. Either way it goes only where you send it. Deleting something in the app does not
   reach into a backup file you saved earlier or a calendar entry you added.
+- **An optional app lock** (Settings, off by default) puts a PIN in front of
+  the screen after the app has been out of sight for a while, or when you tap
+  *Hide now*. **It hides the screen; it does not encrypt your data** - anyone
+  with a backup file, or with the phone plugged into a computer and Chrome's
+  developer tools, can still read everything. The PIN itself is never stored,
+  only a salted PBKDF2-SHA256 hash of it (WebCrypto, 600,000 rounds). A
+  six-word recovery phrase, shown once when you set it up, opens the app and
+  takes the lock off, so a forgotten PIN never costs you your data. The lock
+  belongs to the phone: it is never written into a backup and a restore cannot
+  set or clear it. No passkeys or fingerprint, because those can sync to a
+  Google account.
 - **Works in airplane mode.** The service worker caches the app itself on first
   visit, so every feature works with no signal at all.
 
@@ -316,7 +342,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-659 unit tests cover the parts where a quiet wrong answer would make the app
+770 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between
@@ -340,6 +366,13 @@ every table empty. Throughout, it records every request the page makes and
 fails on any that leaves the app's own server; it also calls `fetch()` to an
 outside address and checks the browser refuses. Finally it **kills the server**
 and reloads to prove the app still works with nothing behind it.
+
+`node e2e/lock-check.mjs` does the same for the optional app lock: it sets a
+PIN, sends the page to the background and back, and at every locked moment
+reads the whole page for the test data - which must not be there, not even
+hidden. It also checks a reload is locked before anything is drawn, that
+backups carry no trace of the lock, that a restore cannot set or clear one, and
+that the recovery phrase gets you back in.
 
 ## Layout
 

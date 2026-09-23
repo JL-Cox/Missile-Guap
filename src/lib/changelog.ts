@@ -17,6 +17,16 @@ export interface ChangeEntry {
 
 export const CHANGES: ChangeEntry[] = [
   {
+    version: 22,
+    items: [
+      '"Today is a low day": shows only what has a time, what is Critical, and easy tasks.',
+      'Appointment prep adds the usual steps and a list of questions to ask.',
+      'After an appointment, "Write down what was said" starts a linked note.',
+      '"Reuse these steps each time": ticking a routine unticks its steps for next time.',
+      'Optional app lock with a PIN and a recovery phrase. It hides the screen, not encryption.',
+    ],
+  },
+  {
     version: 21,
     items: [
       'New About page in Settings: version number, what changed, and the last 10 updates.',

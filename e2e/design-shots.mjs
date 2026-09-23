@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
-const PORT = 4188;
+const PORT = Number(process.env.E2E_SHOTS_PORT ?? 4188);
 const BASE = `http://127.0.0.1:${PORT}/`;
 const OUT = process.env.SCREENSHOT_DIR ?? 'e2e/screenshots-design';
 const CHROME = process.env.CHROME_PATH;

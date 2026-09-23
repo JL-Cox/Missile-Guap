@@ -7,14 +7,15 @@
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 
-const server = spawn('npx', ['vite', 'preview', '--port', '4196', '--host', '127.0.0.1'], { stdio: 'ignore', detached: true });
+const PORT = Number(process.env.E2E_UPGRADE_PORT ?? 4196);
+const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--host', '127.0.0.1'], { stdio: 'ignore', detached: true });
 await new Promise((r) => setTimeout(r, 4000));
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 const ctx = await browser.newContext();
 const page = await ctx.newPage();
 
 // Land on the origin without booting the app, so the v1 database is ours alone.
-await page.goto('http://127.0.0.1:4196/manifest.webmanifest');
+await page.goto(`http://127.0.0.1:${PORT}/manifest.webmanifest`);
 
 const seeded = await page.evaluate(() => new Promise((resolve, reject) => {
   const req = indexedDB.open('steady', 10); // Dexie stores version(1) as 10
@@ -43,7 +44,7 @@ const seeded = await page.evaluate(() => new Promise((resolve, reject) => {
 console.log(seeded);
 
 // Now boot the app, which opens the same database at v2.
-await page.goto('http://127.0.0.1:4196/', { waitUntil: 'networkidle' });
+await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
 await page.waitForSelector('.main');
 await page.waitForTimeout(1500);
 

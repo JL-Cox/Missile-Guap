@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   BACKUP_FORMAT,
   BackupError,
+  DEVICE_SETTINGS,
+  withoutDeviceSettings,
   backupFilename,
   countBackup,
   describeCounts,
@@ -115,5 +117,17 @@ describe('what a backup holds, said before anything is touched', () => {
 
   it('uses the singular for one and still names a kind at zero', () => {
     expect(describeCounts({ tasks: 1 })).toBe('1 task, 0 notes, 0 subscriptions, 0 incomes, 0 inbox items');
+  });
+});
+
+describe('settings a backup never carries', () => {
+  it('include the low day', () => {
+    expect(DEVICE_SETTINGS).toContain('lowDay');
+  });
+
+  it('are taken out of a copy, leaving the rest and the original alone', () => {
+    const settings = { id: 'settings', theme: 'dark', lowDay: '2026-09-23' };
+    expect(withoutDeviceSettings(settings)).toEqual({ id: 'settings', theme: 'dark' });
+    expect(settings.lowDay).toBe('2026-09-23');
   });
 });
