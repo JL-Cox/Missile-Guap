@@ -6,6 +6,9 @@
  *   Note     - something to remember or look up later.
  *   Subscription - recurring money leaving your account.
  *
+ * Money has two more record kinds alongside subscriptions: income, and debts
+ * with the one-row plan for paying them off.
+ *
  * A reminder is a *property of a task*, not a fifth bucket, so there is never
  * a moment of "is this a task or a reminder?".
  */
@@ -254,6 +257,135 @@ export interface IncomeSource {
 }
 
 /**
+ * What sort of debt something is. It only picks the presets and the labels in
+ * the form: the payoff engine never branches on it, so a debt filed under the
+ * "wrong" kind is still planned exactly right from the numbers typed.
+ */
+export type DebtKind =
+  | 'creditCard'
+  | 'storeCard'
+  | 'personalLoan'
+  | 'autoLoan'
+  | 'studentFederal'
+  | 'studentPrivate'
+  | 'medical'
+  | 'bnpl'
+  | 'lineOfCredit'
+  | 'person'
+  | 'other';
+
+/**
+ * How the required payment is worked out each month. Money in cents; percent
+ * as typed, so 1 means 1%.
+ *
+ *   fixed               - loans, buy now pay later, medical plans, family. 0 is
+ *                         "no set amount", which is allowed.
+ *   percentPlusInterest - most cards: 1% of the balance plus the month's
+ *                         interest and fees, never less than the floor. 0% with
+ *                         a $0 floor is "interest only", like a HELOC draw.
+ *   percentOfBalance    - some store cards: e.g. 3% of the balance, at least $30.
+ */
+export type MinimumRule =
+  | { kind: 'fixed'; amountMinor: number }
+  | { kind: 'percentPlusInterest'; percent: number; floorMinor: number }
+  | { kind: 'percentOfBalance'; percent: number; floorMinor: number };
+
+/** A lower rate for now: an intro rate, a balance transfer, "no interest if paid in full". */
+export interface DebtPromo {
+  /** Usually 0. */
+  aprPercent: number;
+  /** The last day the promo rate applies - the "paid in full by" date, inclusive. */
+  endsOn: DateKey;
+  /**
+   * True for "no interest if paid in full": if the promo balance is not
+   * cleared by the end date, the interest since the purchase is added back.
+   */
+  deferred: boolean;
+  /** The part of the balance on the promo, as of balanceAsOf. Absent means all of it. */
+  balanceMinor?: number;
+  /** Deferred only: interest held back so far, which some statements show, as of balanceAsOf. */
+  heldBackMinor?: number;
+}
+
+/**
+ * Something being paid back. Every number is typed by hand from a statement or
+ * an app - nothing is looked up - and there is deliberately no field for an
+ * account number, a login or anything else that would be worth stealing.
+ */
+export interface Debt {
+  id: Id;
+  name: string;
+  kind: DebtKind;
+  balanceMinor: number;
+  /** When the balance was typed. The plan starts from it today either way. */
+  balanceAsOf: DateKey;
+  /** Absent is "not added yet": planned as 0 and flagged, never guessed. */
+  aprPercent?: number;
+  minimum: MinimumRule;
+  /** Absent means monthly. Pay-in-4 plans are every 2 weeks. */
+  cadence?: 'monthly' | 'every2weeks';
+  /** 1-31, clamped to the month like every other day of the month here. Needed when monthly. */
+  dueDay?: number;
+  /** Needed when every 2 weeks: later dates are this plus 14 days at a time. */
+  nextDueOn?: DateKey;
+  /** Shown as a label only. The maths is the same either way. */
+  autopay: boolean;
+  promo?: DebtPromo;
+  creditLimitMinor?: number;
+  /** An annual or monthly fee. A yearly one says which month it lands in, 1-12. */
+  fee?: { amountMinor: number; every: 'month' | 'year'; month?: number };
+  /**
+   * The loan as it was taken out. Used to work out a payment and to say when it
+   * was scheduled to finish; the engine itself never reads these.
+   */
+  loan?: { originalMinor?: number; termMonths?: number; firstPaymentOn?: DateKey };
+  /**
+   * The latest due date marked "Paid", so a payment already made is not shown
+   * as still to come. A single date, never a history of payments.
+   */
+  paidThrough?: DateKey;
+  /** Set by "Mark as paid off". Kept rather than deleted, like a subscription's endedOn. */
+  paidOffOn?: DateKey;
+  currency: string;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Which debt gets the money above the minimums first.
+ *
+ *   avalanche - the highest rate, so the least goes to interest
+ *   snowball  - the smallest balance, so whole debts finish sooner
+ */
+export type DebtStrategy = 'avalanche' | 'snowball';
+
+/**
+ * The plan's inputs. One row, id 'plan'.
+ *
+ * A table rather than a setting, on purpose: "Delete everything" keeps
+ * settings, and a spending estimate someone typed is their data, so it has to
+ * go with everything else - and travel in a backup with everything else.
+ */
+export interface DebtPlan {
+  id: 'plan';
+  strategy: DebtStrategy;
+  /**
+   * Per income source: the total toward debt from each of its checks, the
+   * minimums included. Keeping the total the same while debts finish is how a
+   * finished debt's payment rolls on to the next. Absent means none chosen,
+   * which keeps paying today's minimums.
+   */
+  perCheckMinor?: Record<Id, number>;
+  /** Used only when no payday can be placed at all. */
+  perMonthMinor?: number;
+  /** Rent, food, gas and the rest, a month. Absent means not set, so no suggestion is made. */
+  untrackedMonthlyMinor?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
  * The themes that ship as token blocks in `src/styles.css`.
  *
  * This list is the contract: `test/theme.test.ts` reads the stylesheet and fails
@@ -382,6 +514,15 @@ export interface Settings {
    * Device-only - see DEVICE_SETTINGS in src/lib/backup.ts.
    */
   lock?: AppLock;
+  /**
+   * The sections you folded or opened, where that differs from how they start
+   * (see src/lib/sections.ts). Optional with no default, like customTheme:
+   * someone who never folds anything stores nothing. It holds only fixed
+   * section names, never anything you wrote. A preference, so it travels in
+   * backups, a restore that replaces everything puts it back, and Delete
+   * everything leaves it.
+   */
+  sections?: Record<string, boolean>;
   /** Bumped by backup import so views know to refetch. */
   rev: number;
 }

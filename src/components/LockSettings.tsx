@@ -42,9 +42,15 @@ function whenItLocks(minutes: LockAfter): string {
 export default function LockSettings({
   settings,
   onChange,
+  summary,
+  forceOpen = false,
 }: {
   settings: SettingsType;
   onChange: (settings: SettingsType) => void;
+  /** The group's one line while closed: "Off", "On · after 5 minutes". */
+  summary: string;
+  /** Open on arrival, for the button that sends you here after a recovery phrase. */
+  forceOpen?: boolean;
 }) {
   const onToast = useToast();
   const available = lockAvailable();
@@ -126,7 +132,7 @@ export default function LockSettings({
   };
 
   return (
-    <Section title="App lock">
+    <Section title="App lock" collapsible="settings.lock" summary={summary} forceOpen={forceOpen}>
       {!available ? (
         <p className="small">
           The app lock can't be used in this browser. It needs the browser's built-in secure hashing, which isn't
@@ -282,8 +288,8 @@ export default function LockSettings({
           it.
         </p>
         <p className="small">
-          Reminders still appear on the phone's lock screen, as set under Reminders above. To keep task titles off
-          it, choose <strong>Just "You have a reminder"</strong> there.
+          Reminders still appear on the phone's lock screen, as set under Reminders and calendar. To keep task
+          titles off it, choose <strong>Just "You have a reminder"</strong> there.
         </p>
         <p className="small">
           A forgotten PIN never costs you your data. Setting a PIN gives you a recovery phrase of six words, and

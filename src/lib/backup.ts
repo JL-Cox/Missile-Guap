@@ -1,6 +1,6 @@
 import type { Table } from 'dexie';
 import { db, getSettings, saveSettings } from '../db';
-import type { Capture, IncomeSource, Note, Settings, Subscription, Task } from '../types';
+import type { Capture, Debt, DebtPlan, IncomeSource, Note, Settings, Subscription, Task } from '../types';
 
 /**
  * Your data, in a plain readable file, on demand. This is the difference
@@ -8,7 +8,12 @@ import type { Capture, IncomeSource, Note, Settings, Subscription, Task } from '
  */
 
 export const BACKUP_FORMAT = 'steady-backup';
-export const BACKUP_VERSION = 2;
+/**
+ * 3 added debts and the debt plan. Bumping it is what makes an older copy of
+ * the app refuse a newer file ("update the app first") instead of restoring it
+ * and silently leaving the debts behind.
+ */
+export const BACKUP_VERSION = 3;
 
 export interface Backup {
   format: typeof BACKUP_FORMAT;
@@ -19,6 +24,8 @@ export interface Backup {
   notes: Note[];
   subscriptions: Subscription[];
   incomes: IncomeSource[];
+  debts: Debt[];
+  debtPlan: DebtPlan[];
   settings: Record<string, unknown>;
 }
 
@@ -28,7 +35,7 @@ export interface Backup {
  * this ever stops matching the database's own list, so a table added later
  * cannot be quietly left out of the backup file.
  */
-export const BACKUP_TABLES = ['captures', 'tasks', 'notes', 'subscriptions', 'incomes'] as const;
+export const BACKUP_TABLES = ['captures', 'tasks', 'notes', 'subscriptions', 'incomes', 'debts', 'debtPlan'] as const;
 export type BackupTable = (typeof BACKUP_TABLES)[number];
 
 /**
@@ -95,6 +102,9 @@ export function parseBackup(raw: string): Backup {
     subscriptions: candidate.subscriptions ?? [],
     // Absent from a v1 backup, which is fine - it simply had no income.
     incomes: candidate.incomes ?? [],
+    // Absent from anything before v3, which simply had no debts.
+    debts: candidate.debts ?? [],
+    debtPlan: candidate.debtPlan ?? [],
     settings: candidate.settings ?? {},
   };
 }
@@ -121,14 +131,16 @@ const NOUNS: Record<BackupTable, [string, string]> = {
   notes: ['note', 'notes'],
   subscriptions: ['subscription', 'subscriptions'],
   incomes: ['income', 'incomes'],
+  debts: ['debt', 'debts'],
+  debtPlan: ['debt plan', 'debt plans'],
   captures: ['inbox item', 'inbox items'],
 };
 
 /** The order things are named in, most-used first. */
-const SPOKEN_ORDER: BackupTable[] = ['tasks', 'notes', 'subscriptions', 'incomes', 'captures'];
+const SPOKEN_ORDER: BackupTable[] = ['tasks', 'notes', 'subscriptions', 'incomes', 'debts', 'debtPlan', 'captures'];
 
 /**
- * "42 tasks, 18 notes, 9 subscriptions, 1 income, 3 inbox items".
+ * "42 tasks, 18 notes, 9 subscriptions, 1 income, 2 debts, 1 debt plan, 3 inbox items".
  *
  * Every kind is named, even at zero, so a count never silently skips one - the
  * old line left income out, which is how nobody noticed "Delete everything"

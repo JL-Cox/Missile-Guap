@@ -273,6 +273,12 @@ describe('income against expenses', () => {
     const subs = [sub({ amountMinor: 1_000, cycle: 'monthly' })];
     expect(leftoverMonthlyMinor([], subs)).toBe(-totalMonthlyMinor(subs));
   });
+
+  it("takes the debt plan's monthly amount out too, and is unchanged without one", () => {
+    const subs = [sub({ amountMinor: 1_299, cycle: 'monthly' })];
+    expect(leftoverMonthlyMinor([income()], subs, 43_333)).toBe(370_000 - totalMonthlyMinor(subs) - 43_333);
+    expect(leftoverMonthlyMinor([income()], subs, 0)).toBe(leftoverMonthlyMinor([income()], subs));
+  });
 });
 
 

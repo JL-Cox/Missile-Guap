@@ -1,4 +1,5 @@
-import type { DateKey, IncomeSource, Subscription, Task, TimeKey } from '../types';
+import type { DateKey, Debt, IncomeSource, Subscription, Task, TimeKey } from '../types';
+import { aprBasisPoints, dueDatesFrom, hasSchedule, isEvery2Weeks } from './debt';
 import { anchorDays, isIntervalFrequency, nextPayday, paydaysBetween, weekendShiftOf } from './pay';
 import { advanceCycle, billingDatesBetween, billingDays, isFixedDayCycle, nextBilling, nextOccurrence } from './recurrence';
 import { addDays, atTime, daysBetween, fromDateKey, todayKey } from './time';
@@ -378,6 +379,92 @@ export function calendarForIncome(
   return ev ? wrapCalendar([ev], now, source.name) : null;
 }
 
+/** Days before each debt payment its calendar entry reminds you. Fixed, so there is no field to set. */
+export const DEBT_REMIND_DAYS = 3;
+
+/**
+ * The file name for a debt's calendar entry. Deliberately neutral: the share
+ * sheet and Downloads show the file name, and a lender's or a hospital's name
+ * has no business appearing there.
+ */
+export const DEBT_CALENDAR_FILENAME = 'payment-dates.ics';
+
+/**
+ * A debt's payments as a repeating all-day entry, from the next due date not
+ * yet marked paid.
+ *
+ * The title carries the amount only when it is a set amount - "Car loan
+ * payment - $395.09" - because a card's minimum changes every month, and an
+ * entry that is wrong most months is worse than one that says "Card payment
+ * due". A set amount at 0% has a known number of payments left, so the entry
+ * stops after the last one instead of repeating forever.
+ */
+function debtEvent(
+  debt: Debt,
+  amountLabel: string | null,
+  now: number,
+  { includeNotes = false }: CalendarOptions = {},
+): IcsEvent | null {
+  if (debt.paidOffOn || !(debt.balanceMinor > 0) || !hasSchedule(debt)) return null;
+  const today = todayKey(new Date(now));
+  const setAmount = debt.minimum.kind === 'fixed' && debt.minimum.amountMinor > 0 ? debt.minimum.amountMinor : 0;
+  const left = setAmount && aprBasisPoints(debt.aprPercent) === 0 ? Math.ceil(debt.balanceMinor / setAmount) : 0;
+  const upcoming = dueDatesFrom(debt, today, left || 25);
+  const next = upcoming[0];
+  if (!next) return null;
+  const count = left ? `;COUNT=${left}` : '';
+
+  let rrule: string | undefined;
+  let rdates: DateKey[] | undefined;
+  if (isEvery2Weeks(debt)) {
+    rrule = `FREQ=WEEKLY;INTERVAL=2${count}`;
+  } else {
+    const end = monthEnd(Math.min(31, Math.max(1, Math.floor(debt.dueDay ?? 1))));
+    if (end === 'plain') rrule = `FREQ=MONTHLY${count}`;
+    else if (end === 'lastDay') rrule = `FREQ=MONTHLY;BYMONTHDAY=-1${count}`;
+    // The 29th and 30th: Steady's own dates, written out - every one of them
+    // when the payments left are known, two years of them otherwise.
+    else rdates = upcoming.slice(1).filter((d) => left > 0 || daysBetween(next, d) <= EXPLICIT_DAYS);
+  }
+
+  return {
+    uid: `debt-${debt.id}@steady.local`,
+    summary: setAmount && amountLabel ? `${debt.name} payment - ${amountLabel}` : `${debt.name} payment due`,
+    description: includeNotes ? debt.notes || undefined : undefined,
+    allDay: next,
+    rrule,
+    rdates,
+    alarmMinutesBefore: DEBT_REMIND_DAYS * 24 * 60,
+  };
+}
+
+/**
+ * A calendar containing one debt's payment dates, for the button on that
+ * debt. Debts are never in the whole-app export: a lender's name and an amount
+ * in a calendar that may copy itself to an online account says more than a
+ * streaming bill does, so each one goes in only when it is chosen.
+ *
+ * `amountLabel` is the set payment, formatted, or null. The calendar is named
+ * "Steady" rather than after the debt, for the same reason as the file name.
+ */
+export function calendarForDebt(
+  debt: Debt,
+  amountLabel: string | null,
+  now: number = Date.now(),
+  options: CalendarOptions = {},
+): string | null {
+  const ev = debtEvent(debt, amountLabel, now, options);
+  return ev ? wrapCalendar([ev], now, 'Steady') : null;
+}
+
+/**
+ * Said when a debt is marked paid off. The entry lives in the phone's
+ * calendar, which Steady cannot reach, so it keeps repeating until it is
+ * deleted there.
+ */
+export const DEBT_CALENDAR_ENTRY_STAYS =
+  "If you put its payment dates in your phone's calendar, delete the repeating entry there - Steady can't reach your calendar.";
+
 /**
  * A calendar containing exactly one subscription, for the "put this in my
  * calendar" button that appears the moment you finish adding it. The UID is
@@ -402,7 +489,7 @@ export function calendarForTask(task: Task, now: number = Date.now(), options: C
   return wrapCalendar([ev], now, task.title);
 }
 
-export type CalendarKind = 'task' | 'subscription' | 'income' | 'all';
+export type CalendarKind = 'task' | 'subscription' | 'income' | 'debt' | 'all';
 
 /**
  * One plain line saying what a calendar file will carry, shown next to every
@@ -422,6 +509,10 @@ export function calendarContents(kind: CalendarKind, includeNotes: boolean): str
       return includeNotes
         ? 'Goes in: the name, the paydays and the amount, with its notes.'
         : 'Goes in: the name, the paydays and the amount. Notes stay here unless you turn them on in Settings.';
+    case 'debt':
+      return includeNotes
+        ? "Goes in: the name and the due dates, and the amount when it's the same every month, with its notes."
+        : "Goes in: the name and the due dates, and the amount when it's the same every month. Notes stay here unless you turn them on in Settings.";
     case 'all':
       return includeNotes
         ? 'Goes in: titles, dates and amounts for every dated task, subscription and payday, with their notes, steps and how to cancel.'

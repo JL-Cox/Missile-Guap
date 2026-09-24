@@ -137,6 +137,20 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`));
 
+/** The button that folds a section, found by the section's title. */
+const foldButton = (title) => page.locator(`section[aria-label="${title}"] > .fold-heading > .fold-btn`);
+/**
+ * Opens a folded section, if it is not open already. Settings starts with
+ * every group closed on each visit, so anything in one is opened first.
+ */
+const openSection = async (title) => {
+  const button = foldButton(title);
+  if ((await button.getAttribute('aria-expanded')) === 'false') await button.click();
+  await page.waitForTimeout(100);
+};
+/** What is on screen, leaving out anything folded away (textContent reads hidden text too). */
+const visibleText = () => page.locator('.main').innerText();
+
 const todayKey = (() => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -317,7 +331,10 @@ check('About has its own title', await page.textContent('.header h1'), 'About');
 const aboutText = await page.textContent('.main');
 check('About shows a version number', /Version \d+/.test(aboutText), true);
 check("About lists what's new", (await page.locator('section[aria-label="What\'s new"] li').count()) > 0, true);
-const updates = await page.locator('ol[aria-label^="Last 10 updates"] li').count();
+check('the last 10 updates start folded away', await foldButton('Last 10 updates').getAttribute('aria-expanded'), 'false');
+check('with the newest named in its one line', (await foldButton('Last 10 updates').textContent()).includes('Newest: '), true);
+await openSection('Last 10 updates');
+const updates = await page.locator('ol[aria-label^="Last 10 updates"] li:visible').count();
 check('About lists between 1 and 10 recent updates', updates >= 1 && updates <= 10, true);
 await page.goBack();
 await page.waitForTimeout(300);
@@ -326,25 +343,71 @@ await page.goBack();
 await page.waitForTimeout(300);
 check('and Back again closes Settings', await page.getAttribute('.nav-btn:has-text("Money")', 'aria-current'), 'page');
 
-// --- the nav at the largest text size: every label on one line -------------
+// --- the nav, all seven tabs, at every text size: each label on one line ----
 // The tab you are on is set bold, which is what used to break "Backlog" in two.
+// A slot is as wide as its own label set bold, reserved on every tab, so
+// every tab is visited: none may break, and no slot may move when the tab
+// you are on changes. Checked at both ends of the text scale and at 1.0x.
+check('the nav holds seven tabs', await page.locator('.nav-btn').count(), 7);
+check(
+  'in a fixed order, with Debt between Notes and Money',
+  (await page.$$eval('.nav-btn .nav-label', (ls) => ls.map((l) => l.textContent.trim()))).join(' '),
+  'Today Inbox Tasks Backlog Notes Debt Money',
+);
+const navState = () =>
+  page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('.nav-btn')];
+    const nav = document.querySelector('.nav');
+    return {
+      widths: buttons.map((b) => b.getBoundingClientRect().width),
+      broken: buttons
+        .filter((b) => {
+          const label = b.querySelector('.nav-label');
+          return label.getBoundingClientRect().height > parseFloat(getComputedStyle(label).lineHeight) * 1.5;
+        })
+        .map((b) => b.textContent.trim()),
+      clipped: buttons.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim()),
+      overflows: nav.scrollWidth > nav.clientWidth + 1,
+    };
+  });
+for (const scale of ['0.9', '1', '1.6']) {
 await page.click('.header button:text-is("Settings")');
-await page.fill('#text-scale', '1.6');
+await openSection('How it looks');
+await page.fill('#text-scale', scale);
 await page.click('.header button:text-is("Done")');
-const navLines = () =>
-  page.evaluate(() =>
-    [...document.querySelectorAll('.nav-btn > span:not(.nav-glyph):not(.nav-count)')].filter(
-      (label) => label.getBoundingClientRect().height > parseFloat(getComputedStyle(label).lineHeight) * 1.5,
-    ).length,
-  );
 for (const width of [412, 360]) {
   await page.setViewportSize({ width, height: 915 });
-  await page.click('.nav-btn:has-text("Backlog")');
-  await page.waitForTimeout(150);
-  check(`at 1.6x and ${width}px, no tab label breaks onto two lines`, await navLines(), 0);
+  const seen = [];
+  const tabs = await page.locator('.nav-btn').count();
+  for (let i = 0; i < tabs; i++) {
+    await page.locator('.nav-btn').nth(i).click();
+    await page.waitForTimeout(150);
+    seen.push(await navState());
+  }
+  const shift = Math.max(
+    ...seen[0].widths.map((_, slot) => {
+      const across = seen.map((s) => s.widths[slot]);
+      return Math.max(...across) - Math.min(...across);
+    }),
+  );
+  const at = `at ${scale === '1' ? '1.0' : scale}x and ${width}px`;
+  check(`${at}, no tab label breaks onto two lines, whichever tab is open`, [...new Set(seen.flatMap((s) => s.broken))].join(', '), '');
+  check(`${at}, no label is clipped`, [...new Set(seen.flatMap((s) => s.clipped))].join(', '), '');
+  check(`${at}, no slot changes width when the tab changes`, shift < 0.5, true);
+  check(`${at}, the narrowest slot is at least 44px`, Math.min(...seen.flatMap((s) => s.widths)) >= 44, true);
+  check(`${at}, the nav fits the screen`, seen.some((s) => s.overflows), false);
 }
+}
+// The bold copy that reserves a label's width is drawn hidden, so it must not
+// be read out as part of the tab's name ("Backlog Backlog").
+check(
+  'each tab is read out by its label alone',
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Backlog', exact: true }).count(),
+  1,
+);
 await page.setViewportSize({ width: 412, height: 915 });
 await page.click('.header button:text-is("Settings")');
+await openSection('How it looks');
 await page.fill('#text-scale', '1');
 await page.click('.header button:text-is("Done")');
 await page.click('.nav-btn:has-text("Money")');
@@ -574,9 +637,14 @@ await page.waitForTimeout(150);
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
 
-check('the yearly breakdown is folded away', (await page.textContent('.main')).includes('60,000.00'), false);
-await page.click('button:text-is("Show the yearly breakdown")');
-await page.waitForTimeout(200);
+check('the averages are folded away to start with', (await visibleText()).includes('60,000.00'), false);
+check(
+  'with what is left each month in their one line',
+  /Left each month, on average: \$[\d,]+\.\d{2}/.test(await foldButton('Averages').textContent()),
+  true,
+);
+await openSection('Averages');
+check('and open where they were', (await visibleText()).includes('60,000.00'), true);
 const moneyText = await page.textContent('.main');
 check('take-home is 24 paycheques a year, not 26', moneyText.includes('3,700.00'), true);
 check('gross is annualised the same way', moneyText.includes('60,000.00'), true);
@@ -800,13 +868,26 @@ check('undoing it takes that note away again', await libraryNotes(), 0);
 await page.click('button:has-text("Keep as a note")');
 await page.waitForTimeout(300);
 check('so filing it again leaves exactly one', await libraryNotes(), 1);
+// What has been cleared folds away under "Already dealt with", closed to start.
+check('what has been dealt with starts folded', await foldButton('Already dealt with').getAttribute('aria-expanded'), 'false');
+check(
+  'saying how many, and that nothing was deleted',
+  /\d+ cleared\. Nothing is deleted when you clear it\./.test(await foldButton('Already dealt with').textContent()),
+  true,
+);
+await openSection('Already dealt with');
+check(
+  'opened, each one can be put back',
+  (await page.locator('section[aria-label="Already dealt with"] button:text-is("Put it back"):visible').count()) > 0,
+  true,
+);
 
 // --- today pulls it all together ----------------------------------------
 await page.click('.nav-btn:has-text("Today")');
 await page.waitForTimeout(400);
 const todayText = await page.textContent('.main');
 check('the task shows on Today', todayText.includes('Call the dentist'), true);
-check('the renewal shows on Today', todayText.includes('Charged today') && todayText.includes('Netflix'), true);
+check('the renewal shows on Today, going out today', todayText.includes('Going out today') && todayText.includes('Netflix'), true);
 check('with no warning pill on it', await page.locator('.main .pill-warn').count(), 0);
 // The box is drawn at 26px; the finger gets 44.
 const tickTarget = await page.locator('.item-check-hit').first().boundingBox();
@@ -875,22 +956,18 @@ check(
 // does not read as "where did it go?".
 await page.click('.item input[type="checkbox"]');
 await page.waitForTimeout(500);
-const afterTick = await page.textContent('.main');
+const afterTick = await visibleText();
 check('a finished thing leaves the list', afterTick.includes('Book the optician'), false);
 check('and the toast offers it back', await page.locator('.toast button:text-is("Undo")').count(), 1);
 await page.click('.toast button:text-is("Undo")');
 await page.waitForTimeout(400);
-check('Undo puts it back in the list', (await page.textContent('.main')).includes('Book the optician'), true);
+check('Undo puts it back in the list', (await visibleText()).includes('Book the optician'), true);
 await page.click('.item input[type="checkbox"]');
 await page.waitForTimeout(500);
-check('but is still there to be found', afterTick.includes('Show what I have finished'), true);
-await page.click('button:has-text("Show what I have finished")');
-await page.waitForTimeout(300);
-check(
-  'and reappears when asked for',
-  (await page.textContent('.main')).includes('Book the optician'),
-  true,
-);
+check('but is still there to be found, folded away', await foldButton('Finished').getAttribute('aria-expanded'), 'false');
+check('under a line that says so', (await foldButton('Finished').textContent()).includes('1 thing you finished'), true);
+await openSection('Finished');
+check('and reappears when asked for', (await visibleText()).includes('Book the optician'), true);
 
 // --- a low day --------------------------------------------------------------
 // One button, first on Today, every day. On, Today keeps what has a time, what
@@ -947,9 +1024,11 @@ await page.evaluate(
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 check('the three seeded tasks are on Today', (await page.textContent('.main')).includes('Sort the recycling'), true);
-/** Section headings on Today, without the note a folded one carries. */
+/** Section headings on Today: the title alone, without a folded section's one line or its Show. */
 const todayHeadings = () =>
-  page.$$eval('.main h2', (hs) => hs.map((h) => h.textContent.replace(/\s*— hidden for today$/, '').trim()));
+  page.$$eval('.main h2', (hs) => hs.map((h) => (h.querySelector('.fold-title') ?? h).textContent.trim()));
+/** The low day's fold on "Going out today", inside the Today section. */
+const chargedFold = 'section[aria-label="Today"] h3.fold-heading > .fold-btn:has-text("Going out today")';
 const firstOnToday = () => page.$eval('.view:not([hidden]) > :first-child', (el) => el.textContent);
 const todaySection = () => page.textContent('section[aria-label="Today"]');
 
@@ -966,11 +1045,17 @@ check('what has a time stays', (await todaySection()).includes('Call the dentist
 check('what you can do on a low day stays', (await todaySection()).includes('Water the plants'), true);
 check('Critical stays, even with no date', (await page.textContent('.main')).includes('Renew the parking permit'), true);
 check('the rest is folded away', (await page.textContent('.main')).includes('Sort the recycling'), false);
-check('money charged today is folded to one line', (await todaySection()).includes('Netflix'), false);
-check('which says so, with Show', await page.locator('button[aria-label="Show Charged today"]').count(), 1);
+check('money going out today is folded to one line', (await todaySection()).includes('Netflix'), false);
+check('which says so, with Show', (await page.locator(chargedFold).textContent()).includes('Hidden for today'), true);
+// Next payday is always folded whole on a low day (money is never on its list).
+check(
+  'a section the low day folds says "Hidden for today", in the same look as any folded section',
+  (await page.locator('.main h2.fold-heading > .fold-btn[aria-expanded="false"]:has-text("Hidden for today")').count()) >= 1,
+  true,
+);
 await page.screenshot({ path: `${OUT}/low-day.png`, fullPage: true });
 
-await page.click('button[aria-label="Show Charged today"]');
+await page.click(chargedFold);
 await page.waitForTimeout(300);
 check('Show opens that one section', (await todaySection()).includes('Netflix'), true);
 check('and leaves the rest folded', (await page.textContent('.main')).includes('Sort the recycling'), false);
@@ -996,6 +1081,7 @@ await page.waitForTimeout(200);
 // A backup is a file that can travel. It must not carry a record of low days.
 await page.click('.header button:text-is("Settings")');
 await page.waitForTimeout(300);
+await openSection('Backup and restore');
 const lowDayBackup = await Promise.all([
   page.waitForEvent('download'),
   page.click('button:has-text("Save a backup file")'),
@@ -1004,6 +1090,11 @@ await lowDayBackup.saveAs(`${OUT}/e2e-low-day-backup.json`);
 const lowDayBackupText = readFileSync(`${OUT}/e2e-low-day-backup.json`, 'utf8');
 check('a backup made on a low day does not mention it', lowDayBackupText.includes('lowDay'), false);
 check('but still carries the settings', JSON.parse(lowDayBackupText).settings.backlogSort, 'az');
+check(
+  'including which sections you opened or folded, which is a preference',
+  JSON.parse(lowDayBackupText).settings.sections?.['backlog.finished'],
+  true,
+);
 await page.click('.header button:text-is("Done")');
 await page.waitForTimeout(300);
 
@@ -1024,6 +1115,288 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 check('yesterday\'s low day has ended by itself', await page.locator('button:text-is("Today is a low day")').count(), 1);
 check('and is deleted on opening, not kept', 'lowDay' in (await storedSettings()), false);
+
+// --- debts: a calm calculator and a plan -------------------------------------
+// Add a card with a promo that adds interest back if it isn't cleared, see it
+// land in the plan and on this paycheck, choose an amount per check from the
+// suggestion, switch the order, mark a payment paid and take it back, update a
+// balance, pay one off and bring it back, and put one in the calendar - with
+// Money and Today showing the payment and never a balance.
+/** A date this many days from today, as the app stores it. */
+const dayKey = (offset) => {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+/** Due tomorrow is always paid from the check you are living on now: its day before is today. */
+const tomorrowKey = dayKey(1);
+const storedDebt = async (name) => (await readStore('debts')).find((d) => d.name === name);
+const debtCard = (name) => page.locator('section[aria-label="Your debts"] .card-tight', { hasText: name }).first();
+const paycheck = page.locator('section[aria-label="This paycheck"]');
+const planSection = page.locator('section[aria-label="The plan"]');
+
+await page.click('.nav-btn:has-text("Debt")');
+await page.waitForTimeout(300);
+check('the Debt tab opens from the nav', await page.getAttribute('.nav-btn:has-text("Debt")', 'aria-current'), 'page');
+check('Add a debt is the first thing on it', (await firstOnToday()).includes('Add a debt'), true);
+const emptyDebt = await visibleText();
+check('an empty Debt tab says what this paycheck will show', emptyDebt.includes('Once you add a debt, this shows what each paycheck needs to cover'), true);
+check('and what the list is for, with nothing looked up', emptyDebt.includes('Nothing is looked up, and nothing leaves this phone.'), true);
+check('the plan says when it appears', emptyDebt.includes('The plan appears here once a debt has a balance'), true);
+await page.screenshot({ path: `${OUT}/debt-empty.png`, fullPage: true });
+
+await page.click('button:text-is("Add a debt")');
+await page.waitForSelector('#debt-name');
+check('a new, unsaved debt has no Delete button', await page.locator('form.card button:text-is("Delete")').count(), 0);
+await page.click('form.card button:text-is("Store card")');
+check(
+  'a kind fills in its usual minimum',
+  await page.getAttribute('form.card button:has-text("A share plus interest")', 'aria-pressed'),
+  'true',
+);
+await page.click('form.card button:text-is("Credit card")');
+await page.fill('#debt-name', 'Harbor Visa');
+await page.fill('#debt-balance', '2480.00');
+await page.fill('#debt-apr', 'twenty');
+await page.fill('#debt-due', tomorrowKey);
+await page.click('form.card button[type="submit"]');
+await page.waitForTimeout(300);
+check(
+  'a rate that is not a number is said calmly, above Save',
+  (await page.textContent('form.card .notice'))?.trim(),
+  "That rate isn't a number I can read. Try something like 24.99.",
+);
+check('and nothing was saved', (await readStore('debts')).length, 0);
+await page.fill('#debt-apr', '24.99%');
+await page.waitForTimeout(200);
+check(
+  'the form says, as you type, when it is paid off at its minimum',
+  /Paying only its minimum \(\$[\d.,]+ to start\), this is paid off by [A-Z][a-z]{2} \d{4}/.test(await page.textContent('form.card')),
+  true,
+);
+await page.click('form.card button:has-text("More details")');
+await page.fill('#debt-promo-rate', '0');
+await page.fill('#debt-promo-ends', dayKey(200));
+await page.click('form.card button:has-text("no interest if paid in full")');
+await page.fill('#debt-promo-part', '800.00');
+check(
+  'the notes hint says not to keep logins or account numbers there',
+  (await page.textContent('form.card')).includes("Don't put logins, passwords or full account numbers here."),
+  true,
+);
+await page.fill('#debt-notes', 'Pay by phone, the number on the back of the card');
+check(
+  'every box in the form has autocomplete off',
+  await page.$$eval('form.card input, form.card textarea', (els) =>
+    els.filter((e) => e.type !== 'checkbox').every((e) => e.getAttribute('autocomplete') === 'off'),
+  ),
+  true,
+);
+await page.screenshot({ path: `${OUT}/debt-editor.png`, fullPage: true });
+await page.click('form.card button[type="submit"]');
+await page.waitForTimeout(500);
+const savedDebtText = await page.textContent('.main');
+check('saving lands on a panel that says it is saved', savedDebtText.includes('Harbor Visa is saved'), true);
+check('with when it is paid off on its own', /On its own, at the minimum\s*paid off [A-Z][a-z]{2} \d{4}/.test(savedDebtText), true);
+check('and in the plan', /In your plan\s*paid off [A-Z][a-z]{2} \d{4}/.test(savedDebtText), true);
+check('and the calendar offered right there', await page.locator('button:text-is("Add to my calendar")').count(), 1);
+const visa = await storedDebt('Harbor Visa');
+check('the rate is stored as typed, with the % taken off', visa?.aprPercent, 24.99);
+check('the due day is the day of the date picked', visa?.dueDay, Number(tomorrowKey.slice(8)));
+check(
+  'the promo is kept with its part of the balance',
+  JSON.stringify(visa?.promo),
+  JSON.stringify({ aprPercent: 0, endsOn: dayKey(200), deferred: true, balanceMinor: 80_000 }),
+);
+check('the balance is as of today', visa?.balanceAsOf, todayKey);
+check(
+  'nothing like an account number or a login is stored',
+  Object.keys(visa ?? {}).some((k) => /account|login|password|ssn|number/i.test(k)),
+  false,
+);
+await page.click('button:text-is("Done")');
+await page.waitForTimeout(300);
+
+const planText = await planSection.textContent();
+check('the plan gives the date it is all paid off', /All paid off by [A-Z][a-z]+ \d{4}/.test(planText), true);
+check('highest interest first is the starting order', await planSection.locator('button:text-is("Highest interest first")').getAttribute('aria-pressed'), 'true');
+check('the plan says once, plainly, that it is a calculator', (await visibleText()).split('not financial advice').length - 1, 1);
+check('This paycheck never folds', await paycheck.locator('.fold-btn').count(), 0);
+check('the screen has one large figure', await page.locator('.main .amount-key').count(), 1);
+check('and it is what this paycheck puts toward debt', (await paycheck.locator('.figure', { has: page.locator('.amount-key') }).textContent()).includes('From this paycheck'), true);
+check('the payment due tomorrow is on this paycheck, by its date', /Harbor Visa[\s\S]*by [A-Z][a-z]{2}, /.test(await paycheck.textContent()), true);
+check('with no amount chosen, it says what an extra would do', (await paycheck.textContent()).includes('No extra amount yet.'), true);
+await foldButton('Your debts').click();
+check('folded, Your debts says how many and the total, as of when', /1 debt, \$2,480\.00 as of [A-Z][a-z]{2} \d/.test(await foldButton('Your debts').textContent()), true);
+await foldButton('Your debts').click();
+
+// The amount from each check, from the suggestion - never filled in by itself.
+await paycheck.locator('button:text-is("Choose an amount")').click();
+await page.waitForSelector('#plan-untracked');
+const perCheckBox = page.locator('input[id^="plan-check-"]');
+check('the plan asks for an amount toward debt from each check', await perCheckBox.count(), 1);
+check('and says what covers the minimums', /At least \$[\d,]+\.\d{2} covers the minimums\./.test(await page.textContent('form.card')), true);
+check(
+  'with no estimate for everything else, it suggests nothing yet',
+  (await page.textContent('form.card')).includes('Add what everything else costs and Steady can suggest an amount.'),
+  true,
+);
+await page.fill('#plan-untracked', '1500.00');
+await page.waitForTimeout(250);
+const useButton = page.locator('form.card button:has-text("Use $")');
+check('with an estimate, it suggests an amount with a Use button', await useButton.count(), 1);
+check('and says in one sentence how it got there', (await page.textContent('form.card')).includes('The other half stays with you for surprises.'), true);
+check('the suggestion is never filled in by itself', await perCheckBox.inputValue(), '');
+const suggested = Number((await useButton.textContent()).replace('Use $', '').replace(/,/g, ''));
+await useButton.click();
+check('Use puts the suggestion in the box', await perCheckBox.inputValue(), suggested.toFixed(2));
+check('and the preview says when that finishes', /With this amount from each check: all paid off by [A-Z][a-z]+ \d{4}/.test(await page.textContent('form.card')), true);
+await page.screenshot({ path: `${OUT}/debt-plan-editor.png`, fullPage: true });
+await page.click('form.card button[type="submit"]');
+await page.waitForTimeout(400);
+check('saving the plan says so, with Undo', await page.locator('.toast:has-text("Plan saved.") button:text-is("Undo")').count(), 1);
+const savedPlan = (await readStore('debtPlan'))[0];
+check('the amount is stored per check, for that job', Object.values(savedPlan?.perCheckMinor ?? {})[0], Math.round(suggested * 100));
+check('with the estimate kept alongside it', savedPlan?.untrackedMonthlyMinor, 150_000);
+check('this paycheck now says where its extra goes, and why', (await paycheck.textContent()).includes('The extra goes to Harbor Visa, because'), true);
+check('and the plan shows the amount', (await planSection.textContent()).includes('From each check'), true);
+
+await planSection.locator('button:text-is("Smallest balance first")').click();
+await page.waitForTimeout(300);
+check('switching the order saves at once', (await readStore('debtPlan'))[0]?.strategy, 'snowball');
+check('and shows which is chosen', await planSection.locator('button:text-is("Smallest balance first")').getAttribute('aria-pressed'), 'true');
+await planSection.locator('button:text-is("Highest interest first")').click();
+await page.waitForTimeout(300);
+check('and back', (await readStore('debtPlan'))[0]?.strategy, 'avalanche');
+await page.screenshot({ path: `${OUT}/debt-planned.png`, fullPage: true });
+
+// "Paid": one date and the balance after it - no record of payments - and Undo.
+await dismissToast();
+const beforePaid = await storedDebt('Harbor Visa');
+await paycheck.locator('button:has-text("Paid")').first().click();
+const balanceNow = page.locator(`#balance-${beforePaid.id}`);
+const prefilled = Number(await balanceNow.inputValue());
+check('Paid asks for the balance now, filled in with what the plan expects', prefilled > 0 && prefilled < 2480, true);
+await paycheck.locator('form button[type="submit"]').click();
+await page.waitForTimeout(400);
+const afterPaid = await storedDebt('Harbor Visa');
+check('Paid keeps one date, the payment it was for', afterPaid.paidThrough, tomorrowKey);
+check('and the balance you said', afterPaid.balanceMinor, Math.round(prefilled * 100));
+check('and no list of payments', Object.values(afterPaid).some((v) => Array.isArray(v)), false);
+check('it says so, with Undo', await page.locator('.toast:has-text("Payment marked as paid.") button:text-is("Undo")').count(), 1);
+check('this paycheck says it was marked as paid', (await paycheck.textContent()).includes('Marked as paid: Harbor Visa'), true);
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(400);
+check('Undo puts the debt back exactly as it was', JSON.stringify(await storedDebt('Harbor Visa')), JSON.stringify(beforePaid));
+
+// Update balance, from the debt's own details.
+await debtCard('Harbor Visa').locator('.details-btn').click();
+await debtCard('Harbor Visa').locator('button:text-is("Update balance")').click();
+await page.fill(`#balance-${beforePaid.id}`, '2400.00');
+await debtCard('Harbor Visa').locator('form button[type="submit"]').click();
+await page.waitForTimeout(400);
+check('Update balance saves the new balance', (await storedDebt('Harbor Visa')).balanceMinor, 240_000);
+check('and says so, with Undo', await page.locator('.toast:has-text("Balance updated.") button:text-is("Undo")').count(), 1);
+
+// Its payment dates, into the calendar: a neutral file name, no notes by default.
+const debtCalendar = await Promise.all([
+  page.waitForEvent('download'),
+  debtCard('Harbor Visa').locator('button:text-is("Add to my calendar")').click(),
+]).then(([d]) => d);
+check('the calendar file has a neutral name', debtCalendar.suggestedFilename(), 'payment-dates.ics');
+const debtIcs = await debtCalendar.createReadStream().then(async (stream) => {
+  let out = '';
+  for await (const chunk of stream) out += chunk;
+  return out.replace(/\r\n /g, '');
+});
+check('it holds one repeating entry', (debtIcs.match(/BEGIN:VEVENT/g) ?? []).length, 1);
+check('named for the payment, with no amount for a minimum that changes', debtIcs.includes('SUMMARY:Harbor Visa payment due'), true);
+check('the calendar is called Steady, not the lender', debtIcs.includes('X-WR-CALNAME:Steady'), true);
+check('the notes stay out by default', debtIcs.includes('Pay by phone'), false);
+check(
+  'and the button says what goes in before you tap it',
+  (await debtCard('Harbor Visa').textContent()).includes('Goes in: the name and the due dates'),
+  true,
+);
+await debtCard('Harbor Visa').locator('.details-btn').click();
+
+// A medical bill at 0%, paid off and brought back.
+await dismissToast();
+await page.click('button:text-is("Add a debt")');
+await page.waitForSelector('#debt-name');
+await page.fill('#debt-name', 'Riverside Clinic');
+await page.click('form.card button:text-is("Medical bill")');
+check('a medical bill starts at 0%', await page.inputValue('#debt-apr'), '0');
+check('with a set amount', await page.getAttribute('form.card button:text-is("A set amount")', 'aria-pressed'), 'true');
+await page.fill('#debt-balance', '640.00');
+await page.fill('#debt-minimum', '80.00');
+await page.fill('#debt-due', dayKey(10));
+await page.click('form.card button[type="submit"]');
+await page.waitForTimeout(400);
+await page.click('button:text-is("Done")');
+await page.waitForTimeout(300);
+
+await page.click('button:text-is("Update balances")');
+await page.waitForSelector('#balances-as-of');
+check('Update balances has a box for every debt', await page.locator('form.card input[id^="balances-"]:not(#balances-as-of)').count(), 2);
+await page.fill(`#balances-${beforePaid.id}`, '2350.00');
+await page.click('form.card button[type="submit"]');
+await page.waitForTimeout(400);
+check('Update balances changes the ones you typed', (await storedDebt('Harbor Visa')).balanceMinor, 235_000);
+check('and leaves the rest as they were', (await storedDebt('Riverside Clinic')).balanceMinor, 64_000);
+
+await dismissToast();
+await debtCard('Riverside Clinic').locator('.details-btn').click();
+await debtCard('Riverside Clinic').locator('button:text-is("Mark as paid off")').click();
+await debtCard('Riverside Clinic').locator('button:text-is("Yes, it\'s paid off")').click();
+await page.waitForTimeout(400);
+check('marking it paid off says where it went, with Undo', await page.locator('.toast:has-text("It\'s under Paid off now.") button:text-is("Undo")').count(), 1);
+check('it is kept, with the day', (await storedDebt('Riverside Clinic')).paidOffOn, todayKey);
+check('under Paid off, which starts folded', await foldButton('Paid off').getAttribute('aria-expanded'), 'false');
+check('with its name in the one line', (await foldButton('Paid off').textContent()).includes('Riverside Clinic, paid off'), true);
+check('and no longer under Your debts', await debtCard('Riverside Clinic').count(), 0);
+await openSection('Paid off');
+await page.screenshot({ path: `${OUT}/debt-paid-off.png`, fullPage: true });
+await page.locator('section[aria-label="Paid off"] button:text-is("Edit")').click();
+await page.waitForSelector('#debt-name');
+await page.click('button:text-is("It\'s being paid again")');
+await page.click('form.card button[type="submit"]');
+await page.waitForTimeout(400);
+check('"It\'s being paid again" brings it back', 'paidOffOn' in (await storedDebt('Riverside Clinic')), false);
+check('and says so', await page.locator('.toast:has-text("It\'s back under Your debts.")').count(), 1);
+check('back under Your debts', await debtCard('Riverside Clinic').count(), 1);
+
+// Money shows when payments go out, and what each check leaves - never a balance.
+const debtLeft = await paycheck.locator('.figure', { hasText: 'Left from this paycheck' }).locator('.amount').textContent();
+await page.click('.nav-btn:has-text("Money")');
+await page.waitForTimeout(300);
+const moneyWithDebt = await visibleText();
+check('Money counts the debt payment in what is still to come out', /\d+ debt payments?, up to/.test(moneyWithDebt), true);
+check('each paycheck shows its debt payments', moneyWithDebt.includes('Debt payments due'), true);
+check('and the extra toward debt from the plan', moneyWithDebt.includes('Extra toward debt'), true);
+check('with the way to the Debt tab', (await page.locator('button:text-is("Open Debt")').count()) >= 1, true);
+check(
+  '"Left from this paycheck" is the same figure on Money and on Debt',
+  await page.locator('section[aria-label="Each paycheck"] .figure', { hasText: 'Left from this paycheck' }).locator('.amount').first().textContent(),
+  debtLeft,
+);
+check('Money never shows a debt balance', moneyWithDebt.includes('2,350.00') || moneyWithDebt.includes('640.00'), false);
+check('or a payoff date', /paid off/i.test(moneyWithDebt), false);
+await openSection('Averages');
+check('the averages count the debt payments each month', (await visibleText()).includes('Debt payments each month'), true);
+await foldButton('Averages').click();
+await page.screenshot({ path: `${OUT}/money-with-debt.png`, fullPage: true });
+
+// Today lists the payment among the money leaving soon, as a payment.
+await page.click('.nav-btn:has-text("Today")');
+await page.waitForTimeout(300);
+check('Today lists the payment as "<name> payment"', (await visibleText()).includes('Harbor Visa payment'), true);
+check(
+  'counted apart from the charges in its folded line',
+  /payments?/.test(await page.locator('section[aria-label^="Money leaving soon"]').textContent()),
+  true,
+);
+await page.screenshot({ path: `${OUT}/today-with-debt.png`, fullPage: true });
 
 // --- getting ready for an appointment ---------------------------------------
 // An offer in the editor, never automatic. It adds only what is missing, says
@@ -1195,6 +1568,7 @@ check(
 // --- appearance settings really apply ------------------------------------
 await page.click('.header button:has-text("Settings")');
 await page.waitForTimeout(300);
+await openSection('How it looks');
 // :text-is(), not :has-text(). has-text() is a case-insensitive SUBSTRING match,
 // so "Dark" would also pick up a "Warm dark" swatch in the custom-theme editor,
 // and Playwright would not complain - it would just click the wrong control and
@@ -1238,8 +1612,74 @@ await page.click('button:text-is("Calm")');
 await page.waitForTimeout(200);
 check('and switching back to a CSS theme clears them', await page.evaluate(() => document.documentElement.style.getPropertyValue('--bg')), '');
 
+// --- sections that fold ------------------------------------------------------
+// One way to fold, everywhere: the heading is the button. A closed section
+// keeps its place and says in one line what is in it; what is in it is hidden,
+// not thrown away; the glance screens remember, and Settings starts closed on
+// every visit.
+await page.click('.nav-btn:has-text("Today")');
+await page.waitForTimeout(300);
+// "No date on these" is always here by now: the backlog has undated tasks in it.
+const looseFold = foldButton('No date on these');
+check(
+  'a section that folds is a button inside its heading, so TalkBack still finds the heading',
+  await page.locator('section[aria-label="No date on these"] > h2.fold-heading > button.fold-btn').count(),
+  1,
+);
+check('it says it is open', await looseFold.getAttribute('aria-expanded'), 'true');
+check(
+  'and points at what it opens',
+  await looseFold.evaluate((b) => Boolean(document.getElementById(b.getAttribute('aria-controls')))),
+  true,
+);
+check('it is at least 44px tall to a finger', (await looseFold.boundingBox()).height >= 44, true);
+check('and full width', Math.round((await looseFold.boundingBox()).width), Math.round((await page.locator('section[aria-label="Today"]').boundingBox()).width));
+/** Where the heading sits on the page, not in the window, which may scroll. */
+const pageTop = (locator) => locator.evaluate((el) => Math.round(el.getBoundingClientRect().top + window.scrollY));
+const headingTop = await pageTop(looseFold);
+await looseFold.click();
+await page.waitForTimeout(200);
+check('tapping it folds the section', await looseFold.getAttribute('aria-expanded'), 'false');
+check('and the heading stays where it was', await pageTop(looseFold), headingTop);
+check(
+  'to its heading and one line: what it holds',
+  /No date on these\s*The top (one|\d) from your backlog/.test(await looseFold.textContent()),
+  true,
+);
+check(
+  'read out as its title and that line',
+  await page.getByRole('button', { name: /^No date on these The top (one|\d) from your backlog$/ }).count(),
+  1,
+);
+check(
+  'what is in it is hidden, not thrown away',
+  await page.locator('section[aria-label="No date on these"] > .fold-body').evaluate((el) => el.hidden && el.childElementCount > 0),
+  true,
+);
+check('only the change from how it starts is saved', (await storedSettings()).sections?.['today.loose'], false);
+check('and nothing is saved for sections left as they started', 'today.waiting' in ((await storedSettings()).sections ?? {}), false);
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+check('a folded section is still folded after a reload', await looseFold.getAttribute('aria-expanded'), 'false');
+
+await page.click('.header button:has-text("Settings")');
+await page.waitForTimeout(300);
+check(
+  'Settings opens with every group folded',
+  await page.locator('.main .fold-list .fold-btn[aria-expanded="true"]').count(),
+  0,
+);
+check('each group says where it stands', (await foldButton('App lock').textContent()).includes('Off'), true);
+await openSection('App lock');
+await page.click('.header button:text-is("Done")');
+await page.click('.header button:has-text("Settings")');
+await page.waitForTimeout(300);
+check('and folds them all again on the next visit', await foldButton('App lock').getAttribute('aria-expanded'), 'false');
+check('without saving anything about them', Object.keys((await storedSettings()).sections ?? {}).some((k) => k.startsWith('settings.')), false);
+
 // --- blurring hides every amount, not just most of them ------------------
-// Still on Settings from the theme checks above.
+// Folded sections included: their one line leaves the amount out instead.
+await openSection('How it looks');
 await page.click('text=Blur money amounts until I tap them');
 await page.waitForTimeout(200);
 /** Dollar figures on screen that are not inside a blurred amount. */
@@ -1254,13 +1694,54 @@ const unblurred = () =>
   });
 await page.click('.nav-btn:has-text("Today")');
 await page.waitForTimeout(300);
+const billsTitle = await page.$eval('section[aria-label^="Money leaving soon"]', (s) => s.getAttribute('aria-label')).catch(() => null);
+if (billsTitle) await foldButton(billsTitle).click();
+await page.waitForTimeout(200);
 check('with blur on, Today shows no amount in the clear', (await unblurred()).join(' | '), '');
 await page.click('.nav-btn:has-text("Money")');
 await page.waitForTimeout(300);
+for (const title of ['Each paycheck', 'Subscriptions', 'Income']) await foldButton(title).click();
+await page.waitForTimeout(200);
 check('with blur on, Money shows no amount in the clear', (await unblurred()).join(' | '), '');
+check('a folded line still says what it can', (await foldButton('Subscriptions').textContent()).includes('active'), true);
+await page.screenshot({ path: `${OUT}/money-folded-blurred.png`, fullPage: true });
+await page.click('.nav-btn:has-text("Debt")');
+await page.waitForTimeout(300);
+await openSection('How this works');
+for (const details of await page.locator('section[aria-label="Your debts"] .details-btn').all()) await details.click();
+await paycheck.locator('button:has-text("Paid")').first().click();
+await page.waitForTimeout(200);
+check('with blur on, the Debt tab shows no amount in the clear', (await unblurred()).join(' | '), '');
+await paycheck.locator('form button:text-is("Cancel")').click();
+for (const details of await page.locator('section[aria-label="Your debts"] .details-btn').all()) await details.click();
+for (const title of ['The plan', 'Your debts', 'How this works']) await foldButton(title).click();
+await page.waitForTimeout(200);
+check('and its folded lines leave the amounts out', (await unblurred()).join(' | '), '');
+check('while still saying how many debts', (await foldButton('Your debts').textContent()).includes('2 debts'), true);
+await page.screenshot({ path: `${OUT}/debt-folded-blurred.png`, fullPage: true });
+for (const title of ['The plan', 'Your debts']) await foldButton(title).click();
+
+// "Put every section back the way it started", with Undo.
 await page.click('.header button:has-text("Settings")');
+await openSection('How it looks');
 await page.click('text=Blur money amounts until I tap them');
 await page.waitForTimeout(200);
+const foldedBefore = (await storedSettings()).sections;
+await dismissToast();
+await page.click('button:text-is("Put every section back the way it started")');
+await page.waitForTimeout(300);
+check('putting every section back says so, with Undo', await page.locator('.toast:has-text("Every section is back the way it started") button:text-is("Undo")').count(), 1);
+check('and forgets every fold, not just some', 'sections' in (await storedSettings()), false);
+await page.click('.toast button:text-is("Undo")');
+await page.waitForTimeout(300);
+check('Undo brings back exactly the folds you had', JSON.stringify((await storedSettings()).sections), JSON.stringify(foldedBefore));
+await dismissToast();
+await page.click('button:text-is("Put every section back the way it started")');
+await page.waitForTimeout(300);
+await page.click('.nav-btn:has-text("Money")');
+await page.waitForTimeout(300);
+check('and then Money opens as it started', await foldButton('Income').getAttribute('aria-expanded'), 'true');
+check('with the averages folded, as they started', await foldButton('Averages').getAttribute('aria-expanded'), 'false');
 
 // --- an ended job can be brought back ------------------------------------
 await page.click('.nav-btn:has-text("Money")');
@@ -1271,7 +1752,7 @@ await page.click('button:text-is("Yes, it has ended")');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
 check('an ended job is listed under Ended, not lost', await page.locator('section[aria-label="Ended"]').count(), 1);
-await page.click('button:has-text("Show 1 ended")');
+check('inside Income, where the other jobs are', await page.locator('section[aria-label="Income"] section[aria-label="Ended"]').count(), 1);
 await page.click('section[aria-label="Ended"] button:text-is("Edit")');
 await page.click('button:text-is("It\'s current again")');
 await page.click('form.card button[type="submit"]:has-text("Save")');
@@ -1281,6 +1762,7 @@ check('and made current again from there', (await page.textContent('.main')).inc
 // --- calendar notes are opt-in, and the switch works ---------------------
 await page.click('.header button:has-text("Settings")');
 await page.waitForTimeout(200);
+await openSection('Reminders and calendar');
 check(
   'the export says notes stay out',
   (await page.textContent('.main')).includes('Notes, steps and how to cancel stay here'),
@@ -1298,6 +1780,7 @@ const fullIcs = await fullExport.createReadStream().then(async (stream) => {
   return out.replace(/\r\n /g, '');
 });
 check('with notes switched on, the cancel steps go in', fullIcs.includes('To cancel: Account'), true);
+check('debts stay out of the whole-app export, as the text beside it says', fullIcs.includes('Harbor Visa'), false);
 await page.click('text=Put notes, steps and how to cancel into calendar entries');
 await page.waitForTimeout(200);
 
@@ -1317,6 +1800,10 @@ const dataTables = tableNames.filter((n) => n !== 'settings');
 const rowCounts = async () => Object.fromEntries(await Promise.all(dataTables.map(async (n) => [n, (await readStore(n)).length])));
 const before = await rowCounts();
 check('income is counted on this device', (await page.textContent('.main')).includes('1 income'), true);
+check('and so are the debts and the plan', /2 debts, 1 debt plan/.test(await page.textContent('.main')), true);
+check('the debts and the plan are in the tables being checked', [before.debts, before.debtPlan].join(','), '2,1');
+await openSection('Backup and restore');
+await openSection('Your data on this phone');
 
 const backupDownload = await Promise.all([
   page.waitForEvent('download'),
@@ -1332,6 +1819,12 @@ await page.waitForTimeout(400);
 const preview = await page.textContent('.main');
 check('replacing shows what the file holds first', preview.includes('Replace everything on this phone with it?'), true);
 check('including the income in it', preview.includes('1 income'), true);
+check('and the debts and the debt plan', preview.includes('2 debts') && preview.includes('1 debt plan'), true);
+check(
+  'the backup text says it holds the debts and the plan',
+  preview.includes('every task, note, subscription, income, debt, your debt plan and inbox item'),
+  true,
+);
 check('and nothing has been touched yet', JSON.stringify(await rowCounts()), JSON.stringify(before));
 await page.click('button:has-text("Don\'t restore it")');
 
@@ -1351,6 +1844,12 @@ await page.click('button:has-text("Replace everything with this file")');
 await page.click('button:has-text("Yes, replace everything")');
 await page.waitForTimeout(600);
 check('and the backup puts every table back', JSON.stringify(await rowCounts()), JSON.stringify(before));
+
+// --- ?view=debt opens the Debt tab ----------------------------------------
+await page.goto(`${BASE}?view=debt`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+check('?view=debt opens on the Debt tab', await page.getAttribute('.nav-btn:has-text("Debt")', 'aria-current'), 'page');
+check('with the restored debts on it', (await visibleText()).includes('Harbor Visa'), true);
 
 // --- the privacy claim ---------------------------------------------------
 // The whole promise is that this page cannot send your data anywhere. Prove it
@@ -1390,7 +1889,7 @@ await new Promise((r) => setTimeout(r, 1500));
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(2500);
 check('the app still renders with no server', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
-check('the whole nav is there', await page.evaluate(() => document.querySelectorAll('.nav-btn').length), 6);
+check('the whole nav is there', await page.evaluate(() => document.querySelectorAll('.nav-btn').length), 7);
 check('the data is still there', (await page.textContent('.main')).includes('Call the dentist'), true);
 await page.screenshot({ path: `${OUT}/offline.png`, fullPage: true });
 

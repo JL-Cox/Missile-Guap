@@ -19,7 +19,6 @@ import { shortDateTime } from '../lib/time';
  */
 export default function Inbox({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<{ task: Task; captureId: string } | null>(null);
-  const [showCleared, setShowCleared] = useState(false);
   const toast = useToast();
   useBackLayer(editing !== null, () => setEditing(null));
   /**
@@ -148,29 +147,21 @@ export default function Inbox({ settings }: { settings: Settings }) {
       )}
 
       {cleared.length > 0 && (
-        <Section title="Already dealt with">
-          <div className="btn-row">
-            <button
-              type="button"
-              className="btn btn-quiet btn-sm"
-              aria-expanded={showCleared}
-              onClick={() => setShowCleared((v) => !v)}
-            >
-              {showCleared ? 'Hide' : 'Show'} {cleared.length} cleared
-            </button>
+        <Section
+          title="Already dealt with"
+          collapsible="inbox.cleared"
+          summary={`${cleared.length} cleared. Nothing is deleted when you clear it.`}
+        >
+          <div className="stack-sm">
+            {cleared.slice(0, 50).map((capture) => (
+              <div key={capture.id} className="item">
+                <span className="grow muted small pre-wrap">{capture.text}</span>
+                <button type="button" className="btn btn-quiet btn-sm" onClick={() => void unclearCapture(capture.id)}>
+                  Put it back
+                </button>
+              </div>
+            ))}
           </div>
-          {showCleared && (
-            <div className="stack-sm">
-              {cleared.slice(0, 50).map((capture) => (
-                <div key={capture.id} className="item">
-                  <span className="grow muted small pre-wrap">{capture.text}</span>
-                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => void unclearCapture(capture.id)}>
-                    Put it back
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
           <p className="faint">Nothing is ever deleted when you clear it. It just moves down here.</p>
         </Section>
       )}

@@ -110,6 +110,20 @@ export function parseMoney(input: string): number | null {
   return Math.round(value * 100);
 }
 
+/**
+ * Parse "24.99", "24.99%" or " 24.99 " into a percentage, rounded to two
+ * decimals the way a statement prints it. Returns null if it isn't a number,
+ * or if it is below zero - no rate here is ever negative. The range a field
+ * allows (up to 999.99 for an APR, 100 for a minimum) is the form's to check.
+ */
+export function parsePercent(input: string): number | null {
+  const cleaned = input.trim().replace(/\s*%$/, '').trim();
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  const value = Number(cleaned);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value * 100) / 100;
+}
+
 /* ---------------------------------------------------------------------------
    Income
    -------------------------------------------------------------------------- */
@@ -179,12 +193,16 @@ export function deductionsByLabel(sources: IncomeSource[]): { label: string; min
 }
 
 /**
- * What is left each month once the tracked subscriptions come out.
+ * What is left each month once the tracked subscriptions come out, and the
+ * debt plan's monthly amount when there is one.
  *
- * Honest about its own limits: this app only knows about subscriptions, so the
- * remainder covers rent, food and everything else too. It is "what is left for
- * everything else", not "spare money".
+ * Honest about its own limits: this app only knows about subscriptions and
+ * debts, so the remainder covers rent, food and everything else too. It is
+ * "what is left for everything else", not "spare money".
+ *
+ * `debtMonthlyMinor` is 0 by default, so without debts the figure is what it
+ * always was.
  */
-export function leftoverMonthlyMinor(sources: IncomeSource[], subs: Subscription[]): number {
-  return totalNetMonthlyMinor(sources) - totalMonthlyMinor(subs);
+export function leftoverMonthlyMinor(sources: IncomeSource[], subs: Subscription[], debtMonthlyMinor = 0): number {
+  return totalNetMonthlyMinor(sources) - totalMonthlyMinor(subs) - Math.max(0, debtMonthlyMinor);
 }

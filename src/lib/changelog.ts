@@ -17,6 +17,17 @@ export interface ChangeEntry {
 
 export const CHANGES: ChangeEntry[] = [
   {
+    version: 23,
+    items: [
+      'New Debt tab: each card or loan with its balance, rate, terms and payoff date.',
+      'Shows what each paycheck should put toward debt, and suggests a cautious amount.',
+      'Choose highest interest first or smallest balance first, and see what each saves.',
+      "Debt payments now appear in Money's paycheck cards and on Today.",
+      'Long sections fold with Show and Hide, and stay the way you left them.',
+      'Settings is now a short list of groups that open one at a time.',
+    ],
+  },
+  {
     version: 22,
     items: [
       '"Today is a low day": shows only what has a time, what is Critical, and easy tasks.',

@@ -2,6 +2,7 @@ import type { DateKey, IncomeSource, Subscription } from '../types';
 import { isActive, netMonthlyMinor } from './money';
 import { dayInMonth } from './monthdays';
 import { isActiveIncome, isIntervalFrequency, nextPayday, paydaysBetween } from './pay';
+import type { ScheduledPayment } from './payoff';
 import { billingDatesBetween } from './recurrence';
 import { addDays, daysBetween, fromDateKey, todayKey } from './time';
 
@@ -20,9 +21,13 @@ import { addDays, daysBetween, fromDateKey, todayKey } from './time';
  * pays on is the wrong period.
  *
  * One thing this module cannot do, and must never pretend to: it only knows
- * about subscriptions. Rent, food, fuel and everything else are invisible to
- * it. Every total here is "what is left after the bills this app knows about",
- * never "spare money", and the wording in the UI has to keep saying so.
+ * about subscriptions, and the debt payments the plan puts on real dates.
+ * Rent, food, fuel and everything else are invisible to it. Every total here
+ * is "what is left after the bills this app knows about", never "spare money",
+ * and the wording in the UI has to keep saying so.
+ *
+ * Debt payments come in as an optional list, empty by default, so every
+ * figure without them is exactly what it was before debts existed.
  */
 
 export interface BillDue {
@@ -148,14 +153,47 @@ export function currentPayPeriod(incomes: IncomeSource[], from: DateKey = todayK
   return daysBetween(period.start, from) >= 0 ? period : null;
 }
 
+/**
+ * Which check pays a payment due on `dueOn`: the last one that arrives
+ * strictly before the due date, i.e. the period holding the day before.
+ *
+ * A payment due on a payday comes from the check before, because money that
+ * lands that morning may not have cleared in time to pay it. One due before
+ * the first period is paid from the first; one after the last is not placed
+ * (-1).
+ */
+export function payFromIndex(periods: PayPeriod[], dueOn: DateKey): number {
+  if (periods.length === 0) return -1;
+  const dayBefore = addDays(dueOn, -1);
+  if (dayBefore < periods[0].start) return 0;
+  return periods.findIndex((p) => p.start <= dayBefore && dayBefore <= p.end);
+}
+
+/** The payments each period's check has to cover, in order; unplaced ones are left out. */
+export function paymentsForPeriods(periods: PayPeriod[], payments: ScheduledPayment[]): ScheduledPayment[][] {
+  const out: ScheduledPayment[][] = periods.map(() => []);
+  for (const payment of payments) {
+    const at = payFromIndex(periods, payment.dueOn);
+    if (at >= 0) out[at].push(payment);
+  }
+  return out;
+}
+
+function paymentsTotalMinor(payments: ScheduledPayment[]): number {
+  return payments.reduce((sum, p) => sum + p.amountMinor, 0);
+}
+
 export interface PeriodOutlook {
   period: PayPeriod;
   /** Every charge in the period, whether or not it has already gone out. */
   bills: BillDue[];
   billsMinor: number;
-  /** Charges from `from` onwards - what is still to come out. */
+  /** Debt payments this check pays: due after it arrives and by the next payday. */
+  payments: ScheduledPayment[];
+  paymentsMinor: number;
+  /** Charges and payments from `from` onwards - what is still to come out. */
   remainingMinor: number;
-  /** Income for the period minus everything charged in it. */
+  /** Income for the period minus everything charged in it and every payment it pays. */
   leftoverMinor: number;
   /** True for the period containing `from`, where some charges are already paid. */
   current: boolean;
@@ -167,38 +205,63 @@ export interface PeriodOutlook {
  * `leftoverMinor` counts every charge in the period, because that is what the
  * cheque has to absorb. `remainingMinor` counts only what is still ahead of
  * you, which is the useful number for the period you are already standing in.
+ *
+ * `payments` are the debt plan's dated payments. Each is placed on the check
+ * that pays it (see payFromIndex), which for one due on a payday is the check
+ * before that payday.
  */
 export function outlook(
   incomes: IncomeSource[],
   subs: Subscription[],
   from: DateKey = todayKey(),
   count = 4,
+  payments: ScheduledPayment[] = [],
 ): PeriodOutlook[] {
-  return payPeriods(incomes, from, count).map((period) => {
+  const periods = payPeriods(incomes, from, count);
+  const paid = paymentsForPeriods(periods, payments);
+  return periods.map((period, i) => {
     const bills = billsBetween(subs, period.start, period.end);
     const billsMinor = billsTotalMinor(bills);
     const current = daysBetween(period.start, from) >= 0 && daysBetween(from, period.end) >= 0;
     const remainingFrom = current ? from : period.start;
+    const paymentsMinor = paymentsTotalMinor(paid[i]);
     return {
       period,
       bills,
       billsMinor,
-      remainingMinor: billsTotalMinor(billsBetween(subs, remainingFrom, period.end)),
-      leftoverMinor: period.incomeMinor - billsMinor,
+      payments: paid[i],
+      paymentsMinor,
+      remainingMinor:
+        billsTotalMinor(billsBetween(subs, remainingFrom, period.end)) +
+        paymentsTotalMinor(paid[i].filter((p) => p.dueOn >= remainingFrom)),
+      leftoverMinor: period.incomeMinor - billsMinor - paymentsMinor,
       current,
     };
   });
 }
 
+/**
+ * `minor` is charges and debt payments together; `count` is the charges alone
+ * and `paymentCount` the payments, so the screen can say "6 charges and 1
+ * debt payment".
+ */
+export interface StillToComeFigure {
+  minor: number;
+  count: number;
+  paymentCount: number;
+  until: DateKey;
+}
+
 export interface StillToCome {
-  /** Charges from today to the last day of this calendar month. */
-  month: { minor: number; count: number; until: DateKey };
+  /** Charges and payments from today to the last day of this calendar month. */
+  month: StillToComeFigure;
   /**
-   * Charges from today to the end of the pay period. Null when there is no
-   * income recorded, or not enough of it to place a payday - in which case the
-   * app says so rather than guessing a period.
+   * Charges from today to the end of the pay period, and payments due by the
+   * next payday - a payment due on payday is paid from this check, not that
+   * one. Null when there is no income recorded, or not enough of it to place a
+   * payday - in which case the app says so rather than guessing a period.
    */
-  period: { minor: number; count: number; until: DateKey } | null;
+  period: StillToComeFigure | null;
 }
 
 /** The two "what is still going to come out" figures, for the Money screen. */
@@ -206,18 +269,32 @@ export function stillToCome(
   incomes: IncomeSource[],
   subs: Subscription[],
   from: DateKey = todayKey(),
+  payments: ScheduledPayment[] = [],
 ): StillToCome {
   const monthEnd = endOfMonth(from);
   const monthBills = billsBetween(subs, from, monthEnd);
+  const due = (until: DateKey) => payments.filter((p) => p.dueOn >= from && p.dueOn <= until);
+  const monthPayments = due(monthEnd);
 
   const period = currentPayPeriod(incomes, from);
   const periodBills = period ? billsBetween(subs, from, period.end) : null;
+  const periodPayments = period ? due(addDays(period.end, 1)) : [];
 
   return {
-    month: { minor: billsTotalMinor(monthBills), count: monthBills.length, until: monthEnd },
+    month: {
+      minor: billsTotalMinor(monthBills) + paymentsTotalMinor(monthPayments),
+      count: monthBills.length,
+      paymentCount: monthPayments.length,
+      until: monthEnd,
+    },
     period:
       period && periodBills
-        ? { minor: billsTotalMinor(periodBills), count: periodBills.length, until: period.end }
+        ? {
+            minor: billsTotalMinor(periodBills) + paymentsTotalMinor(periodPayments),
+            count: periodBills.length,
+            paymentCount: periodPayments.length,
+            until: period.end,
+          }
         : null,
   };
 }

@@ -1,4 +1,5 @@
-import type { DateKey, Subscription, Task } from '../types';
+import type { DateKey, Debt, Subscription, Task } from '../types';
+import type { ScheduledPayment } from './payoff';
 import { billingDatesBetween, nextBilling } from './recurrence';
 import { addDays, atTime, daysBetween, todayKey } from './time';
 import { isActive, isOngoing, yearlyMinor } from './money';
@@ -9,7 +10,8 @@ import { isActive, isOngoing, yearlyMinor } from './money';
  * bottom needs no spatial decoding.
  */
 
-export type AgendaKind = 'task' | 'billing';
+/** A debt payment is its own kind, so it is never called a charge or a renewal. */
+export type AgendaKind = 'task' | 'billing' | 'payment';
 
 export interface AgendaItem {
   key: string;
@@ -22,10 +24,20 @@ export interface AgendaItem {
   durationMin?: number;
   task?: Task;
   subscription?: Subscription;
+  debt?: Debt;
   amountMinor?: number;
 }
 
-export function agendaFor(date: DateKey, tasks: Task[], subs: Subscription[]): AgendaItem[] {
+/**
+ * `payments` are the debt plan's dated payments (buildDebtPlan's `payments`).
+ * Empty by default, so a day without them is exactly what it was before.
+ */
+export function agendaFor(
+  date: DateKey,
+  tasks: Task[],
+  subs: Subscription[],
+  payments: ScheduledPayment[] = [],
+): AgendaItem[] {
   const items: AgendaItem[] = [];
 
   for (const task of tasks) {
@@ -58,6 +70,19 @@ export function agendaFor(date: DateKey, tasks: Task[], subs: Subscription[]): A
     });
   }
 
+  for (const payment of payments) {
+    if (payment.dueOn !== date) continue;
+    items.push({
+      key: `payment-${payment.debt.id}-${payment.dueOn}`,
+      kind: 'payment',
+      timed: false,
+      sortAt: Number.MAX_SAFE_INTEGER,
+      title: `${payment.debt.name} payment`,
+      debt: payment.debt,
+      amountMinor: payment.amountMinor,
+    });
+  }
+
   return items.sort((a, b) => {
     if (a.sortAt !== b.sortAt) return a.sortAt - b.sortAt;
     return a.title.localeCompare(b.title);
@@ -81,6 +106,29 @@ export function upcomingBills(subs: Subscription[], days: number, from: DateKey 
     }
   }
   return out.sort((a, b) => a.inDays - b.inDays || a.sub.name.localeCompare(b.sub.name));
+}
+
+export interface UpcomingPayment {
+  debt: Debt;
+  date: DateKey;
+  amountMinor: number;
+  inDays: number;
+}
+
+/**
+ * Debt payments due in the next `days` days, soonest first - the payment
+ * rows in "Money leaving soon", beside upcomingBills.
+ */
+export function upcomingPayments(
+  payments: ScheduledPayment[],
+  days: number,
+  from: DateKey = todayKey(),
+): UpcomingPayment[] {
+  const to = addDays(from, days);
+  return payments
+    .filter((p) => p.dueOn >= from && p.dueOn <= to)
+    .map((p) => ({ debt: p.debt, date: p.dueOn, amountMinor: p.amountMinor, inDays: daysBetween(from, p.dueOn) }))
+    .sort((a, b) => a.inDays - b.inDays || a.debt.name.localeCompare(b.debt.name));
 }
 
 /**

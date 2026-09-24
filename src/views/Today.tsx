@@ -1,22 +1,50 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, blankTask, forgetSettings, saveSettings } from '../db';
-import type { DateKey, IncomeSource, Settings, Task } from '../types';
-import { agendaFor, stillOpen, unscheduled, upcomingBills } from '../lib/agenda';
+import type { DateKey, IncomeSource, Settings, Subscription, Task } from '../types';
+import { agendaFor, stillOpen, unscheduled, upcomingBills, upcomingPayments } from '../lib/agenda';
 import { paydaysFrom } from '../lib/cashflow';
 import { fitsLowDay, isLowDay, isStaleLowDay } from '../lib/lowday';
 import { sortTasks } from '../lib/priority';
-import { describeDate, describeDuration, todayKey } from '../lib/time';
+import { describeDate, describeDuration, fromDateKey, shortDate, SHORT_WEEKDAYS, todayKey } from '../lib/time';
 import { formatMoney } from '../lib/money';
+import { countOf, cutTitle, nameList, type FoldId } from '../lib/sections';
+import { chargesAndPayments } from '../lib/debtwords';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { useTaskActions } from '../components/taskActions';
-import { Amount, Empty, Section, useBackLayer } from '../components/ui';
+import { useDebtPlan } from '../components/useDebtPlan';
+import {
+  Amount,
+  Empty,
+  FoldContext,
+  FoldHeader,
+  Section,
+  useBackLayer,
+  useNavigate,
+  type Folds,
+} from '../components/ui';
 
 /** How many waiting tasks show before "Show N more" - the same number every day. */
 const WAITING_SHOWN = 3;
-/** How many upcoming charges fit before the list says "more on the Money screen". */
+/** How many upcoming charges and payments fit before the list says there are more. */
 const BILLS_SHOWN = 6;
+
+const NO_SUBS: Subscription[] = [];
+const NO_INCOMES: IncomeSource[] = [];
+/** How many of the backlog's top things "No date on these" shows. */
+const LOOSE_SHOWN = 5;
+
+/**
+ * The sections you can fold yourself that a low day can also fold, and the
+ * name the low day remembers a peek by.
+ */
+const LOW_DAY_FOLDS: Partial<Record<FoldId, string>> = {
+  'today.waiting': 'waiting',
+  'today.bills': 'bills',
+  'today.nextPayday': 'nextPayday',
+  'today.loose': 'loose',
+};
 
 /**
  * Which folded parts have been opened on a low day. Held in memory only, never
@@ -47,6 +75,7 @@ export default function Today({
   const [showAllWaiting, setShowAllWaiting] = useState(false);
   const [shown, setShown] = useState<string[]>(() => (peeked.day === today ? peeked.keys : []));
   const { move, undateAll, remove } = useTaskActions();
+  const navigate = useNavigate();
   useBackLayer(editing !== null, () => setEditing(null));
 
   const low = isLowDay(settings, today);
@@ -54,6 +83,11 @@ export default function Today({
   const folded = (key: string) => low && !shown.includes(key);
   const unfold = (key: string) => {
     const keys = [...shown, key];
+    peeked = { day: today, keys };
+    setShown(keys);
+  };
+  const refold = (key: string) => {
+    const keys = shown.filter((k) => k !== key);
     peeked = { day: today, keys };
     setShown(keys);
   };
@@ -74,12 +108,16 @@ export default function Today({
   }, [settings.lowDay, today]);
 
   const tasks = useLiveQuery(() => db.tasks.toArray(), [settings.rev], [] as Task[]) ?? [];
-  const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], []) ?? [];
-  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], [] as IncomeSource[]) ?? [];
+  const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], NO_SUBS) ?? NO_SUBS;
+  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], NO_INCOMES) ?? NO_INCOMES;
+  // The debt plan's dated payments, the same ones Money and the Debt tab show.
+  const { view: debtView } = useDebtPlan(settings, incomes, subs, today);
 
-  const agenda = agendaFor(today, tasks, subs);
+  const agenda = agendaFor(today, tasks, subs, debtView.payments);
   const openToday = agenda.filter((i) => i.kind === 'task' && i.task && !i.task.doneAt);
-  const chargedToday = agenda.filter((i) => i.kind === 'billing');
+  // Charges and debt payments together: "going out", which is true of both,
+  // where "charged" was only true of a subscription.
+  const goingOutToday = agenda.filter((i) => i.kind === 'billing' || i.kind === 'payment');
   const doneToday = agenda.filter((i) => i.kind === 'task' && i.task?.doneAt);
   const todayShown = folded('today') ? openToday.filter((i) => fitsLowDay(i.task!, today)) : openToday;
   const todayFolded = openToday.length - todayShown.length;
@@ -95,13 +133,91 @@ export default function Today({
   // to, kept in their own group on the Backlog, not things waiting for a day.
   const undated = sortTasks(unscheduled(tasks).filter((t) => !t.routine), 'priority');
   const looseFits = folded('loose') ? undated.filter((t) => fitsLowDay(t, today)) : undated;
-  const loose = looseFits.slice(0, 5);
+  const loose = looseFits.slice(0, LOOSE_SHOWN);
   const looseFolded = undated.length - looseFits.length;
   const bills = upcomingBills(subs, settings.lookaheadDays, today).filter((b) => b.inDays > 0);
+  const duePayments = upcomingPayments(debtView.payments, settings.lookaheadDays, today).filter((p) => p.inDays > 0);
+  // One list, soonest first: a payment is "<name> payment", so it is never
+  // mistaken for a subscription.
+  const leaving = [
+    ...bills.map((b) => ({
+      key: `bill-${b.sub.id}-${b.date}`,
+      title: b.sub.name,
+      date: b.date,
+      amountMinor: b.sub.amountMinor,
+      currency: b.sub.currency,
+      autopay: false,
+    })),
+    ...duePayments.map((p) => ({
+      key: `payment-${p.debt.id}-${p.date}`,
+      title: `${p.debt.name} payment`,
+      date: p.date,
+      amountMinor: p.amountMinor,
+      currency: p.debt.currency,
+      autopay: p.debt.autopay,
+    })),
+  ].sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  // A payday check the debt plan puts extra from, for one quiet line under Payday.
+  const paydayCheck = debtView.checks.find((c) => c.period.start === today && c.extraMinor > 0);
 
   // "Can this wait until I get paid?" is only answerable if payday is on screen.
   // The monthly figure counts every job, including one paid today.
   const { today: paidToday, soon: paidSoon, monthlyMinor: monthlyFromAll } = paydaysFrom(incomes, today);
+
+  /*
+    The low day, laid over the folds you chose yourself. A section is closed if
+    you closed it, or if the low day has folded all of it away and you have not
+    opened it today: closed = yours || (low day && not peeked). Sections are
+    given this through the same context App gives every screen, so they need
+    to know nothing about low days.
+
+    Opening a section does both jobs at once - it peeks, which is never saved,
+    and if you had closed it yourself it opens it again - so one tap always
+    shows it. Closing one you only peeked at folds it back for today, and saves
+    nothing.
+  */
+  const chosen = useContext(FoldContext);
+  /** Whether a low day, not peeked at, would fold every part of a section away. */
+  const wholeOnLowDay = (id: FoldId): boolean => {
+    if (!low || !LOW_DAY_FOLDS[id]) return false;
+    if (id === 'today.waiting') return !waiting.some((t) => fitsLowDay(t, today));
+    if (id === 'today.loose') return !undated.some((t) => fitsLowDay(t, today));
+    // Money is never on a low day's list, so these fold whole.
+    return true;
+  };
+  const hiddenForToday = (id: FoldId) => wholeOnLowDay(id) && !shown.includes(LOW_DAY_FOLDS[id]!);
+  const folds: Folds = {
+    isOpen: (id) => chosen.isOpen(id) && !hiddenForToday(id),
+    setOpen: (id, open) => {
+      const key = LOW_DAY_FOLDS[id];
+      if (open) {
+        if (key && hiddenForToday(id)) unfold(key);
+        if (!chosen.isOpen(id)) chosen.setOpen(id, true);
+      } else if (key && wholeOnLowDay(id) && shown.includes(key)) {
+        refold(key);
+      } else {
+        chosen.setOpen(id, false);
+      }
+    },
+  };
+  /** A folded section's line: "Hidden for today" when the low day folded it, not you. */
+  const summary = (id: FoldId, yours: string) => (hiddenForToday(id) && chosen.isOpen(id) ? 'Hidden for today' : yours);
+
+  const billsMinor = leaving.reduce((sum, b) => sum + b.amountMinor, 0);
+  const leavingWords = chargesAndPayments(bills.length, duePayments.length, 'payment');
+  const billsSummary = settings.blurAmounts
+    ? leavingWords
+    : leaving.length === 1
+      ? `${leavingWords}, ${formatMoney(billsMinor, settings.currency)}`
+      : `${leavingWords}, ${formatMoney(billsMinor, settings.currency)} in all`;
+  const nextPay = paidSoon[0];
+  const paydaySummary = nextPay
+    ? `${cutTitle(nextPay.source.name)}, ${SHORT_WEEKDAYS[fromDateKey(nextPay.date).getDay()]}, ${shortDate(nextPay.date, today)}${
+        paidSoon.length > 1 ? `, and ${paidSoon.length - 1} more` : ''
+      }`
+    : '';
+  const looseCount = Math.min(LOOSE_SHOWN, undated.length);
+  const looseSummary = looseCount === 1 ? 'The top one from your backlog' : `The top ${looseCount} from your backlog`;
 
   if (editing) {
     const saved = tasks.some((t) => t.id === editing.id);
@@ -124,7 +240,7 @@ export default function Today({
   }
 
   return (
-    <>
+    <FoldContext.Provider value={folds}>
       {/* First on the screen and in the same place every day, on or off. The
           app never suggests it and never guesses: it has no idea what kind of
           day you are having, and nothing here records that you had one. */}
@@ -156,7 +272,7 @@ export default function Today({
           </button>
         }
       >
-        {openToday.length === 0 && chargedToday.length === 0 ? (
+        {openToday.length === 0 && goingOutToday.length === 0 ? (
           <Empty>
             Nothing is planned for today. That is allowed. Anything you add with a date of today shows up here.
           </Empty>
@@ -182,19 +298,22 @@ export default function Today({
 
         {/* Money that leaves today is a fact about today, grouped under its
             own quiet heading rather than flagged row by row. */}
-        {chargedToday.length > 0 && folded('charged') && (
-          <Folded title="Charged today" sub onShow={() => unfold('charged')} />
+        {goingOutToday.length > 0 && folded('charged') && (
+          <Folded title="Going out today" sub onShow={() => unfold('charged')} />
         )}
-        {chargedToday.length > 0 && !folded('charged') && (
+        {goingOutToday.length > 0 && !folded('charged') && (
           <div className="stack-sm">
-            <h3>Charged today</h3>
-            {chargedToday.map((item) => (
+            <h3>Going out today</h3>
+            {goingOutToday.map((item) => (
               <div key={item.key} className="item">
                 <div className="figure grow">
                   <span className="item-title">{item.subscription?.name ?? item.title}</span>
                   <Amount
                     className="figure-value"
-                    text={formatMoney(item.amountMinor ?? 0, item.subscription?.currency ?? settings.currency)}
+                    text={formatMoney(
+                      item.amountMinor ?? 0,
+                      item.subscription?.currency ?? item.debt?.currency ?? settings.currency,
+                    )}
                     blur={settings.blurAmounts}
                   />
                 </div>
@@ -221,34 +340,37 @@ export default function Today({
         )}
       </Section>
 
-      {waiting.length > 0 && waitingFits.length === 0 && (
-        <Folded title="Still waiting" onShow={() => unfold('waiting')} />
-      )}
-      {waitingFits.length > 0 && (
-        <Section title="Still waiting">
+      {waiting.length > 0 && (
+        <Section
+          title="Still waiting"
+          collapsible="today.waiting"
+          summary={summary('today.waiting', `${countOf(waiting.length, 'task', 'tasks')} still here`)}
+        >
           <p className="faint">
             These had an earlier date and are not finished. They are not late, they are just still here.
           </p>
-          <div className="stack-sm">
-            {waitingShown.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                onEdit={setEditing}
-                showDate
-                actions={
-                  <>
-                    <button type="button" className="btn btn-sm" onClick={() => void move(task, today)}>
-                      Move to today
-                    </button>
-                    <button type="button" className="btn btn-quiet btn-sm" onClick={() => void move(task, undefined)}>
-                      Take the date off
-                    </button>
-                  </>
-                }
-              />
-            ))}
-          </div>
+          {waitingShown.length > 0 && (
+            <div className="stack-sm">
+              {waitingShown.map((task) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  onEdit={setEditing}
+                  showDate
+                  actions={
+                    <>
+                      <button type="button" className="btn btn-sm" onClick={() => void move(task, today)}>
+                        Move to today
+                      </button>
+                      <button type="button" className="btn btn-quiet btn-sm" onClick={() => void move(task, undefined)}>
+                        Take the date off
+                      </button>
+                    </>
+                  }
+                />
+              ))}
+            </div>
+          )}
           {waitingFolded > 0 && (
             <FoldedRest text="Everything else still waiting is folded away." onShow={() => unfold('waiting')} />
           )}
@@ -276,6 +398,8 @@ export default function Today({
         </Section>
       )}
 
+      {/* Payday is good news and one line long, so it is never folded by you -
+          only by a low day, like the rest of the money. */}
       {paidToday.length > 0 && folded('payday') && <Folded title="Payday" onShow={() => unfold('payday')} />}
       {paidToday.length > 0 && !folded('payday') && (
         <Section title="Payday">
@@ -292,42 +416,53 @@ export default function Today({
               </div>
             ))}
           </div>
-        </Section>
-      )}
-
-      {bills.length > 0 && folded('bills') && (
-        <Folded title={`Money leaving soon (next ${settings.lookaheadDays} days)`} onShow={() => unfold('bills')} />
-      )}
-      {bills.length > 0 && !folded('bills') && (
-        <Section title={`Money leaving soon (next ${settings.lookaheadDays} days)`}>
-          <div className="stack-sm">
-            {bills.slice(0, BILLS_SHOWN).map((b) => (
-              <div key={`${b.sub.id}-${b.date}`} className="item">
-                <div className="figure grow">
-                  <div>
-                    <div className="item-title">{b.sub.name}</div>
-                    <div className="faint">{describeDate(b.date, today)}</div>
-                  </div>
-                  <Amount
-                    className="figure-value"
-                    text={formatMoney(b.sub.amountMinor, b.sub.currency)}
-                    blur={settings.blurAmounts}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          {bills.length > BILLS_SHOWN && (
-            <p className="faint">{bills.length - BILLS_SHOWN} more on the Money screen.</p>
+          {paydayCheck && (
+            <div className="spread">
+              <span className="faint grow">
+                Your debt plan puts{' '}
+                <Amount text={formatMoney(paydayCheck.extraMinor, settings.currency)} blur={settings.blurAmounts} />{' '}
+                extra toward {nameList(paydayCheck.extra.map((e) => e.debt.name))} from this one.
+              </span>
+              <button type="button" className="btn btn-sm" onClick={() => navigate('debt')}>
+                Open Debt
+              </button>
+            </div>
           )}
         </Section>
       )}
 
-      {paidSoon.length > 0 && folded('nextPayday') && (
-        <Folded title="Next payday" onShow={() => unfold('nextPayday')} />
+      {leaving.length > 0 && (
+        <Section
+          title={`Money leaving soon (next ${settings.lookaheadDays} days)`}
+          collapsible="today.bills"
+          summary={summary('today.bills', billsSummary)}
+        >
+          <div className="stack-sm">
+            {leaving.slice(0, BILLS_SHOWN).map((b) => (
+              <div key={b.key} className="item">
+                <div className="figure grow">
+                  <div>
+                    <div className="item-title">{b.title}</div>
+                    <div className="faint">
+                      {describeDate(b.date, today)}
+                      {b.autopay ? ' · autopay' : ''}
+                    </div>
+                  </div>
+                  <Amount className="figure-value" text={formatMoney(b.amountMinor, b.currency)} blur={settings.blurAmounts} />
+                </div>
+              </div>
+            ))}
+          </div>
+          {leaving.length > BILLS_SHOWN && (
+            <p className="faint">
+              {leaving.length - BILLS_SHOWN} more on the {duePayments.length > 0 ? 'Money and Debt tabs' : 'Money screen'}.
+            </p>
+          )}
+        </Section>
       )}
-      {paidSoon.length > 0 && !folded('nextPayday') && (
-        <Section title="Next payday">
+
+      {paidSoon.length > 0 && (
+        <Section title="Next payday" collapsible="today.nextPayday" summary={summary('today.nextPayday', paydaySummary)}>
           <div className="stack-sm">
             {paidSoon.map(({ source: src, date }) => (
               <div key={src.id} className="item">
@@ -349,28 +484,27 @@ export default function Today({
         </Section>
       )}
 
-      {undated.length > 0 && loose.length === 0 && (
-        <Folded title="No date on these" onShow={() => unfold('loose')} />
-      )}
-      {loose.length > 0 && (
-        <Section title="No date on these">
+      {undated.length > 0 && (
+        <Section title="No date on these" collapsible="today.loose" summary={summary('today.loose', looseSummary)}>
           <p className="faint">
             The ones nearest the top of your backlog. Give one a day only if you want to.
           </p>
-          <div className="stack-sm">
-            {loose.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                onEdit={setEditing}
-                actions={
-                  <button type="button" className="btn btn-sm" onClick={() => void move(task, today)}>
-                    Do it today
-                  </button>
-                }
-              />
-            ))}
-          </div>
+          {loose.length > 0 && (
+            <div className="stack-sm">
+              {loose.map((task) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  onEdit={setEditing}
+                  actions={
+                    <button type="button" className="btn btn-sm" onClick={() => void move(task, today)}>
+                      Do it today
+                    </button>
+                  }
+                />
+              ))}
+            </div>
+          )}
           {looseFolded > 0 && (
             <FoldedRest text="Everything else with no date is folded away." onShow={() => unfold('loose')} />
           )}
@@ -384,32 +518,25 @@ export default function Today({
         {describeDuration(todayShown.reduce((sum, i) => sum + (i.task?.durationMin ?? 0), 0))}. This is information,
         not a target.
       </p>
-    </>
+    </FoldContext.Provider>
   );
 }
 
 /**
- * A section folded away for a low day: its heading, in its usual place, with
- * "hidden for today" running on inside it and Show beside it. Nothing in it
- * has gone. The note is part of the heading so the two wrap as one line of
- * text at large sizes, and are read out together.
+ * A part of Today folded away for a low day that you never fold yourself -
+ * Payday, and what is going out today. Its heading stays in its usual place,
+ * with "Hidden for today" under it and Show beside it, drawn by the same
+ * FoldHeader as every other folded section so the two look and read alike.
+ * Show opens it for today only; nothing in it has gone.
  */
 function Folded({ title, sub = false, onShow }: { title: string; sub?: boolean; onShow: () => void }) {
-  const Heading = sub ? 'h3' : 'h2';
-  const line = (
-    <div className="section-head">
-      <Heading className="grow">
-        {title} <span className="faint folded-note">— hidden for today</span>
-      </Heading>
-      <button type="button" className="btn btn-quiet btn-sm" aria-label={`Show ${title}`} onClick={onShow}>
-        Show
-      </button>
-    </div>
+  const heading = (
+    <FoldHeader title={title} summary="Hidden for today" open={false} onToggle={onShow} level={sub ? 3 : 2} />
   );
-  if (sub) return line;
+  if (sub) return heading;
   return (
     <section className="stack" aria-label={title}>
-      {line}
+      {heading}
     </section>
   );
 }

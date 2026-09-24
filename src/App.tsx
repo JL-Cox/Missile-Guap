@@ -9,15 +9,18 @@ import { THEME_TOKENS, resolveCustom } from './lib/theme';
 import { updateNotice, versionLabel } from './lib/version';
 import { shortDateTime, todayKey } from './lib/time';
 import { isStaleLowDay } from './lib/lowday';
+import { isOpen as savedOpen, withFold, type FoldId } from './lib/sections';
 import { lockAvailable, readLock, shouldLock } from './lib/lock';
 import CaptureBar from './components/CaptureBar';
 import LockScreen from './components/LockScreen';
 import {
+  FoldContext,
   LayerContext,
   NavigateContext,
   Toast,
   ToastContext,
   useLatest,
+  type Folds,
   type Navigate,
   type ToastAction,
   type ToastState,
@@ -28,18 +31,27 @@ import Tasks from './views/Tasks';
 import Backlog from './views/Backlog';
 import Notes from './views/Notes';
 import Money from './views/Money';
+import Debt from './views/Debt';
 import Settings from './views/Settings';
 import About from './views/About';
 
-type ViewId = 'today' | 'inbox' | 'tasks' | 'backlog' | 'notes' | 'money' | 'settings';
+type ViewId = 'today' | 'inbox' | 'tasks' | 'backlog' | 'notes' | 'debt' | 'money' | 'settings';
 
-/** Fixed order, fixed labels, every time. The nav never reorders itself. */
+/**
+ * Fixed order, fixed labels, every time. The nav never reorders itself.
+ *
+ * Debt sits between Notes and Money, so Today keeps the left edge and Money
+ * the right, and the two money tabs sit side by side. Its glyph is a circle
+ * part-way filled - "part-way there" - from the same set of shapes as the
+ * others, and never an emoji.
+ */
 const NAV: { id: ViewId; label: string; glyph: string }[] = [
   { id: 'today', label: 'Today', glyph: '◎' },
   { id: 'inbox', label: 'Inbox', glyph: '↓' },
   { id: 'tasks', label: 'Tasks', glyph: '✓' },
   { id: 'backlog', label: 'Backlog', glyph: '◇' },
   { id: 'notes', label: 'Notes', glyph: '≡' },
+  { id: 'debt', label: 'Debt', glyph: '◔' },
   { id: 'money', label: 'Money', glyph: '$' },
 ];
 
@@ -49,11 +61,12 @@ const TITLES: Record<ViewId, string> = {
   tasks: 'Tasks',
   backlog: 'Backlog',
   notes: 'Notes',
+  debt: 'Debt',
   money: 'Money',
   settings: 'Settings',
 };
 
-/** The six tabs, which can each hold an open editor. Settings is not one. */
+/** The seven tabs, which can each hold an open editor. Settings is not one. */
 type TabId = Exclude<ViewId, 'settings'>;
 const TABS: TabId[] = NAV.map((n) => n.id as TabId);
 
@@ -61,6 +74,7 @@ const TABS: TabId[] = NAV.map((n) => n.id as TabId);
  * Android home-screen shortcuts (long-press the icon) open the app with
  * `?view=inbox`, or `?view=money&add=subscription` to go straight to the form.
  * Reading them here is what makes those shortcuts real rather than decorative.
+ * Any tab's name works, `?view=debt` included.
  */
 function startingPoint(): { view: ViewId; add?: 'subscription' } {
   try {
@@ -92,6 +106,12 @@ export default function App() {
   const [updated, setUpdated] = useState(false);
   /** Whether Settings is showing its About page. */
   const [about, setAbout] = useState(false);
+  /**
+   * A part of Settings to open straight away, for a button elsewhere that
+   * sends you to one thing there. Settings otherwise opens with every group
+   * closed.
+   */
+  const [settingsFocus, setSettingsFocus] = useState<'lock' | null>(null);
   /** Whether the saved settings have arrived. See the appearance effect below. */
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   /** A search handed to the Tasks screen from Notes. */
@@ -147,7 +167,10 @@ export default function App() {
   const goTo = useCallback(
     (next: ViewId) => {
       if (next === 'settings' && view !== 'settings') setBeforeSettings(view as TabId);
-      if (next !== 'settings') setAbout(false);
+      if (next !== 'settings') {
+        setAbout(false);
+        setSettingsFocus(null);
+      }
       // Opening Notes from the nav is opening Notes, not reopening the last
       // note a task row sent you to.
       setNoteToOpen(null);
@@ -210,8 +233,10 @@ export default function App() {
     const close = view !== 'settings' ? closers.current[view] : undefined;
     if (close) close();
     else if (view === 'settings' && about) setAbout(false);
-    else if (view === 'settings') setView(beforeSettings);
-    else if (view !== 'today') setView('today');
+    else if (view === 'settings') {
+      setSettingsFocus(null);
+      setView(beforeSettings);
+    } else if (view !== 'today') setView('today');
   });
 
   useEffect(() => {
@@ -233,6 +258,29 @@ export default function App() {
     setToast({ id: toastId.current, message, action });
   }, []);
   const dismissToast = useCallback(() => setToast(null), []);
+
+  /*
+    Folded sections. A fold you change shows at once and is saved behind it,
+    one save at a time, so two quick taps on two headings cannot overwrite
+    each other. Only differences from how each section starts are kept - see
+    src/lib/sections.ts - and none at all means the setting is taken away.
+  */
+  const foldSaves = useRef<Promise<void>>(Promise.resolve());
+  const folds = useMemo<Folds>(
+    () => ({
+      isOpen: (id: FoldId) => savedOpen(id, settings.sections),
+      setOpen: (id: FoldId, open: boolean) => {
+        setSettings((s) => ({ ...s, sections: withFold(s.sections, id, open) }));
+        foldSaves.current = foldSaves.current.then(async () => {
+          const sections = withFold((await getSettings()).sections, id, open);
+          setSettings(
+            Object.keys(sections).length > 0 ? await saveSettings({ sections }) : await forgetSettings('sections'),
+          );
+        });
+      },
+    }),
+    [settings.sections],
+  );
 
   const navigate = useCallback<Navigate>((next, options) => {
     setTaskQuery(options?.query ?? '');
@@ -422,6 +470,8 @@ export default function App() {
         return <Backlog settings={settings} onChange={setSettings} />;
       case 'notes':
         return <Notes settings={settings} openNote={noteToOpen} />;
+      case 'debt':
+        return <Debt settings={settings} />;
       case 'money':
         return <Money settings={settings} startAdding={start.add === 'subscription'} />;
     }
@@ -440,140 +490,153 @@ export default function App() {
   return (
     <ToastContext.Provider value={showToast}>
       <NavigateContext.Provider value={navigate}>
-        <div className="app">
-          <header className="header">
-            <div className="header-inner">
-              <div>
-                <h1>{view === 'settings' && about ? 'About' : TITLES[view]}</h1>
-                {view === 'today' && <p className="faint">{longDate()}</p>}
-              </div>
-              <div className="header-actions">
-                {lock && (
-                  <button type="button" className="btn btn-quiet btn-sm" onClick={hideNow}>
-                    Hide now
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className={view === 'settings' ? 'btn btn-sm' : 'btn btn-quiet btn-sm'}
-                  onClick={() => (view === 'settings' ? goTo(beforeSettings) : goTo('settings'))}
-                >
-                  {view === 'settings' ? 'Done' : 'Settings'}
-                </button>
-              </div>
-            </div>
-          </header>
-
-          <main className="main">
-            {/* The capture box is on every screen except Settings, always first. */}
-            {view !== 'settings' && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
-
-            {recovered && (
-              <div className="card stack-sm" role="status">
-                <p>
-                  <strong>The lock is off.</strong> You opened Steady with your recovery phrase, so the PIN has been
-                  removed. Everything you wrote is here, as it was.
-                </p>
-                <p className="small">You can set a new PIN in Settings, under App lock.</p>
-                <div className="btn-row">
+        <FoldContext.Provider value={folds}>
+          <div className="app">
+            <header className="header">
+              <div className="header-inner">
+                <div>
+                  <h1>{view === 'settings' && about ? 'About' : TITLES[view]}</h1>
+                  {view === 'today' && <p className="faint">{longDate()}</p>}
+                </div>
+                <div className="header-actions">
+                  {lock && (
+                    <button type="button" className="btn btn-quiet btn-sm" onClick={hideNow}>
+                      Hide now
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className="btn btn-sm"
-                    onClick={() => {
-                      setRecovered(false);
-                      goTo('settings');
-                    }}
+                    className={view === 'settings' ? 'btn btn-sm' : 'btn btn-quiet btn-sm'}
+                    onClick={() => (view === 'settings' ? goTo(beforeSettings) : goTo('settings'))}
                   >
-                    Open Settings
-                  </button>
-                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => setRecovered(false)}>
-                    Got it
+                    {view === 'settings' ? 'Done' : 'Settings'}
                   </button>
                 </div>
               </div>
-            )}
+            </header>
 
-            {updated && (
-              <div className="card stack-sm" role="status">
-                <p>
-                  <strong>Steady updated to {versionLabel().toLowerCase()}.</strong> Your notes, tasks and
-                  subscriptions are untouched.
-                </p>
-                <div className="btn-row">
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() => {
-                      setUpdated(false);
-                      goTo('settings');
-                      setAbout(true);
-                    }}
-                  >
-                    What's new
-                  </button>
-                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => setUpdated(false)}>
-                    Dismiss
-                  </button>
+            <main className="main">
+              {/* The capture box is on every screen except Settings, always first. */}
+              {view !== 'settings' && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
+
+              {recovered && (
+                <div className="card stack-sm" role="status">
+                  <p>
+                    <strong>The lock is off.</strong> You opened Steady with your recovery phrase, so the PIN has been
+                    removed. Everything you wrote is here, as it was.
+                  </p>
+                  <p className="small">You can set a new PIN in Settings, under App lock.</p>
+                  <div className="btn-row">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => {
+                        setRecovered(false);
+                        goTo('settings');
+                        setAbout(false);
+                        setSettingsFocus('lock');
+                      }}
+                    >
+                      Open Settings
+                    </button>
+                    <button type="button" className="btn btn-quiet btn-sm" onClick={() => setRecovered(false)}>
+                      Got it
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {missed.length > 0 && (
-              <div className="card stack-sm" role="status">
-                <h2>While the app was closed</h2>
-                <p className="small">
-                  {missed.length === 1 ? 'This reminder' : 'These reminders'} came due while Steady was not running,
-                  so {missed.length === 1 ? 'it was not' : 'they were not'} shown at the time.
-                </p>
-                <ul className="stack-sm plain-list">
-                  {missed.map((task) => (
-                    <li key={task.id}>
-                      {task.title}
-                      {task.remindAt && <span className="faint"> · {shortDateTime(task.remindAt)}</span>}
-                    </li>
-                  ))}
-                </ul>
-                <div className="btn-row">
-                  <button type="button" className="btn btn-sm" onClick={() => setMissed([])}>
-                    Got it
-                  </button>
+              {updated && (
+                <div className="card stack-sm" role="status">
+                  <p>
+                    <strong>Steady updated to {versionLabel().toLowerCase()}.</strong> Your notes, tasks and
+                    subscriptions are untouched.
+                  </p>
+                  <div className="btn-row">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => {
+                        setUpdated(false);
+                        goTo('settings');
+                        setAbout(true);
+                      }}
+                    >
+                      What's new
+                    </button>
+                    <button type="button" className="btn btn-quiet btn-sm" onClick={() => setUpdated(false)}>
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {TABS.filter((id) => id === view || openLayers.includes(id)).map((id) => (
-              <div key={id} className="view" hidden={id !== view}>
-                <LayerContext.Provider value={registrars[id]}>{renderTab(id)}</LayerContext.Provider>
-              </div>
-            ))}
-            {view === 'settings' &&
-              (about ? (
-                <About onBack={() => setAbout(false)} />
-              ) : (
-                <Settings settings={settings} onChange={setSettings} onAbout={() => setAbout(true)} />
+              {missed.length > 0 && (
+                <div className="card stack-sm" role="status">
+                  <h2>While the app was closed</h2>
+                  <p className="small">
+                    {missed.length === 1 ? 'This reminder' : 'These reminders'} came due while Steady was not running,
+                    so {missed.length === 1 ? 'it was not' : 'they were not'} shown at the time.
+                  </p>
+                  <ul className="stack-sm plain-list">
+                    {missed.map((task) => (
+                      <li key={task.id}>
+                        {task.title}
+                        {task.remindAt && <span className="faint"> · {shortDateTime(task.remindAt)}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="btn-row">
+                    <button type="button" className="btn btn-sm" onClick={() => setMissed([])}>
+                      Got it
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {TABS.filter((id) => id === view || openLayers.includes(id)).map((id) => (
+                <div key={id} className="view" hidden={id !== view}>
+                  <LayerContext.Provider value={registrars[id]}>{renderTab(id)}</LayerContext.Provider>
+                </div>
               ))}
-          </main>
+              {view === 'settings' &&
+                (about ? (
+                  <About onBack={() => setAbout(false)} />
+                ) : (
+                  <Settings
+                    settings={settings}
+                    onChange={setSettings}
+                    onAbout={() => setAbout(true)}
+                    focus={settingsFocus}
+                  />
+                ))}
+            </main>
 
-          <nav className="nav" aria-label="Main">
-            {NAV.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="nav-btn"
-                aria-current={view === item.id ? 'page' : undefined}
-                onClick={() => goTo(item.id)}
-              >
-                <span className="nav-glyph" aria-hidden="true">
-                  {item.glyph}
-                </span>
-                <span>{item.label}</span>
-                {item.id === 'inbox' && openCount > 0 && <span className="nav-count">{openCount}</span>}
-              </button>
-            ))}
-          </nav>
+            <nav className="nav" aria-label="Main">
+              {NAV.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="nav-btn"
+                  aria-current={view === item.id ? 'page' : undefined}
+                  onClick={() => goTo(item.id)}
+                >
+                  <span className="nav-glyph" aria-hidden="true">
+                    {item.glyph}
+                  </span>
+                  {/* The bold width is reserved on every tab (see .nav-label), so the
+                      slots never shift when the tab you are on changes. */}
+                  <span className="nav-label" data-label={item.label}>
+                    {item.label}
+                  </span>
+                  {item.id === 'inbox' && openCount > 0 && <span className="nav-count">{openCount}</span>}
+                </button>
+              ))}
+            </nav>
 
-          {toast && <Toast toast={toast} onDismiss={dismissToast} />}
-        </div>
+            {toast && <Toast toast={toast} onDismiss={dismissToast} />}
+          </div>
+        </FoldContext.Provider>
       </NavigateContext.Provider>
     </ToastContext.Provider>
   );

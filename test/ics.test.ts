@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCalendar,
   calendarContents,
+  calendarForDebt,
   calendarForIncome,
   calendarForSubscription,
   calendarForTask,
+  DEBT_CALENDAR_ENTRY_STAYS,
+  DEBT_CALENDAR_FILENAME,
+  DEBT_REMIND_DAYS,
   icsFilename,
 } from '../src/lib/ics';
-import type { IncomeSource, Subscription, Task } from '../src/types';
+import type { Debt, IncomeSource, Subscription, Task } from '../src/types';
 
 function task(partial: Partial<Task> = {}): Task {
   return { id: 't1', title: 'Ring the dentist', notes: '', steps: [], tags: [], createdAt: 0, updatedAt: 0, ...partial };
@@ -435,5 +439,100 @@ describe('month-end days in the calendar', () => {
     expect(cal([], [], [{ ...job, daysOfMonth: [30] }])).not.toContain('RRULE');
     // A monthly job holding two days is paid on the first of them, once.
     expect(cal([], [], [{ ...job, daysOfMonth: [15, 31] }])).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=15\r\n');
+  });
+});
+
+/*
+  A debt goes into the calendar one at a time, only from its own button. A
+  lender's or a hospital's name next to an amount says more than a streaming
+  bill, so the file name, the share title and the calendar's name are all
+  neutral, and notes stay out unless Settings says otherwise.
+*/
+describe('a debt in the calendar', () => {
+  const at = Date.UTC(2026, 8, 24, 12, 0, 0);
+  const loan = (partial: Partial<Debt> = {}): Debt => ({
+    id: 'd1', name: 'Car loan', kind: 'autoLoan', balanceMinor: 1_000_000, balanceAsOf: '2026-09-24', aprPercent: 6.9,
+    minimum: { kind: 'fixed', amountMinor: 39_509 }, dueDay: 10, autopay: false, currency: 'USD',
+    notes: 'Account 1234 at the dealer', createdAt: 0, updatedAt: 0, ...partial,
+  });
+  const unfold = (ics: string) => ics.replace(/\r\n /g, '');
+
+  it('is one repeating all-day entry from the next due date, with a reminder 3 days before', () => {
+    const ics = calendarForDebt(loan(), '$395.09', at)!;
+    expect(ics).toContain('UID:debt-d1@steady.local');
+    expect(ics).toContain('DTSTART;VALUE=DATE:20261010');
+    expect(ics).toContain('RRULE:FREQ=MONTHLY\r\n');
+    expect(ics).toContain('SUMMARY:Car loan payment - $395.09');
+    expect(DEBT_REMIND_DAYS).toBe(3);
+    expect(ics).toContain('TRIGGER:-PT4320M');
+    expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1);
+  });
+
+  it('names the calendar "Steady" and the file neutrally, never after the lender', () => {
+    const ics = calendarForDebt(loan(), '$395.09', at)!;
+    expect(ics).toContain('X-WR-CALNAME:Steady');
+    expect(DEBT_CALENDAR_FILENAME).toBe('payment-dates.ics');
+  });
+
+  it('keeps notes out unless they are switched on', () => {
+    expect(calendarForDebt(loan(), '$395.09', at)).not.toContain('Account 1234');
+    expect(unfold(calendarForDebt(loan(), '$395.09', at, { includeNotes: true })!)).toContain(
+      'DESCRIPTION:Account 1234 at the dealer',
+    );
+  });
+
+  it('leaves the amount out when it changes every month', () => {
+    const card = loan({ name: 'Blue card', minimum: { kind: 'percentPlusInterest', percent: 1, floorMinor: 3_500 } });
+    const ics = calendarForDebt(card, null, at)!;
+    expect(ics).toContain('SUMMARY:Blue card payment due');
+    expect(calendarForDebt(loan({ minimum: { kind: 'fixed', amountMinor: 0 } }), '$0.00', at)).toContain(
+      'SUMMARY:Car loan payment due',
+    );
+  });
+
+  it('starts after a payment marked paid', () => {
+    expect(calendarForDebt(loan({ paidThrough: '2026-10-10' }), '$395.09', at)).toContain('DTSTART;VALUE=DATE:20261110');
+  });
+
+  it('stops after the last payment when the count is known: a set amount at 0%', () => {
+    const family = loan({ name: 'Mom', aprPercent: 0, balanceMinor: 125_000, minimum: { kind: 'fixed', amountMinor: 10_000 }, dueDay: 1 });
+    expect(calendarForDebt(family, '$100.00', at)).toContain('RRULE:FREQ=MONTHLY;COUNT=13');
+  });
+
+  it('keeps month-end due dates right: the last day, or dates written out for the 29th and 30th', () => {
+    expect(calendarForDebt(loan({ dueDay: 31 }), '$395.09', at)).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=-1');
+    const thirtieth = unfold(calendarForDebt(loan({ dueDay: 30 }), '$395.09', at)!);
+    expect(thirtieth).not.toContain('RRULE');
+    expect(thirtieth).toContain('DTSTART;VALUE=DATE:20260930');
+    expect(thirtieth).toContain('20270228');
+    const family = loan({ name: 'Mom', aprPercent: 0, balanceMinor: 125_000, minimum: { kind: 'fixed', amountMinor: 10_000 }, dueDay: 30 });
+    const dates = /RDATE;VALUE=DATE:([\d,]+)/.exec(unfold(calendarForDebt(family, '$100.00', at)!))![1].split(',');
+    expect(dates).toHaveLength(12);
+  });
+
+  it('repeats every 2 weeks for a pay-in-4 plan', () => {
+    const bnpl = loan({ kind: 'bnpl', cadence: 'every2weeks', dueDay: undefined, nextDueOn: '2026-10-01', aprPercent: 0, balanceMinor: 30_000, minimum: { kind: 'fixed', amountMinor: 10_000 } });
+    const ics = calendarForDebt(bnpl, '$100.00', at)!;
+    expect(ics).toContain('DTSTART;VALUE=DATE:20261001');
+    expect(ics).toContain('RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=3');
+  });
+
+  it('has nothing to add for a debt that is paid off, at zero or has no due date', () => {
+    expect(calendarForDebt(loan({ paidOffOn: '2026-09-01' }), '$395.09', at)).toBeNull();
+    expect(calendarForDebt(loan({ balanceMinor: 0 }), '$395.09', at)).toBeNull();
+    expect(calendarForDebt(loan({ dueDay: undefined }), '$395.09', at)).toBeNull();
+  });
+
+  it('is never part of the whole-app export', () => {
+    const all = buildCalendar({ tasks: [], subscriptions: [], formatAmount: () => '', now: at });
+    expect(all).not.toContain('debt-');
+  });
+
+  it('says what goes in, and what stays', () => {
+    expect(calendarContents('debt', false)).toBe(
+      "Goes in: the name and the due dates, and the amount when it's the same every month. Notes stay here unless you turn them on in Settings.",
+    );
+    expect(calendarContents('debt', true)).toMatch(/with its notes\.$/);
+    expect(DEBT_CALENDAR_ENTRY_STAYS).toContain("Steady can't reach your calendar");
   });
 });

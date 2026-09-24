@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { countAll, db, getSettings, saveSettings, wipeAll } from '../db';
+import { countAll, db, forgetSettings, getSettings, saveSettings, wipeAll } from '../db';
 import type { CustomTheme, ReminderContent, Settings as SettingsType, ThemeName } from '../types';
 import {
   ACCENTS,
@@ -28,7 +28,7 @@ import { notificationSupport, requestPermission, type PermissionState } from '..
 import { formatBytes, requestPersistence, storageOrigin, storageStatus, type StorageStatus } from '../lib/storage';
 import { shareOrDownload } from '../lib/share';
 import { versionLabel } from '../lib/version';
-import { readLock } from '../lib/lock';
+import { lockAfterLabel, lockAvailable, readLock } from '../lib/lock';
 import { ConfirmButton, FormError, Section, useToast } from '../components/ui';
 import LockSettings from '../components/LockSettings';
 
@@ -97,11 +97,14 @@ export default function Settings({
   settings,
   onChange,
   onAbout,
+  focus = null,
 }: {
   settings: SettingsType;
   onChange: (settings: SettingsType) => void;
   /** Opens the About page: version, what's new, recent updates. */
   onAbout: () => void;
+  /** A group to open on arrival, for a button elsewhere that sends you to it. */
+  focus?: 'lock' | null;
 }) {
   const onToast = useToast();
   const [permission, setPermission] = useState<PermissionState>(notificationSupport());
@@ -115,21 +118,27 @@ export default function Settings({
    */
   const [pending, setPending] = useState<Backup | null>(null);
   const [storage, setStorage] = useState<StorageStatus | null>(null);
-  /** Subscriptions saved under a different currency than the one now set. */
-  const [mismatched, setMismatched] = useState(0);
+  /**
+   * Subscriptions and debts saved under a different currency than the one now
+   * set. A debt in another currency is left out of the plan, so it matters.
+   */
+  const [mismatched, setMismatched] = useState({ subs: 0, debts: 0 });
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void (async () => {
       setCounts(await countAll());
       setStorage(await storageStatus());
-      const subs = await db.subscriptions.toArray();
-      setMismatched(subs.filter((s) => s.currency !== settings.currency).length);
+      const [subs, debts] = await Promise.all([db.subscriptions.toArray(), db.debts.toArray()]);
+      setMismatched({
+        subs: subs.filter((s) => s.currency !== settings.currency).length,
+        debts: debts.filter((d) => d.currency !== settings.currency).length,
+      });
     })();
   }, [settings.rev, settings.currency]);
 
   /**
-   * Relabels every subscription with the current currency.
+   * Relabels every subscription and debt with the current currency.
    *
    * Deliberately does not convert: there is no exchange-rate source here and
    * there never will be, since fetching one would mean a network call. This is
@@ -137,11 +146,20 @@ export default function Settings({
    * the label was wrong.
    */
   const retagCurrency = async () => {
-    const subs = await db.subscriptions.toArray();
-    await db.subscriptions.bulkPut(subs.map((s) => ({ ...s, currency: settings.currency })));
+    const [subs, debts] = await Promise.all([db.subscriptions.toArray(), db.debts.toArray()]);
+    await db.transaction('rw', db.subscriptions, db.debts, async () => {
+      await db.subscriptions.bulkPut(subs.map((s) => ({ ...s, currency: settings.currency })));
+      await db.debts.bulkPut(debts.map((d) => ({ ...d, currency: settings.currency })));
+    });
     onChange(await saveSettings({ rev: settings.rev + 1 }));
-    onToast(`All subscriptions now shown in ${settings.currency}.`);
+    onToast(`All subscriptions and debts now shown in ${settings.currency}.`);
   };
+  const mismatchedWords = [
+    mismatched.subs > 0 ? `${mismatched.subs} subscription${mismatched.subs === 1 ? '' : 's'}` : '',
+    mismatched.debts > 0 ? `${mismatched.debts} debt${mismatched.debts === 1 ? '' : 's'}` : '',
+  ]
+    .filter(Boolean)
+    .join(' and ');
 
   const patch = async (changes: Partial<SettingsType>) => onChange(await saveSettings(changes));
 
@@ -220,395 +238,488 @@ export default function Settings({
     onToast('Everything has been deleted from this device.');
   };
 
+  /*
+    "Put every section back the way it started". Every fold you changed is
+    forgotten at once, and Undo brings back exactly the ones you had.
+  */
+  const resetSections = async () => {
+    const before = settings.sections;
+    if (!before || Object.keys(before).length === 0) {
+      onToast('Every section is already the way it started.');
+      return;
+    }
+    onChange(await forgetSettings('sections'));
+    onToast('Every section is back the way it started.', {
+      label: 'Undo',
+      run: async () => {
+        onChange(await saveSettings({ sections: before }));
+        onToast('Put back as you had them.');
+      },
+    });
+  };
+
+  const lock = readLock(settings.lock);
+  const themeLabel = ALL_THEMES.find((t) => t.id === settings.theme)?.label ?? 'Custom';
+
+  /*
+    One line under each group's heading, saying where it stands now, so most
+    visits need no tap at all. Settings opens with every group closed, every
+    time, so the page looks the same whenever you come to it.
+  */
+  const lookSummary = [
+    themeLabel,
+    `text ${Math.round(settings.textScale * 100)}%`,
+    ...(settings.reduceMotion ? ['animation off'] : []),
+    ...(settings.blurAmounts ? ['amounts blurred'] : []),
+  ].join(' · ');
+  const remindersSummary = {
+    granted: 'Notifications on',
+    default: 'Notifications not allowed yet',
+    denied: "Notifications turned off in Chrome's settings",
+    unsupported: "This browser can't show notifications",
+  }[permission];
+  const lockSummary = !lockAvailable()
+    ? "Can't be used in this browser"
+    : lock
+      ? `On · ${lock.afterMinutes === 0 ? 'immediately' : `after ${lockAfterLabel(lock.afterMinutes)}`}`
+      : 'Off';
+  const dataSummary = storage?.supported
+    ? storage.persisted
+      ? 'Protected from clearing'
+      : 'Not yet protected from clearing'
+    : 'In this browser, on this phone';
+
   return (
     <>
-      <Section title="How it looks">
-        <fieldset className="field">
-          <legend>Theme</legend>
-          <ThemeButtons themes={THEMES} settings={settings} onPick={(t) => void patch(t)} />
-          <p className="faint group-note">Just for fun</p>
-          <ThemeButtons themes={FUN_THEMES} settings={settings} onPick={(t) => void patch(t)} />
-          <div className="group-note">
-            <ThemeButtons themes={[CUSTOM_THEME]} settings={settings} onPick={(t) => void patch(t)} />
-          </div>
-          <p className="faint">{ALL_THEMES.find((t) => t.id === settings.theme)?.hint}</p>
-        </fieldset>
-
-        {settings.theme === 'custom' && (
-          <CustomThemeEditor
-            custom={settings.customTheme ?? DEFAULT_CUSTOM}
-            onChange={(customTheme) => void patch({ customTheme })}
-          />
-        )}
-
-        <div className="field">
-          <label htmlFor="text-scale">Text size ({Math.round(settings.textScale * 100)}%)</label>
-          <input
-            autoComplete="off"
-            id="text-scale"
-            type="range"
-            min={0.9}
-            max={1.6}
-            step={0.05}
-            value={settings.textScale}
-            onChange={(e) => void patch({ textScale: Number(e.target.value) })}
-          />
-        </div>
-
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.reduceMotion}
-            onChange={(e) => void patch({ reduceMotion: e.target.checked })}
-          />
-          <span>Turn off all animation</span>
-        </label>
-
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.blurAmounts}
-            onChange={(e) => void patch({ blurAmounts: e.target.checked })}
-          />
-          <span>Blur money amounts until I tap them</span>
-        </label>
-
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.suggestTags}
-            onChange={(e) => void patch({ suggestTags: e.target.checked })}
-          />
-          <span>Suggest tags for my notes</span>
-        </label>
-        <p className="faint">
-          Learned from the tags you have already used, on this phone. It only ever suggests tags you invented
-          yourself, it never files anything for you, and nothing is sent anywhere to work it out.
-        </p>
-
-        <div className="field">
-          <label htmlFor="lookahead">Show money leaving in the next {settings.lookaheadDays} days</label>
-          <input
-            autoComplete="off"
-            id="lookahead"
-            type="range"
-            min={3}
-            max={60}
-            step={1}
-            value={settings.lookaheadDays}
-            onChange={(e) => void patch({ lookaheadDays: Number(e.target.value) })}
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="currency">Currency</label>
-          <input
-            autoComplete="off"
-            id="currency"
-            type="text"
-            value={settings.currency}
-            onChange={(e) => void patch({ currency: e.target.value.toUpperCase().slice(0, 3) })}
-          />
-          <p className="faint">
-            Used for new subscriptions. Each one also stores its own, so changing this does not touch anything
-            already saved - the button below does that.
-          </p>
-          {mismatched > 0 && (
-            <div className="stack-sm">
-              <ConfirmButton
-                label={`Change ${mismatched} subscription${mismatched === 1 ? '' : 's'} to ${settings.currency}`}
-                confirmLabel={`Yes, use ${settings.currency} for all of them`}
-                className="btn btn-sm"
-                onConfirm={() => void retagCurrency()}
-              />
-              <p className="faint">
-                This relabels the amounts. It does not convert them - {settings.currency} 10 stays 10, so only do
-                this if the figures you typed were always in {settings.currency}.
-              </p>
+      {/* The groups sit closer together than sections elsewhere, so that
+          closed they read as one list of headings. */}
+      <div className="stack fold-list">
+        <Section title="How it looks" collapsible="settings.look" summary={lookSummary}>
+          <fieldset className="field">
+            <legend>Theme</legend>
+            <ThemeButtons themes={THEMES} settings={settings} onPick={(t) => void patch(t)} />
+            <p className="faint group-note">Just for fun</p>
+            <ThemeButtons themes={FUN_THEMES} settings={settings} onPick={(t) => void patch(t)} />
+            <div className="group-note">
+              <ThemeButtons themes={[CUSTOM_THEME]} settings={settings} onPick={(t) => void patch(t)} />
             </div>
+            <p className="faint">{ALL_THEMES.find((t) => t.id === settings.theme)?.hint}</p>
+          </fieldset>
+
+          {settings.theme === 'custom' && (
+            <CustomThemeEditor
+              custom={settings.customTheme ?? DEFAULT_CUSTOM}
+              onChange={(customTheme) => void patch({ customTheme })}
+            />
           )}
-        </div>
-      </Section>
 
-      <Section title="Reminders">
-        <p className="small">
-          Steady can show a notification when a task's reminder time arrives, but only while it is running.
-          Android is allowed to stop a backgrounded web app, and there is no push server behind this app to wake
-          it up, because a push server would mean sending your reminders to someone else's computer.
-        </p>
-        <p className="small">
-          Anything that came due while Steady was closed is shown the moment you open it, rather than being
-          dropped. For anything that genuinely cannot be missed, use the calendar export below - your phone's own
-          alarms do not depend on this app at all.
-        </p>
-
-        {/* Status, said as a plain line - not a coloured pill, which read as a
-            button on one side and as a warning on the other. */}
-        {permission === 'unsupported' && <p className="small">This browser can't show notifications.</p>}
-        {permission === 'granted' && <p className="small">Notifications are on.</p>}
-        {permission === 'denied' && (
-          <p className="small">
-            Notifications are blocked for Steady on this phone. Turn them back on in Chrome's settings for this site.
-          </p>
-        )}
-        {permission === 'default' && (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={async () => {
-              const next = await requestPermission();
-              setPermission(next);
-              await patch({ notificationsAsked: true });
-            }}
-          >
-            Allow notifications
-          </button>
-        )}
-
-        <fieldset className="field">
-          <legend>What a reminder shows</legend>
-          <div className="btn-row">
-            {REMINDER_CHOICES.map((choice) => (
-              <button
-                key={choice.id}
-                type="button"
-                aria-pressed={settings.reminderContent === choice.id}
-                className={`btn btn-sm${settings.reminderContent === choice.id ? ' btn-primary' : ''}`}
-                onClick={() => void patch({ reminderContent: choice.id })}
-              >
-                {choice.label}
-              </button>
-            ))}
+          <div className="field">
+            <label htmlFor="text-scale">Text size ({Math.round(settings.textScale * 100)}%)</label>
+            <input
+              autoComplete="off"
+              id="text-scale"
+              type="range"
+              min={0.9}
+              max={1.6}
+              step={0.05}
+              value={settings.textScale}
+              onChange={(e) => void patch({ textScale: Number(e.target.value) })}
+            />
           </div>
-          <p className="faint">
-            Reminders can show on your lock screen and on a paired watch, where anyone nearby can read them.
-          </p>
-        </fieldset>
 
-        <button type="button" className="btn" onClick={() => void doCalendar()}>
-          Export everything to my calendar (.ics)
-        </button>
-        <p className="faint">
-          Makes one file with every dated task, subscription renewal and payday, including repeats and warnings.
-          Open it and your calendar app takes over the reminding.
-        </p>
-        <p className="faint">
-          {calendarContents('all', settings.calendarIncludeNotes)} {CALENDAR_CAUTION}
-        </p>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.calendarIncludeNotes}
-            onChange={(e) => void patch({ calendarIncludeNotes: e.target.checked })}
-          />
-          <span>Put notes, steps and how to cancel into calendar entries</span>
-        </label>
-        <p className="faint">
-          Off unless you turn it on. How to cancel can hold a login, and a calendar is easy to share by accident.
-          This applies to every "Add to my calendar" button too.
-        </p>
-      </Section>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={settings.reduceMotion}
+              onChange={(e) => void patch({ reduceMotion: e.target.checked })}
+            />
+            <span>Turn off all animation</span>
+          </label>
 
-      <LockSettings settings={settings} onChange={onChange} />
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={settings.blurAmounts}
+              onChange={(e) => void patch({ blurAmounts: e.target.checked })}
+            />
+            <span>Blur money amounts until I tap them</span>
+          </label>
 
-      <Section title="Your data">
-        <div className="card stack-sm">
-          <p className="small">On this device: {describeCounts(counts)}.</p>
-          <p className="faint">
-            All of it lives in this browser's storage on this phone. It has not been sent anywhere unless you sent
-            it yourself - as a backup file, or as entries added to your calendar. The app cannot send anything by
-            itself - see below.
-          </p>
-        </div>
-
-        <div className="card card-quiet stack-sm">
-          <h3>Where exactly it lives</h3>
-          <p className="small">
-            In your browser's own database, filed under <code>{storageOrigin()}</code>, inside Chrome's private
-            storage on this phone. Other apps on the phone cannot read it, and neither can websites at other
-            addresses. GitHub only ever sent your phone the app's files; it never receives what you write.
-          </p>
-          <p className="small">
-            One exception, stated plainly: browser storage belongs to the whole address, not to this app. Any
-            other page published at <code>{storageOrigin()}</code> could read it.{' '}
-            {storageOrigin().endsWith('.github.io')
-              ? 'Every GitHub Pages site from the same GitHub account is published at that address, so do not publish any other Pages site from that account.'
-              : 'So do not publish anything else at that address.'}
-          </p>
-          <p className="small">
-            If the Steady icon on your home screen has a small briefcase badge, it is in your work profile, which
-            your employer manages and can wipe. Install it from Chrome in your personal profile instead.
-          </p>
-          {storage?.databaseBytes !== undefined ? (
-            <p className="faint">
-              Everything you have written takes up {formatBytes(storage.databaseBytes)}.
-              {storage.usageBytes !== undefined &&
-                ` The app's own offline copy of itself takes another ${formatBytes(Math.max(0, storage.usageBytes - storage.databaseBytes))}.`}
-            </p>
-          ) : (
-            storage?.usageBytes !== undefined && (
-              <p className="faint">
-                This site is using {formatBytes(storage.usageBytes)} in total. That covers the app's offline copy
-                of itself as well as what you have written, which this browser won't separate out.
-              </p>
-            )
-          )}
-          {storage && !storage.supported && (
-            <p className="faint">
-              This browser won't say whether it protects the data from being cleared automatically. Keep backups.
-            </p>
-          )}
-          {storage?.supported && storage.persisted && (
-            <p className="small">
-              <strong>The browser has promised not to delete it</strong> to free up space. Only you clearing this
-              site's data removes it.
-            </p>
-          )}
-          {storage?.supported && !storage.persisted && (
-            <>
-              <p className="small">
-                <strong>Not yet protected from automatic clearing.</strong> If the phone runs very low on storage,
-                the browser is allowed to delete this to make room. Installing the app to your home screen usually
-                earns the protection; you can also ask for it directly.
-              </p>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={async () => {
-                  await requestPersistence();
-                  setStorage(await storageStatus());
-                }}
-              >
-                Ask the browser to protect it
-              </button>
-            </>
-          )}
-        </div>
-
-        <button type="button" className="btn btn-primary" onClick={() => void doExport()}>
-          Save a backup file
-        </button>
-        <p className="faint">
-          Do this now and then. If you clear your browser data or lose the phone, the backup file is the only copy.
-        </p>
-        <p className="faint">
-          The file holds everything - every task, note, subscription, income and inbox item, and your settings -
-          as plain readable text. Anyone who opens it can read all of it, so put it somewhere you trust. Two
-          things stay on this phone: the app lock, and a low day, which is never kept.
-          Deleting something in the app does not delete it from backup files you saved earlier, or from calendar
-          entries you added.
-        </p>
-
-        <hr className="divider" />
-
-        <fieldset className="field">
-          <legend>Restoring a backup</legend>
-          <div className="btn-row">
-            <button
-              type="button"
-              aria-pressed={importMode === 'merge'}
-              className={`btn btn-sm${importMode === 'merge' ? ' btn-primary' : ''}`}
-              onClick={() => setImportMode('merge')}
-            >
-              Add what's missing
-            </button>
-            <button
-              type="button"
-              aria-pressed={importMode === 'replace'}
-              className={`btn btn-sm${importMode === 'replace' ? ' btn-primary' : ''}`}
-              onClick={() => setImportMode('replace')}
-            >
-              Wipe and replace
-            </button>
-          </div>
-          <p className="faint">
-            {importMode === 'merge'
-              ? 'Keeps everything already here and only adds records it has not seen before. Safe to run twice.'
-              : 'Shows you what the file holds first. Only when you say yes does it delete everything on this device and restore the file exactly. Use this on a new phone.'}
-          </p>
-        </fieldset>
-
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/json,.json"
-          aria-label="Choose a backup file"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void doImport(file);
-          }}
-        />
-        <FormError message={importError} />
-        {pending && (
-          <div className="card stack-sm" role="status">
-            <p className="small">
-              {backupDate(pending) ? `From ${backupDate(pending)}: ` : 'This file holds: '}
-              {describeCounts(countBackup(pending))}.
-            </p>
-            <p className="small">
-              Replace everything on this phone with it? What is here now ({describeCounts(counts)}) will be
-              deleted.
-            </p>
+          <div className="stack-sm">
             <div className="btn-row">
-              <ConfirmButton
-                label="Replace everything with this file"
-                confirmLabel="Yes, replace everything"
-                className="btn btn-sm"
-                onConfirm={() => void confirmReplace()}
-              />
-              <button type="button" className="btn btn-quiet btn-sm" onClick={() => setPending(null)}>
-                Don't restore it
+              <button type="button" className="btn btn-sm" onClick={() => void resetSections()}>
+                Put every section back the way it started
               </button>
             </div>
+            <p className="faint">
+              Opens or folds each section the way it was when you first used Steady. Nothing else changes.
+            </p>
           </div>
-        )}
+        </Section>
 
-        <hr className="divider" />
+        <Section
+          title="Money"
+          collapsible="settings.money"
+          summary={`${settings.currency} · ${settings.lookaheadDays} days ahead`}
+        >
+          <div className="field">
+            <label htmlFor="currency">Currency</label>
+            <input
+              autoComplete="off"
+              id="currency"
+              type="text"
+              value={settings.currency}
+              onChange={(e) => void patch({ currency: e.target.value.toUpperCase().slice(0, 3) })}
+            />
+            <p className="faint">
+              Used for new subscriptions and debts, and for the debt plan, which only adds up debts in this currency.
+              Each subscription and debt also stores its own, so changing this does not touch anything already saved
+              - the button below does that.
+            </p>
+            {mismatchedWords && (
+              <div className="stack-sm">
+                <ConfirmButton
+                  label={`Change ${mismatchedWords} to ${settings.currency}`}
+                  confirmLabel={`Yes, use ${settings.currency} for all of them`}
+                  className="btn btn-sm"
+                  onConfirm={() => void retagCurrency()}
+                />
+                <p className="faint">
+                  This relabels the amounts. It does not convert them - {settings.currency} 10 stays 10, so only do
+                  this if the figures you typed were always in {settings.currency}.
+                </p>
+              </div>
+            )}
+          </div>
 
-        <ConfirmButton
-          label="Delete everything on this device"
-          confirmLabel="Yes, delete all of it"
-          className="btn"
-          onConfirm={() => void wipe()}
-        />
-        <p className="faint">
-          Save a backup first if you might want any of it back - this cannot be undone. It does not touch backup
-          files you saved earlier or entries you added to your calendar; delete those separately if you want them
-          gone.
-        </p>
-        <p className="faint">
-          {readLock(settings.lock)
-            ? 'Your settings stay as they are, and so does the app lock: Steady will still ask for your PIN. To remove the lock as well, turn it off under App lock above.'
-            : 'Your settings stay as they are.'}
-        </p>
-      </Section>
+          <div className="field">
+            <label htmlFor="lookahead">Show money leaving in the next {settings.lookaheadDays} days</label>
+            <input
+              autoComplete="off"
+              id="lookahead"
+              type="range"
+              min={3}
+              max={60}
+              step={1}
+              value={settings.lookaheadDays}
+              onChange={(e) => void patch({ lookaheadDays: Number(e.target.value) })}
+            />
+            <p className="faint">How far ahead "Money leaving soon" on Today looks.</p>
+          </div>
+        </Section>
 
-      <Section title="What this app does with your data">
-        <div className="card stack-sm">
+        <Section
+          title="Notes"
+          collapsible="settings.notes"
+          summary={settings.suggestTags ? 'Tag suggestions on' : 'Tag suggestions off'}
+        >
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={settings.suggestTags}
+              onChange={(e) => void patch({ suggestTags: e.target.checked })}
+            />
+            <span>Suggest tags for my notes</span>
+          </label>
+          <p className="faint">
+            Learned from the tags you have already used, on this phone. It only ever suggests tags you invented
+            yourself, it never files anything for you, and nothing is sent anywhere to work it out.
+          </p>
+        </Section>
+
+        <Section title="Reminders and calendar" collapsible="settings.reminders" summary={remindersSummary}>
+          {/* Where things stand comes first, said as a plain line - not a
+              coloured pill, which read as a button on one side and as a
+              warning on the other. */}
+          {permission === 'unsupported' && <p className="small">This browser can't show notifications.</p>}
+          {permission === 'granted' && <p className="small">Notifications are on.</p>}
+          {permission === 'denied' && (
+            <p className="small">
+              Notifications are blocked for Steady on this phone. Turn them back on in Chrome's settings for this
+              site.
+            </p>
+          )}
+          {permission === 'default' && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={async () => {
+                const next = await requestPermission();
+                setPermission(next);
+                await patch({ notificationsAsked: true });
+              }}
+            >
+              Allow notifications
+            </button>
+          )}
+
+          <fieldset className="field">
+            <legend>What a reminder shows</legend>
+            <div className="btn-row">
+              {REMINDER_CHOICES.map((choice) => (
+                <button
+                  key={choice.id}
+                  type="button"
+                  aria-pressed={settings.reminderContent === choice.id}
+                  className={`btn btn-sm${settings.reminderContent === choice.id ? ' btn-primary' : ''}`}
+                  onClick={() => void patch({ reminderContent: choice.id })}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+            <p className="faint">
+              Reminders can show on your lock screen and on a paired watch, where anyone nearby can read them.
+            </p>
+          </fieldset>
+
           <p className="small">
-            <strong>Nothing leaves this device unless you send it.</strong> Not to us, not to anyone. The only ways
-            out are the buttons that say so: saving a backup file, and adding things to your calendar. There is no
-            account, no login, no server, no analytics, no crash reporting, no ads and no third-party code loaded
-            from anywhere.
+            Steady can show a notification when a task's reminder time arrives, but only while it is running.
+            Android is allowed to stop a backgrounded web app, and there is no push server behind this app to wake
+            it up, because a push server would mean sending your reminders to someone else's computer.
           </p>
           <p className="small">
-            You do not have to take that on trust. The page ships with a Content Security Policy of{' '}
-            <code>connect-src 'none'</code>, which means the browser itself refuses to let this page's code open a
-            network connection. If any code tried to send your notes somewhere that way, the browser would block it
-            and log the attempt to the console. Before every release, a check also refuses to publish a build that
-            contains code for sending anything or for opening another site.
+            Anything that came due while Steady was closed is shown the moment you open it, rather than being
+            dropped. For anything that genuinely cannot be missed, use the calendar export below - your phone's own
+            alarms do not depend on this app at all.
           </p>
-          <p className="small">
-            The only network request in the whole app is your browser fetching the app's own files, and the service
-            worker caches those so it works with no signal at all. You can put the phone in airplane mode and use
-            every feature.
+
+          <h3>Your phone's calendar</h3>
+          <button type="button" className="btn" onClick={() => void doCalendar()}>
+            Export everything to my calendar (.ics)
+          </button>
+          <p className="faint">
+            Makes one file with every dated task, subscription renewal and payday, including repeats and warnings.
+            Open it and your calendar app takes over the reminding.
           </p>
           <p className="faint">
-            The trade-off, stated plainly: no sync between devices, and no recovery if you lose the phone without a
-            backup. That is the cost of there being nowhere else for your data to be.
+            Debt payments are not in it. A lender's name and an amount say more than a streaming bill does, so each
+            debt has its own "Add to my calendar" button on the Debt tab, and goes in only if you choose it.
           </p>
-        </div>
-      </Section>
+          <p className="faint">
+            {calendarContents('all', settings.calendarIncludeNotes)} {CALENDAR_CAUTION}
+          </p>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={settings.calendarIncludeNotes}
+              onChange={(e) => void patch({ calendarIncludeNotes: e.target.checked })}
+            />
+            <span>Put notes, steps and how to cancel into calendar entries</span>
+          </label>
+          <p className="faint">
+            Off unless you turn it on. How to cancel can hold a login, and a calendar is easy to share by accident.
+            This applies to every "Add to my calendar" button too.
+          </p>
+        </Section>
+
+        <LockSettings settings={settings} onChange={onChange} summary={lockSummary} forceOpen={focus === 'lock'} />
+
+        <Section title="Backup and restore" collapsible="settings.backup" summary="A copy of everything, as a file">
+          <button type="button" className="btn btn-primary" onClick={() => void doExport()}>
+            Save a backup file
+          </button>
+          <p className="faint">
+            Do this now and then. If you clear your browser data or lose the phone, the backup file is the only copy.
+          </p>
+          <p className="faint">
+            The file holds everything - every task, note, subscription, income, debt, your debt plan and inbox item,
+            and your settings - as plain readable text. Anyone who opens it can read all of it, so put it somewhere you trust. Two
+            things stay on this phone: the app lock, and a low day, which is never kept.
+            Deleting something in the app does not delete it from backup files you saved earlier, or from calendar
+            entries you added.
+          </p>
+
+          <hr className="divider" />
+
+          <fieldset className="field">
+            <legend>Restoring a backup</legend>
+            <div className="btn-row">
+              <button
+                type="button"
+                aria-pressed={importMode === 'merge'}
+                className={`btn btn-sm${importMode === 'merge' ? ' btn-primary' : ''}`}
+                onClick={() => setImportMode('merge')}
+              >
+                Add what's missing
+              </button>
+              <button
+                type="button"
+                aria-pressed={importMode === 'replace'}
+                className={`btn btn-sm${importMode === 'replace' ? ' btn-primary' : ''}`}
+                onClick={() => setImportMode('replace')}
+              >
+                Wipe and replace
+              </button>
+            </div>
+            <p className="faint">
+              {importMode === 'merge'
+                ? 'Keeps everything already here and only adds records it has not seen before. Safe to run twice.'
+                : 'Shows you what the file holds first. Only when you say yes does it delete everything on this device and restore the file exactly. Use this on a new phone.'}
+            </p>
+          </fieldset>
+
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            aria-label="Choose a backup file"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void doImport(file);
+            }}
+          />
+          <FormError message={importError} />
+          {pending && (
+            <div className="card stack-sm" role="status">
+              <p className="small">
+                {backupDate(pending) ? `From ${backupDate(pending)}: ` : 'This file holds: '}
+                {describeCounts(countBackup(pending))}.
+              </p>
+              <p className="small">
+                Replace everything on this phone with it? What is here now ({describeCounts(counts)}) will be
+                deleted.
+              </p>
+              <div className="btn-row">
+                <ConfirmButton
+                  label="Replace everything with this file"
+                  confirmLabel="Yes, replace everything"
+                  className="btn btn-sm"
+                  onConfirm={() => void confirmReplace()}
+                />
+                <button type="button" className="btn btn-quiet btn-sm" onClick={() => setPending(null)}>
+                  Don't restore it
+                </button>
+              </div>
+            </div>
+          )}
+        </Section>
+
+        <Section title="Your data on this phone" collapsible="settings.data" summary={dataSummary}>
+          <div className="card stack-sm">
+            <p className="small">On this device: {describeCounts(counts)}.</p>
+            <p className="faint">
+              All of it lives in this browser's storage on this phone. It has not been sent anywhere unless you sent
+              it yourself - as a backup file, or as entries added to your calendar. The app cannot send anything by
+              itself - see below.
+            </p>
+          </div>
+
+          <div className="card card-quiet stack-sm">
+            <h3>Where exactly it lives</h3>
+            <p className="small">
+              In your browser's own database, filed under <code>{storageOrigin()}</code>, inside Chrome's private
+              storage on this phone. Other apps on the phone cannot read it, and neither can websites at other
+              addresses. GitHub only ever sent your phone the app's files; it never receives what you write.
+            </p>
+            <p className="small">
+              One exception, stated plainly: browser storage belongs to the whole address, not to this app. Any
+              other page published at <code>{storageOrigin()}</code> could read it.{' '}
+              {storageOrigin().endsWith('.github.io')
+                ? 'Every GitHub Pages site from the same GitHub account is published at that address, so do not publish any other Pages site from that account.'
+                : 'So do not publish anything else at that address.'}
+            </p>
+            <p className="small">
+              If the Steady icon on your home screen has a small briefcase badge, it is in your work profile, which
+              your employer manages and can wipe. Install it from Chrome in your personal profile instead.
+            </p>
+            {storage?.databaseBytes !== undefined ? (
+              <p className="faint">
+                Everything you have written takes up {formatBytes(storage.databaseBytes)}.
+                {storage.usageBytes !== undefined &&
+                  ` The app's own offline copy of itself takes another ${formatBytes(Math.max(0, storage.usageBytes - storage.databaseBytes))}.`}
+              </p>
+            ) : (
+              storage?.usageBytes !== undefined && (
+                <p className="faint">
+                  This site is using {formatBytes(storage.usageBytes)} in total. That covers the app's offline copy
+                  of itself as well as what you have written, which this browser won't separate out.
+                </p>
+              )
+            )}
+            {storage && !storage.supported && (
+              <p className="faint">
+                This browser won't say whether it protects the data from being cleared automatically. Keep backups.
+              </p>
+            )}
+            {storage?.supported && storage.persisted && (
+              <p className="small">
+                <strong>The browser has promised not to delete it</strong> to free up space. Only you clearing this
+                site's data removes it.
+              </p>
+            )}
+            {storage?.supported && !storage.persisted && (
+              <>
+                <p className="small">
+                  <strong>Not yet protected from automatic clearing.</strong> If the phone runs very low on storage,
+                  the browser is allowed to delete this to make room. Installing the app to your home screen usually
+                  earns the protection; you can also ask for it directly.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={async () => {
+                    await requestPersistence();
+                    setStorage(await storageStatus());
+                  }}
+                >
+                  Ask the browser to protect it
+                </button>
+              </>
+            )}
+          </div>
+
+          <hr className="divider" />
+
+          <ConfirmButton
+            label="Delete everything on this device"
+            confirmLabel="Yes, delete all of it"
+            className="btn"
+            onConfirm={() => void wipe()}
+          />
+          <p className="faint">
+            Save a backup first if you might want any of it back - this cannot be undone. It does not touch backup
+            files you saved earlier or entries you added to your calendar; delete those separately if you want them
+            gone.
+          </p>
+          <p className="faint">
+            {lock
+              ? 'Your settings stay as they are, and so does the app lock: Steady will still ask for your PIN. To remove the lock as well, turn it off under App lock above.'
+              : 'Your settings stay as they are.'}
+          </p>
+        </Section>
+
+        <Section
+          title="What Steady does with your data"
+          collapsible="settings.privacy"
+          summary="Nothing leaves unless you send it"
+        >
+          <div className="card stack-sm">
+            <p className="small">
+              <strong>Nothing leaves this device unless you send it.</strong> Not to us, not to anyone. The only ways
+              out are the buttons that say so: saving a backup file, and adding things to your calendar. There is no
+              account, no login, no server, no analytics, no crash reporting, no ads and no third-party code loaded
+              from anywhere.
+            </p>
+            <p className="small">
+              You do not have to take that on trust. The page ships with a Content Security Policy of{' '}
+              <code>connect-src 'none'</code>, which means the browser itself refuses to let this page's code open a
+              network connection. If any code tried to send your notes somewhere that way, the browser would block
+              it and log the attempt to the console. Before every release, a check also refuses to publish a build
+              that contains code for sending anything or for opening another site.
+            </p>
+            <p className="small">
+              The only network request in the whole app is your browser fetching the app's own files, and the
+              service worker caches those so it works with no signal at all. You can put the phone in airplane mode
+              and use every feature.
+            </p>
+            <p className="faint">
+              The trade-off, stated plainly: no sync between devices, and no recovery if you lose the phone without a
+              backup. That is the cost of there being nowhere else for your data to be.
+            </p>
+          </div>
+        </Section>
+      </div>
 
       <Section title="About">
         <div className="card stack-sm">

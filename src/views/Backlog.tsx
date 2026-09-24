@@ -8,6 +8,7 @@ import { todayKey } from '../lib/time';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { useTaskActions } from '../components/taskActions';
+import { countOf, cutTitle, nameList } from '../lib/sections';
 import { Empty, Section, useBackLayer } from '../components/ui';
 
 /**
@@ -30,7 +31,6 @@ export default function Backlog({
   onChange: (settings: Settings) => void;
 }) {
   const [editing, setEditing] = useState<Task | null>(null);
-  const [showFinished, setShowFinished] = useState(false);
   const { move, remove } = useTaskActions();
   useBackLayer(editing !== null, () => setEditing(null));
 
@@ -104,6 +104,20 @@ export default function Backlog({
   // because this group is not under priority headings.
   const routineRow = (task: Task) => <TaskRow key={task.id} task={task} onEdit={setEditing} />;
 
+  const list =
+    open.length === 0 ? (
+      <Empty>Nothing outstanding. Anything you write down without giving it a day turns up here.</Empty>
+    ) : sort === 'priority' ? (
+      grouped.map(({ key, items }) => (
+        <section key={key} className="stack-sm" aria-label={key}>
+          <h3>{key}</h3>
+          {items.map(row)}
+        </section>
+      ))
+    ) : (
+      <div className="stack-sm">{open.map(row)}</div>
+    );
+
   return (
     <>
       <Section
@@ -135,46 +149,31 @@ export default function Backlog({
       </Section>
 
       {routines.length > 0 && (
-        <section className="stack-sm" aria-label="Routines">
-          <h3>Routines</h3>
-          {routines.map(routineRow)}
-        </section>
+        <Section
+          title="Routines"
+          collapsible="backlog.routines"
+          summary={nameList(routines.map((t) => cutTitle(t.title)))}
+        >
+          <div className="stack-sm">{routines.map(routineRow)}</div>
+        </Section>
       )}
 
-      {open.length === 0 ? (
-        <Empty>
-          Nothing outstanding. Anything you write down without giving it a day turns up here.
-        </Empty>
-      ) : sort === 'priority' ? (
-        grouped.map(({ key, items }) => (
-          <section key={key} className="stack-sm" aria-label={key}>
-            <h3>{key}</h3>
-            {items.map(row)}
-          </section>
-        ))
-      ) : (
-        <div className="stack-sm">{open.map(row)}</div>
-      )}
+      {/* With Routines above them, the priority groups get a heading of their
+          own, or they would read as part of Routines - and TalkBack would file
+          them under it. Without routines the Backlog heading covers them. */}
+      {routines.length > 0 ? <Section title="Everything else">{list}</Section> : list}
 
       {finished.length > 0 && (
-        <Section title="Finished">
-          <div className="btn-row">
-            <button
-              type="button"
-              className="btn btn-quiet btn-sm"
-              aria-expanded={showFinished}
-              onClick={() => setShowFinished((v) => !v)}
-            >
-              {showFinished ? 'Hide what I have finished' : `Show what I have finished (${finished.length})`}
-            </button>
+        <Section
+          title="Finished"
+          collapsible="backlog.finished"
+          summary={countOf(finished.length, 'thing you finished', 'things you finished')}
+        >
+          <div className="stack-sm">
+            {finished.map((task) => (
+              <TaskRow key={task.id} task={task} onEdit={setEditing} />
+            ))}
           </div>
-          {showFinished && (
-            <div className="stack-sm">
-              {finished.map((task) => (
-                <TaskRow key={task.id} task={task} onEdit={setEditing} />
-              ))}
-            </div>
-          )}
         </Section>
       )}
     </>

@@ -53,10 +53,16 @@ opposite on all three counts.
 | **Backlog** | Everything that needs doing and has no day on it — book the appointment, order the thing, chase the letter. Anything you write down without giving it a date lands here by itself, so there is no decision to make at the time. Four priority levels (Low, Medium, High, Critical, and "not said", which stays a valid answer), four sort orders, and the one you used last is remembered. Nothing here is ever called late. |
 | **Notes** | Plain text you will want to look up again. Reference numbers, phone scripts, what the nurse actually said. Pin the important ones. |
 | **Money** | Your income and your subscriptions, and what one leaves of the other. Real dates rather than averages: what is still to come out this month and before your next payday, and what each individual paycheck has to cover before the next one arrives. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
+| **Debt** | Cards, loans, lines of credit, buy now pay later, medical bills, money a friend lent you: each with its balance (typed from the statement, with the date it was true), rate, how its minimum is worked out, due date, and any promo rate or loan terms. **This paycheck** says what this check should put toward debt, split into minimums and extra, and which debt gets the extra and why. **The plan** gives the date everything is paid off, each debt's own date, and how much interest and time that saves over paying only the minimums. You choose *highest interest first* (least interest) or *smallest balance first* (quickest wins), and how much goes toward debt from each check; Steady can suggest a cautious amount once you give it a rough figure for everything it doesn't track. It is a calculator, not financial advice, and it says so. |
 | **Settings** | Appearance, notifications, an optional app lock, backup and restore, calendar export, a plain-English account of what happens to your data, and About: the version number, what's new, and the last ten updates. |
 
-Two things hold across every screen:
+Three things hold across every screen:
 
+- **Long sections fold.** A section that isn't the reason you opened the
+  screen has a Show / Hide button on its heading, and while it is folded the
+  heading still says what is in it ("5 charges, $71.48 in all"). It stays in
+  its place either way, and the app remembers how you left it. Settings is a
+  short list of groups that open one at a time, and starts folded every visit.
 - **Nothing just vanishes.** Anything that moves or disappears - ticking a task
   off, moving it to today, taking its date off, keeping a capture as a note,
   cancelling or deleting something - says where it went in a short line at the
@@ -253,6 +259,13 @@ Everything else follows from that:
   notifications Steady does show say only the task's title and time by default,
   never its notes, because a lock screen and a watch can be read by whoever is
   nearby. Settings can make them say less, or more.
+- **Debts are as private as everything else.** No account numbers, logins or
+  lender connections are asked for, and nothing is looked up - every number
+  is one you typed. Debt payments never go into the whole-app calendar export;
+  each debt has its own *Add to my calendar* button, and the file is called
+  `payment-dates.ics` so a lender's name never shows in the share sheet or your
+  downloads. Debts and your plan are in backups and are removed by *Delete
+  everything*.
 - **Data leaves only when you tap a button that says so**: *Save a backup file*
   (a readable file with everything in it), *Add to my calendar* and *Export
   everything to my calendar* (the lines next to each button say what goes in).
@@ -342,11 +355,13 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-770 unit tests cover the parts where a quiet wrong answer would make the app
+986 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between
-twice a month and every 2 weeks, `.ics` generation
+twice a month and every 2 weeks, debt payoff maths checked to the cent
+against worked examples (including promo rates that charge back their interest),
+`.ics` generation
 including line folding and escaping, and backup files refusing to import
 anything they did not write.
 

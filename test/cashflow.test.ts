@@ -6,12 +6,15 @@ import {
   currentPayPeriod,
   endOfMonth,
   outlook,
+  payFromIndex,
+  paymentsForPeriods,
   payPeriods,
   stillToCome,
   paydaysFrom,
   whyNoPayPeriod,
 } from '../src/lib/cashflow';
-import type { IncomeSource, Subscription } from '../src/types';
+import type { ScheduledPayment } from '../src/lib/payoff';
+import type { Debt, IncomeSource, Subscription } from '../src/types';
 
 function sub(partial: Partial<Subscription> = {}): Subscription {
   return {
@@ -383,5 +386,42 @@ describe('paydaysFrom', () => {
   it('counts every job in the monthly figure, including one paid today', () => {
     const p = paydaysFrom([paidToday, paidLater], '2026-09-15');
     expect(p.monthlyMinor).toBe(185_000 * 2 + 40_000);
+  });
+});
+
+/*
+  A payment is paid from the last check that arrives strictly before its due
+  date. One due on a payday comes from the check before: money landing that
+  morning may not have cleared in time.
+*/
+describe('payFromIndex', () => {
+  const biweekly = income({ frequency: 'biweekly', firstPaid: '2026-10-02', netMinor: 140_000 });
+  const periods = payPeriods([biweekly], '2026-10-02', 3);
+
+  it('starts from a payday', () => {
+    expect(periods.map((p) => p.start)).toEqual(['2026-10-02', '2026-10-16', '2026-10-30']);
+  });
+
+  it('pays a payment due on the first payday from the first check, the earliest there is', () => {
+    expect(payFromIndex(periods, '2026-10-02')).toBe(0);
+    expect(payFromIndex(periods, '2026-09-20')).toBe(0);
+  });
+
+  it('pays a payment due on a payday from the check before it', () => {
+    expect(payFromIndex(periods, '2026-10-16')).toBe(0);
+    expect(payFromIndex(periods, '2026-10-17')).toBe(1);
+    expect(payFromIndex(periods, '2026-10-30')).toBe(1);
+  });
+
+  it('does not place one after the last period', () => {
+    expect(payFromIndex(periods, '2026-11-13')).toBe(2);
+    expect(payFromIndex(periods, '2026-11-14')).toBe(-1);
+    expect(payFromIndex([], '2026-10-10')).toBe(-1);
+  });
+
+  it('groups payments by the check that pays them, leaving out any it cannot place', () => {
+    const payment = (dueOn: string): ScheduledPayment => ({ debt: {} as Debt, dueOn, amountMinor: 100, autopay: false });
+    const grouped = paymentsForPeriods(periods, [payment('2026-10-16'), payment('2026-10-20'), payment('2027-01-01')]);
+    expect(grouped.map((g) => g.map((p) => p.dueOn))).toEqual([['2026-10-16'], ['2026-10-20'], []]);
   });
 });

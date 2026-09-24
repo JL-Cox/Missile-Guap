@@ -1,10 +1,39 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import type { DateKey, Note } from '../types';
 import { addDays } from '../lib/time';
+import { FOLDS, isOpen as savedOpen, type Fold, type FoldId } from '../lib/sections';
 
 /** Small shared pieces. Everything is labelled in words - no icon-only controls. */
 
-export function Section({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
+type FixedSection = {
+  title: string;
+  aside?: ReactNode;
+  children: ReactNode;
+  collapsible?: undefined;
+  summary?: never;
+  forceOpen?: never;
+};
+
+type FoldingSection = {
+  title: string;
+  children: ReactNode;
+  /** Makes the heading a button that folds the section. The value is its stable id. */
+  collapsible: FoldId;
+  /** One short line shown while it is closed. Plain text only: no amounts when they are blurred. */
+  summary?: string;
+  /** A view that must reveal something inside (a deep link, an error) sets this. */
+  forceOpen?: boolean;
+  /** A button inside a button is not allowed, so a header action moves into the body. */
+  aside?: never;
+};
+
+/**
+ * A heading and what is under it. With `collapsible`, the heading becomes the
+ * button that folds it: see Folding below and src/lib/sections.ts.
+ */
+export function Section(props: FixedSection | FoldingSection) {
+  if (props.collapsible !== undefined) return <Folding {...props} />;
+  const { title, aside, children } = props;
   return (
     <section className="stack" aria-label={title}>
       <div className="section-head">
@@ -14,6 +43,151 @@ export function Section({ title, aside, children }: { title: string; aside?: Rea
       {children}
     </section>
   );
+}
+
+/**
+ * How a remembered fold is read and changed. App provides the real one, which
+ * reads and saves `settings.sections`; this default is simply how every
+ * section starts. Today lays the low day over it - see Today.tsx.
+ */
+export interface Folds {
+  isOpen: (id: FoldId) => boolean;
+  setOpen: (id: FoldId, open: boolean) => void;
+}
+
+export const FoldContext = createContext<Folds>({ isOpen: (id) => savedOpen(id), setOpen: () => undefined });
+
+/**
+ * The heading of a section that folds. The whole row is one button, kept
+ * inside the heading so TalkBack still finds it when it moves by headings,
+ * and it says "collapsed" or "expanded" by itself. The button's name is the
+ * title and, while closed, the one line under it; "Show" and "Hide" are for
+ * the eye only, so it is not read out as "Show, collapsed".
+ *
+ * Shared with Today's low-day folds so the two look and read exactly alike.
+ * `controls` is left off only where nothing is drawn under the heading.
+ */
+export function FoldHeader({
+  title,
+  summary,
+  open,
+  onToggle,
+  controls,
+  level = 2,
+  headingRef,
+}: {
+  title: string;
+  summary?: string;
+  open: boolean;
+  onToggle: () => void;
+  controls?: string;
+  level?: 2 | 3;
+  headingRef?: Ref<HTMLHeadingElement>;
+}) {
+  const Heading = level === 3 ? 'h3' : 'h2';
+  return (
+    <Heading className="fold-heading" ref={headingRef}>
+      <button type="button" className="fold-btn" aria-expanded={open} aria-controls={controls} onClick={onToggle}>
+        <span>
+          <span className="fold-title">{title}</span>
+          {!open && summary && (
+            <>
+              {' '}
+              <span className="fold-summary">{summaryRun(summary)}</span>
+            </>
+          )}
+        </span>
+        <span className="fold-state" aria-hidden="true">
+          {open ? 'Hide ▾' : 'Show ▸'}
+        </span>
+      </button>
+    </Heading>
+  );
+}
+
+/**
+ * "Calm · text 160% · animation off", broken only after a dot when it has to
+ * wrap at large text: never "14" on one line and "days ahead" on the next, and
+ * never a line that starts with "·".
+ */
+function summaryRun(summary: string): ReactNode {
+  const parts = summary.split(' · ');
+  if (parts.length === 1) return summary;
+  return parts.map((part, i) => (
+    <Fragment key={i}>
+      {i > 0 && ' '}
+      <span className="nowrap">
+        {part}
+        {i < parts.length - 1 && ' ·'}
+      </span>
+    </Fragment>
+  ));
+}
+
+/**
+ * A section that folds to its heading and one line, in the same place, so a
+ * closed section never moves anything above it or changes the screen's order.
+ *
+ * Closing hides what is under the heading rather than removing it, so a
+ * half-set PIN, a restore waiting for a yes or an open Details row is exactly
+ * as it was when the section is opened again.
+ */
+function Folding({ title, children, collapsible: id, summary, forceOpen = false }: FoldingSection) {
+  const folds = useContext(FoldContext);
+  const fold: Fold = FOLDS[id];
+  // A section that starts the same way on every visit keeps its state here,
+  // so it is forgotten when the screen closes.
+  const [visitOpen, setVisitOpen] = useState(fold.open);
+  // Opened because the screen had to show something inside. Never saved.
+  const [forced, setForced] = useState(false);
+  // Only a section opened by a tap fades in; a screen that simply starts with
+  // it open should not shimmer every time it is shown.
+  const [fading, setFading] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const bodyId = `fold-${id.replace(/\./g, '-')}`;
+
+  useEffect(() => {
+    if (!forceOpen) return;
+    setForced(true);
+    if (headingRef.current) bringUnderHeader(headingRef.current);
+  }, [forceOpen]);
+
+  const open = (fold.memory === 'remember' ? folds.isOpen(id) : visitOpen) || forced;
+  const toggle = () => {
+    const next = !open;
+    setForced(false);
+    setFading(next);
+    if (fold.memory === 'remember') folds.setOpen(id, next);
+    else setVisitOpen(next);
+  };
+
+  return (
+    <section className="stack" aria-label={title}>
+      <FoldHeader
+        title={title}
+        summary={summary}
+        open={open}
+        onToggle={toggle}
+        controls={bodyId}
+        headingRef={headingRef}
+      />
+      <div id={bodyId} className={`stack fold-body${fading ? ' fold-fade' : ''}`} hidden={!open}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Scrolls a heading to just under the sticky header, for a section opened by
+ * a deep link. scrollIntoView alone would leave it behind the header, and the
+ * header's height changes with the text size, so it is measured, not assumed.
+ */
+function bringUnderHeader(heading: HTMLElement) {
+  const header = document.querySelector('.header');
+  const clear = header ? header.getBoundingClientRect().bottom : 0;
+  // 12px is --space-3: the same breathing room the header keeps above its own text.
+  window.scrollTo({ top: window.scrollY + heading.getBoundingClientRect().top - clear - 12 });
 }
 
 /**
@@ -134,9 +308,13 @@ export function useBackLayer(open: boolean, close: () => void): void {
 /**
  * `query` opens Tasks with a search already in the box; `note` opens Notes with
  * that note in the editor, which is how a task row gets you to the note it
- * points at.
+ * points at. Money and Debt send you to each other, and Today to Debt, with
+ * nothing to hand over.
  */
-export type Navigate = (view: 'tasks' | 'notes', options?: { query?: string; note?: Note }) => void;
+export type Navigate = (
+  view: 'tasks' | 'notes' | 'money' | 'debt',
+  options?: { query?: string; note?: Note },
+) => void;
 export const NavigateContext = createContext<Navigate>(() => undefined);
 export function useNavigate(): Navigate {
   return useContext(NavigateContext);

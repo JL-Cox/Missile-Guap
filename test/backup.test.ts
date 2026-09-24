@@ -89,8 +89,38 @@ describe('income in backups', () => {
   });
 
   it('refuses a backup from a future version rather than losing what it cannot read', () => {
-    const v3 = JSON.stringify({ format: BACKUP_FORMAT, version: 3 });
-    expect(() => parseBackup(v3)).toThrow(/newer version/);
+    // Version 3 (debts) is this version now; 4 is the next one.
+    const v4 = JSON.stringify({ format: BACKUP_FORMAT, version: 4 });
+    expect(() => parseBackup(v4)).toThrow(/newer version/);
+  });
+});
+
+describe('debts in backups', () => {
+  it('round-trips debts and the debt plan', () => {
+    const withDebts = JSON.stringify({
+      format: BACKUP_FORMAT,
+      version: 3,
+      debts: [{ id: 'd1', name: 'Blue card', balanceMinor: 200_000 }],
+      debtPlan: [{ id: 'plan', strategy: 'snowball', untrackedMonthlyMinor: 180_000 }],
+    });
+    const parsed = parseBackup(withDebts);
+    expect(parsed.debts.map((d) => d.name)).toEqual(['Blue card']);
+    expect(parsed.debtPlan[0].strategy).toBe('snowball');
+    expect(countBackup(parsed)).toMatchObject({ debts: 1, debtPlan: 1 });
+  });
+
+  it('still restores a backup written before debts existed', () => {
+    const v2 = JSON.stringify({ format: BACKUP_FORMAT, version: 2, incomes: [{ id: 'i1' }] });
+    const parsed = parseBackup(v2);
+    expect(parsed.incomes).toHaveLength(1);
+    expect(parsed.debts).toEqual([]);
+    expect(parsed.debtPlan).toEqual([]);
+  });
+
+  it('names debts and the plan in the counts', () => {
+    expect(describeCounts({ debts: 2, debtPlan: 1 })).toBe(
+      '0 tasks, 0 notes, 0 subscriptions, 0 incomes, 2 debts, 1 debt plan, 0 inbox items',
+    );
   });
 });
 
@@ -105,24 +135,32 @@ describe('what a backup holds, said before anything is touched', () => {
         incomes: [{ id: 'i1' }],
       }),
     );
-    expect(countBackup(file)).toEqual({ captures: 0, tasks: 2, notes: 1, subscriptions: 0, incomes: 1 });
+    expect(countBackup(file)).toEqual({ captures: 0, tasks: 2, notes: 1, subscriptions: 0, incomes: 1, debts: 0, debtPlan: 0 });
     expect(totalRecords(countBackup(file))).toBe(4);
   });
 
   it('names income, which the old count line left out', () => {
     expect(describeCounts({ tasks: 42, notes: 18, subscriptions: 9, incomes: 1, captures: 3 })).toBe(
-      '42 tasks, 18 notes, 9 subscriptions, 1 income, 3 inbox items',
+      '42 tasks, 18 notes, 9 subscriptions, 1 income, 0 debts, 0 debt plans, 3 inbox items',
     );
   });
 
   it('uses the singular for one and still names a kind at zero', () => {
-    expect(describeCounts({ tasks: 1 })).toBe('1 task, 0 notes, 0 subscriptions, 0 incomes, 0 inbox items');
+    expect(describeCounts({ tasks: 1 })).toBe(
+      '1 task, 0 notes, 0 subscriptions, 0 incomes, 0 debts, 0 debt plans, 0 inbox items',
+    );
   });
 });
 
 describe('settings a backup never carries', () => {
   it('include the low day', () => {
     expect(DEVICE_SETTINGS).toContain('lowDay');
+  });
+
+  it('do not include which sections are folded, which is a preference that travels', () => {
+    expect(DEVICE_SETTINGS).not.toContain('sections');
+    const sections = { 'today.bills': false };
+    expect(withoutDeviceSettings({ theme: 'dark', lowDay: '2026-09-23', sections })).toEqual({ theme: 'dark', sections });
   });
 
   it('are taken out of a copy, leaving the rest and the original alone', () => {

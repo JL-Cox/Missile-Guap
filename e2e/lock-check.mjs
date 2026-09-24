@@ -6,7 +6,7 @@
  * This drives the real app through setting a PIN, going to the background,
  * wrong and right PINs, a reload, "Hide now", the recovery phrase, backups,
  * restores and "Delete everything", and at every locked moment it reads the
- * whole DOM for the seeded task, note, capture and subscription.
+ * whole DOM for the seeded task, note, capture, subscription and debt.
  *
  *     npm run build
  *     node e2e/lock-check.mjs
@@ -65,9 +65,10 @@ const check = (label, actual, expected) => {
 
 /**
  * What must never be on the page while it is locked. Real writing, the kind
- * the lock exists for: a doctor's name, a referral number, a locker code.
+ * the lock exists for: a doctor's name, a referral number, a locker code, and
+ * who a student loan is with.
  */
-const SECRETS = ['Okafor', '88213', 'Locker 14', 'spare key', 'Headspace'];
+const SECRETS = ['Okafor', '88213', 'Locker 14', 'spare key', 'Headspace', 'Nelnet'];
 const PIN = '2468';
 
 const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
@@ -215,12 +216,22 @@ const shotSection = async (name) => {
   await style.evaluate((el) => el.remove());
 };
 
-/** Opens Settings, or stays there if it is already open (unlocking returns to where you were). */
+/** The button that folds one of Settings' groups, by its title. */
+const groupButton = (title) => `section[aria-label="${title}"] > .fold-heading > .fold-btn`;
+/** Opens a Settings group, which starts closed on every visit, unless it is open already. */
+const openGroup = async (title) => {
+  if ((await page.getAttribute(groupButton(title), 'aria-expanded')) === 'false') await page.click(groupButton(title));
+};
+/**
+ * Opens Settings, or stays there if it is already open (unlocking returns to
+ * where you were), with the App lock group open.
+ */
 const openSettings = async () => {
   if ((await page.locator('.header button:text-is("Done")').count()) === 0) {
     await page.click('.header button:text-is("Settings")');
   }
   await page.waitForSelector('section[aria-label="App lock"]');
+  await openGroup('App lock');
 };
 const LOCK_SECTION = 'section[aria-label="App lock"]';
 
@@ -252,9 +263,10 @@ await idb(
       const req = indexedDB.open('steady');
       req.onsuccess = () => {
         const db = req.result;
-        const tx = db.transaction(['tasks', 'notes', 'captures', 'subscriptions'], 'readwrite');
+        const tx = db.transaction(['tasks', 'notes', 'captures', 'subscriptions', 'debts'], 'readwrite');
         const d = new Date();
         const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const tomorrow = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
         const at = Date.now();
         tx.objectStore('tasks').put({
           id: 'lock-task', title: 'Ring Dr Okafor about the MRI results', notes: 'Referral number 88213',
@@ -269,6 +281,12 @@ await idb(
           id: 'lock-sub', name: 'Headspace', amountMinor: 1299, currency: 'USD', cycle: 'monthly', every: 1,
           firstBilled: today, notes: '', cancelHow: '', remindDaysBefore: 3, createdAt: at, updatedAt: at,
         });
+        // Due tomorrow, so its payment is on Today as well as on the Debt tab.
+        tx.objectStore('debts').put({
+          id: 'lock-debt', name: 'Nelnet', kind: 'studentFederal', balanceMinor: 1_850_000, balanceAsOf: today,
+          aprPercent: 5.5, minimum: { kind: 'fixed', amountMinor: 18_000 }, dueDay: tomorrow.getDate(), autopay: true,
+          currency: 'USD', notes: '', createdAt: at, updatedAt: at,
+        });
         tx.oncomplete = () => {
           db.close();
           resolve();
@@ -280,6 +298,7 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForSelector('.main');
 await page.waitForTimeout(400);
 check('the seeded task is on Today (so the leak checks below mean something)', (await leaks()).includes('Okafor'), true);
+check('and so is the seeded debt, as a payment', (await leaks()).includes('Nelnet'), true);
 
 /* ------------------------------------------------- with no lock, nothing new */
 
@@ -387,7 +406,7 @@ await goBackground();
 await comeBack(2 * 60_000);
 check('two minutes away with a 1-minute lock: locked', await isLocked(), true);
 check('the veil comes off only once the lock is up', await page.evaluate(() => document.documentElement.classList.contains('veiled')), false);
-check('while locked, no task, note, capture or subscription is anywhere in the DOM', (await leaks()).join(', '), '');
+check('while locked, no task, note, capture, subscription or debt is anywhere in the DOM', (await leaks()).join(', '), '');
 check('no header', await page.locator('.header').count(), 0);
 check('no nav', await page.locator('.nav').count(), 0);
 check('no tab is mounted, not even hidden', await page.locator('.main, .view').count(), 0);
@@ -449,11 +468,15 @@ await unlock();
 
 /* ---------------------------------------------------------------- hide now */
 
+await page.click('.nav-btn:has-text("Debt")');
+await page.waitForTimeout(300);
+check('the Debt tab shows the debt (so hiding it means something)', (await leaks()).includes('Nelnet'), true);
 await page.click('.header button:text-is("Hide now")');
 await page.waitForSelector('main.lock');
-check('Hide now locks straight away', await isLocked(), true);
-check('and leaves nothing on the page', (await leaks()).join(', '), '');
+check('Hide now locks straight away, from the Debt tab too', await isLocked(), true);
+check('and leaves nothing on the page, the debt included', (await leaks()).join(', '), '');
 await unlock();
+check('unlocking goes back to the Debt tab', await page.getAttribute('.nav-btn:has-text("Debt")', 'aria-current'), 'page');
 
 /* -------------------------------------------------------------- immediately */
 
@@ -504,6 +527,7 @@ check('the new one does', await isLocked(), false);
 /* ------------------------------------------------ backups and restores */
 
 await openSettings();
+await openGroup('Backup and restore');
 const download = await Promise.all([
   page.waitForEvent('download'),
   page.click('button:has-text("Save a backup file")'),
@@ -571,7 +595,23 @@ check('the lock is removed outright', 'lock' in ((await readSettings()) ?? {}), 
 check('Hide now goes with it', await page.locator('.header button:text-is("Hide now")').count(), 0);
 check('and nothing was lost', (await rowCount('tasks')) + (await rowCount('notes')) + (await rowCount('captures')), 3);
 await page.screenshot({ path: `${OUT}/phrase-unlocked.png` });
-await page.click('.card:has-text("The lock is off.") button:text-is("Got it")');
+// "Open Settings" on that note goes straight to App lock, to set a new PIN.
+// Settings is drawn afresh behind a lock, so every group starts closed.
+check('behind the note, App lock is folded like every other group', await page.getAttribute(groupButton('App lock'), 'aria-expanded'), 'false');
+await page.click('.card:has-text("The lock is off.") button:text-is("Open Settings")');
+await page.waitForTimeout(300);
+check('"Open Settings" opens the App lock group', await page.getAttribute(groupButton('App lock'), 'aria-expanded'), 'true');
+check('and only that one', await page.locator('.fold-list .fold-btn[aria-expanded="true"]').count(), 1);
+check('with Set a PIN right there', await page.locator(`${LOCK_SECTION} button:text-is("Set a PIN"):visible`).count(), 1);
+check(
+  'its heading brought into view',
+  await page.locator(groupButton('App lock')).evaluate((b) => {
+    const top = b.getBoundingClientRect().top;
+    return top >= document.querySelector('.header').getBoundingClientRect().bottom && top < window.innerHeight / 2;
+  }),
+  true,
+);
+check('and the note is gone', await page.locator('.card:has-text("The lock is off.")').count(), 0);
 await page.click('.header button:text-is("Done")');
 await page.click('.nav-btn:has-text("Today")');
 check('the task is right there on Today', (await leaks()).includes('Okafor'), true);
@@ -586,6 +626,7 @@ check(
   (await page.textContent('.main')).includes('and so does the app lock'),
   true,
 );
+await openGroup('Your data on this phone');
 await page.click('button:has-text("Delete everything on this device")');
 await page.click('button:has-text("Yes, delete all of it")');
 await page.waitForTimeout(600);

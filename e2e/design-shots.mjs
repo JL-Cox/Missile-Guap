@@ -150,16 +150,76 @@ const openSettings = async () => {
 
 /* --------------------------------------------------------------------- seed */
 
+/**
+ * Three debts people really have: a store card on a "no interest if paid in
+ * full" promo, a car loan with its terms, and a hospital bill on a 0% payment
+ * plan. The card is due tomorrow, so it is always on this paycheck.
+ */
+function debtSeed(now = Date.now()) {
+  const dom = (offset) => Number(day(offset).slice(8));
+  return [
+    {
+      id: 'debt1',
+      name: 'Furniture store card',
+      kind: 'storeCard',
+      balanceMinor: 118_000,
+      balanceAsOf: day(-6),
+      aprPercent: 29.99,
+      minimum: { kind: 'percentPlusInterest', percent: 1, floorMinor: 3_500 },
+      dueDay: dom(1),
+      autopay: false,
+      promo: { aprPercent: 0, endsOn: day(210), deferred: true, balanceMinor: 90_000 },
+      creditLimitMinor: 250_000,
+      currency: 'USD',
+      notes: 'Pay online, or call the number on the statement.',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'debt2',
+      name: 'Car loan',
+      kind: 'autoLoan',
+      balanceMinor: 1_142_000,
+      balanceAsOf: day(-3),
+      aprPercent: 6.9,
+      minimum: { kind: 'fixed', amountMinor: 39_509 },
+      dueDay: dom(12),
+      autopay: true,
+      loan: { originalMinor: 2_000_000, termMonths: 60, firstPaymentOn: '2024-03-12' },
+      currency: 'USD',
+      notes: '',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'debt3',
+      name: 'Hospital bill',
+      kind: 'medical',
+      balanceMinor: 64_000,
+      balanceAsOf: day(-20),
+      aprPercent: 0,
+      minimum: { kind: 'fixed', amountMinor: 8_000 },
+      dueDay: dom(20),
+      autopay: false,
+      currency: 'USD',
+      notes: 'Billing office: (212) 555-0182. Ask for the payment plan team.',
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+}
+
 async function seed() {
+  const debts = debtSeed();
   await page.evaluate(
-    ([today, yesterday, lastWeek, nextWeek, soon]) =>
+    ([today, yesterday, lastWeek, nextWeek, soon, debts]) =>
       new Promise((resolve) => {
         const req = indexedDB.open('steady');
         req.onsuccess = () => {
           const db = req.result;
           const now = Date.now();
           const tx = db.transaction(
-            ['captures', 'tasks', 'notes', 'subscriptions', 'incomes'],
+            ['captures', 'tasks', 'notes', 'subscriptions', 'incomes', 'debts'],
             'readwrite',
           );
           const put = (store, rows) => rows.forEach((r) => tx.objectStore(store).put(r));
@@ -423,6 +483,8 @@ async function seed() {
             },
           ]);
 
+          put('debts', debts);
+
           put('incomes', [
             {
               id: 'inc1',
@@ -452,13 +514,69 @@ async function seed() {
           };
         };
       }),
-    [day(0), day(-1), day(-7), day(5), day(2)],
+    [day(0), day(-1), day(-7), day(5), day(2), debts],
+  );
+}
+
+/**
+ * Replaces every debt and the plan, for the Debt tab's own shots. `plan`
+ * adds an amount per check and an estimate for everything else, so the
+ * suggestion and the extra show; `paidOff` adds one already paid off, so
+ * that section has something in it.
+ */
+async function setDebts({ debts = [], plan = false, paidOff = false } = {}) {
+  const rows = [...debts];
+  if (paidOff) {
+    rows.push({
+      id: 'debt4',
+      name: 'Old store card',
+      kind: 'storeCard',
+      balanceMinor: 0,
+      balanceAsOf: day(-40),
+      aprPercent: 27.99,
+      minimum: { kind: 'percentPlusInterest', percent: 1, floorMinor: 3_500 },
+      dueDay: 8,
+      autopay: false,
+      paidOffOn: day(-40),
+      currency: 'USD',
+      notes: '',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  }
+  await page.evaluate(
+    ([rows, plan]) =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('steady');
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction(['debts', 'debtPlan'], 'readwrite');
+          tx.objectStore('debts').clear();
+          tx.objectStore('debtPlan').clear();
+          for (const row of rows) tx.objectStore('debts').put(row);
+          if (plan) {
+            tx.objectStore('debtPlan').put({
+              id: 'plan',
+              strategy: 'avalanche',
+              perCheckMinor: { inc1: 50_000 },
+              untrackedMonthlyMinor: 190_000,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+          }
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+        };
+      }),
+    [rows, plan],
   );
 }
 
 /* ------------------------------------------------------------------ capture */
 
-/** The five main screens plus Settings. */
+/** The seven tabs plus Settings. */
 async function everyScreen(tag, alsoAsPhone = false) {
   await go('Today');
   await shot(`${tag}-today`);
@@ -474,17 +592,26 @@ async function everyScreen(tag, alsoAsPhone = false) {
   await go('Notes');
   await shot(`${tag}-notes`);
   if (alsoAsPhone) await shotPhone(`phone-${tag}-notes`);
+  await go('Debt');
+  await shot(`${tag}-debt`);
+  if (alsoAsPhone) await shotPhone(`phone-${tag}-debt`);
   await go('Money');
   await shot(`${tag}-money`);
   if (alsoAsPhone) await shotPhone(`phone-${tag}-money`);
-  const yearly = page.locator('button:text-is("Show the yearly breakdown")');
-  if (await yearly.count()) {
-    await yearly.click();
+  // The averages and the year, folded away until asked for.
+  const averages = page.locator('section[aria-label="Averages"] > .fold-heading > .fold-btn');
+  if ((await averages.count()) && (await averages.getAttribute('aria-expanded')) === 'false') {
+    await averages.click();
     await shot(`${tag}-money-yearly`);
+    // Folded again, so the next theme's Money shot starts the way it would.
+    await averages.click();
   }
   await openSettings();
   await shot(`${tag}-settings`);
   if (alsoAsPhone) await shotPhone(`phone-${tag}-settings`);
+  // One group open, as it is when you go to change something.
+  await page.click('section[aria-label="How it looks"] > .fold-heading > .fold-btn');
+  await shot(`${tag}-settings-open`);
 }
 
 /** The forms, opened on real records and cancelled again so nothing changes. */
@@ -618,9 +745,80 @@ await page.click('form.card button:text-is("Cancel")');
 await page.waitForTimeout(200);
 
 /*
+  --- the Debt tab ------------------------------------------------------------
+  Its own folder: empty, seeded, every fold open, the form new and with More
+  details and saved, the plan's form with a suggestion, and Money and Today
+  with the payments on them. Calm and Midnight at both ends of the text
+  scale, and Synthwave.
+*/
+const DEBT_OUT = process.env.DEBT_SCREENSHOT_DIR ?? 'e2e/screenshots-debt';
+mkdirSync(DEBT_OUT, { recursive: true });
+const debtShot = async (name) => {
+  await page.waitForTimeout(220);
+  await pinNav();
+  await page.screenshot({ path: `${DEBT_OUT}/${name}.png`, fullPage: true });
+  await page.evaluate(() => document.getElementById('shot-css')?.remove());
+  count += 1;
+};
+/** Opens a folded section on the Debt tab, if it is not open already. */
+const openFold = async (title) => {
+  const button = page.locator(`section[aria-label="${title}"] > .fold-heading > .fold-btn`);
+  if ((await button.count()) && (await button.getAttribute('aria-expanded')) === 'false') await button.click();
+};
+
+for (const [tag, opts] of [
+  ['calm-1.0', { theme: 'calm' }],
+  ['calm-1.6', { theme: 'calm', textScale: 1.6 }],
+  ['midnight-1.0', { theme: 'midnight' }],
+  ['midnight-1.6', { theme: 'midnight', textScale: 1.6 }],
+  ['synthwave-1.0', { theme: 'synthwave' }],
+]) {
+  await setDebts();
+  await appearance(opts);
+  await go('Debt');
+  await debtShot(`${tag}-debt-empty`);
+
+  await setDebts({ debts: debtSeed(), plan: true, paidOff: true });
+  await appearance(opts);
+  await go('Debt');
+  await debtShot(`${tag}-debt`);
+  await openFold('Paid off');
+  await openFold('How this works');
+  await page.locator('section[aria-label="Your debts"] .details-btn').first().click();
+  await debtShot(`${tag}-debt-folds-open`);
+
+  await page.locator('section[aria-label="This paycheck"] button:text-is("Change the amount")').click();
+  await page.waitForSelector('#plan-untracked');
+  await debtShot(`${tag}-plan-editor`);
+  await page.click('form.card button:text-is("Cancel")');
+
+  await page.click('button:text-is("Add a debt")');
+  await page.waitForSelector('#debt-name');
+  await page.fill('#debt-name', 'Visa card');
+  await page.fill('#debt-balance', '2480.00');
+  await page.fill('#debt-apr', '24.99');
+  await page.fill('#debt-due', day(9));
+  await debtShot(`${tag}-editor-new`);
+  await page.click('form.card button:has-text("More details")');
+  await debtShot(`${tag}-editor-more`);
+  await page.click('form.card button[type="submit"]:text-is("Save")');
+  await page.waitForTimeout(400);
+  await debtShot(`${tag}-editor-saved`);
+  await page.click('button:text-is("Done")');
+
+  await go('Money');
+  await debtShot(`${tag}-money`);
+  await go('Today');
+  await debtShot(`${tag}-today`);
+}
+// Back to the seed every other shot below was taken with.
+await setDebts({ debts: debtSeed() });
+
+/*
   --- the nav at both ends of the text scale ----------------------------------
-  Six real tabs now. This is the case the --nav-label cap and the disappearing
-  glyph exist for, proven by measurement as well as by eye.
+  Seven real tabs now. This is the case the --nav-label cap, the reserved bold
+  width and the disappearing glyph exist for, proven by measurement as well as
+  by eye.
 */
 for (const [tag, opts] of [
   ['nav-calm-1.0', { theme: 'calm' }],

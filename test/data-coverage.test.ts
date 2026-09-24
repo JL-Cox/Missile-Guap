@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { countAll, dataTables, db, forgetSettings, getSettings, saveLock, wipeAll } from '../src/db';
+import {
+  blankDebt,
+  countAll,
+  dataTables,
+  db,
+  forgetSettings,
+  getDebtPlan,
+  getSettings,
+  saveDebt,
+  saveDebtPlan,
+  saveLock,
+  wipeAll,
+} from '../src/db';
 import {
   BACKUP_TABLES,
   DEVICE_SETTINGS,
@@ -71,7 +83,7 @@ describe('every table is covered', () => {
   it('knows about every table the database declares', () => {
     // If this fails, a table was added to src/db.ts. It is covered by backup,
     // restore, delete and the counts automatically - check the UI names it.
-    expect(dataNames).toEqual(['captures', 'incomes', 'notes', 'subscriptions', 'tasks']);
+    expect(dataNames).toEqual(['captures', 'debtPlan', 'debts', 'incomes', 'notes', 'subscriptions', 'tasks']);
     expect(dataTables().map((t) => t.name).sort()).toEqual(dataNames);
   });
 
@@ -137,6 +149,62 @@ describe('exportBackup and importBackup', () => {
 });
 
 /*
+  The debt plan is what you chose - a strategy, an amount per check, a
+  spending estimate - so it is data, not a setting: backed up, restored and
+  deleted with everything else. It is one row, and nothing is stored until
+  something is actually chosen.
+*/
+describe('debts and the debt plan', () => {
+  it('reads a default plan without writing one', async () => {
+    fakeStorage({});
+    const plan = await getDebtPlan();
+    expect(plan).toMatchObject({ id: 'plan', strategy: 'avalanche' });
+    expect(plan.perCheckMinor).toBeUndefined();
+    expect(plan.untrackedMonthlyMinor).toBeUndefined();
+    expect(store.debtPlan).toEqual([]);
+  });
+
+  it('saves a change as the one plan row, keeping what was there', async () => {
+    fakeStorage({});
+    await saveDebtPlan({ strategy: 'snowball' });
+    await saveDebtPlan({ untrackedMonthlyMinor: 180_000 });
+    expect(store.debtPlan).toHaveLength(1);
+    expect(store.debtPlan[0]).toMatchObject({ id: 'plan', strategy: 'snowball', untrackedMonthlyMinor: 180_000 });
+  });
+
+  it('clearing a field takes it out of the row, not just its value', async () => {
+    fakeStorage({ debtPlan: [{ id: 'plan', strategy: 'avalanche', untrackedMonthlyMinor: 180_000 } as never] });
+    const after = await saveDebtPlan({ untrackedMonthlyMinor: undefined });
+    expect('untrackedMonthlyMinor' in after).toBe(false);
+    expect('untrackedMonthlyMinor' in store.debtPlan[0]).toBe(false);
+  });
+
+  it('Delete everything takes the plan and every debt', async () => {
+    fakeStorage({});
+    await saveDebt(blankDebt({ name: 'Blue card', balanceMinor: 200_000, dueDay: 5 }));
+    await saveDebtPlan({ perCheckMinor: { job: 20_000 } });
+    await wipeAll();
+    expect(store.debts).toEqual([]);
+    expect(store.debtPlan).toEqual([]);
+  });
+
+  it('starts a new debt as a card with the usual card minimum, and no due day guessed', () => {
+    const debt = blankDebt();
+    expect(debt).toMatchObject({
+      kind: 'creditCard',
+      autopay: false,
+      notes: '',
+      currency: 'USD',
+      balanceMinor: 0,
+      minimum: { kind: 'percentPlusInterest', percent: 1, floorMinor: 3_500 },
+    });
+    expect(debt.balanceAsOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(debt.dueDay).toBeUndefined();
+    expect(blankDebt({ currency: 'EUR' }).currency).toBe('EUR');
+  });
+});
+
+/*
   A low day is today's setting, not something you wrote. It must never travel
   in a backup file - that would be a record of low days - and a restore must
   neither switch one on from an old file nor switch today's off.
@@ -188,6 +256,73 @@ describe('settings that stay on this phone', () => {
     expect('lowDay' in after).toBe(false);
     expect('lowDay' in settingsRow()).toBe(false);
     expect(settingsRow().theme).toBe('dark');
+  });
+});
+
+/**
+ * Which sections you folded is a preference, like the theme or the Backlog's
+ * sort. So it travels in a backup (a new phone opens the way the old one did),
+ * a replace restore puts it back, a merge restore leaves this phone's alone,
+ * Delete everything keeps it - Settings promises "your settings stay as they
+ * are" - and the app lock never touches it.
+ */
+describe('folded sections are a preference that travels', () => {
+  const settingsRow = () => (store.settings[0] ?? {}) as Record<string, unknown>;
+  const folded = { 'today.bills': false, 'money.averages': true };
+
+  it('is not a device-only setting', () => {
+    expect([...DEVICE_SETTINGS]).not.toContain('sections');
+  });
+
+  it('goes into a backup file', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', sections: folded } as never] });
+    const backup = await exportBackup();
+    expect(backup.settings.sections).toEqual(folded);
+  });
+
+  it('is put back by a replace restore', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', sections: folded } as never] });
+    const file = parseBackup(JSON.stringify(await exportBackup()));
+    fakeStorage({ settings: [{ id: 'settings', sections: { 'inbox.cleared': true } } as never] });
+    await importBackup(file, 'replace');
+    expect(settingsRow().sections).toEqual(folded);
+  });
+
+  it('is left as this phone has it by a merge restore', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', sections: folded } as never] });
+    const file = parseBackup(JSON.stringify(await exportBackup()));
+    fakeStorage({ settings: [{ id: 'settings', sections: { 'inbox.cleared': true } } as never] });
+    await importBackup(file, 'merge');
+    expect(settingsRow().sections).toEqual({ 'inbox.cleared': true });
+  });
+
+  it('is kept by Delete everything', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', sections: folded } as never] });
+    await wipeAll();
+    expect(settingsRow().sections).toEqual(folded);
+  });
+
+  it('is not touched by setting or removing the app lock', async () => {
+    fakeStorage({ settings: [{ id: 'settings', sections: folded } as never] });
+    await saveLock({
+      pinHash: toBase64(new Uint8Array(32).fill(4)),
+      pinSalt: toBase64(new Uint8Array(16).fill(5)),
+      phraseHash: toBase64(new Uint8Array(32).fill(6)),
+      phraseSalt: toBase64(new Uint8Array(16).fill(7)),
+      iterations: 600_000,
+      afterMinutes: 5,
+    });
+    expect((await getSettings()).sections).toEqual(folded);
+    await saveLock(null);
+    expect((await getSettings()).sections).toEqual(folded);
+  });
+
+  it('"Put every section back" takes the whole setting away and nothing else', async () => {
+    fakeStorage({ settings: [{ id: 'settings', theme: 'amber', sections: folded } as never] });
+    const after = await forgetSettings('sections');
+    expect('sections' in after).toBe(false);
+    expect('sections' in settingsRow()).toBe(false);
+    expect(settingsRow().theme).toBe('amber');
   });
 });
 

@@ -1,9 +1,12 @@
 import Dexie, { type Table } from 'dexie';
 import { DEFAULT_HOLIDAYS } from './lib/holidays';
+import { todayKey } from './lib/time';
 import {
   DEFAULT_SETTINGS,
   type AppLock,
   type Capture,
+  type Debt,
+  type DebtPlan,
   type IncomeSource,
   type Note,
   type Settings,
@@ -22,6 +25,8 @@ class SteadyDb extends Dexie {
   notes!: Table<Note, string>;
   subscriptions!: Table<Subscription, string>;
   incomes!: Table<IncomeSource, string>;
+  debts!: Table<Debt, string>;
+  debtPlan!: Table<DebtPlan, string>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -37,6 +42,13 @@ class SteadyDb extends Dexie {
     // is touched, so notes, tasks and subscriptions survive the bump.
     this.version(2).stores({
       incomes: 'id, name, endedOn, updatedAt',
+    });
+    // Two more stores, added the same way: nothing already saved is touched.
+    // The plan is a table rather than a setting because "Delete everything"
+    // keeps settings, and a spending estimate you typed has to go with the rest.
+    this.version(3).stores({
+      debts: 'id, name, paidOffOn, updatedAt',
+      debtPlan: 'id',
     });
   }
 }
@@ -212,4 +224,59 @@ export async function saveIncome(source: IncomeSource): Promise<IncomeSource> {
   const next = { ...source, updatedAt: now() };
   await db.incomes.put(next);
   return next;
+}
+
+/**
+ * A new debt, ready for the form. It starts as a credit card with the usual
+ * card minimum - 1% of the balance plus interest, at least $35 - because that
+ * is the commonest case and every preset is one tap away. No due day: the form
+ * asks for one rather than guessing a date money has to leave on.
+ */
+export function blankDebt(partial: Partial<Debt> = {}): Debt {
+  const ts = now();
+  return {
+    id: newId(),
+    name: '',
+    kind: 'creditCard',
+    balanceMinor: 0,
+    balanceAsOf: todayKey(),
+    minimum: { kind: 'percentPlusInterest', percent: 1, floorMinor: 3_500 },
+    autopay: false,
+    currency: DEFAULT_SETTINGS.currency,
+    notes: '',
+    createdAt: ts,
+    updatedAt: ts,
+    ...partial,
+  };
+}
+
+export async function saveDebt(debt: Debt): Promise<Debt> {
+  const next = { ...debt, updatedAt: now() };
+  await db.debts.put(next);
+  return next;
+}
+
+/**
+ * The plan as stored, or the default one: least interest first, no amount
+ * chosen. The default is not written until something is actually chosen, so
+ * someone who never opens the plan has nothing stored about one.
+ */
+export async function getDebtPlan(): Promise<DebtPlan> {
+  const stored = await db.debtPlan.get('plan');
+  if (stored) return { ...stored, id: 'plan' };
+  const ts = now();
+  return { id: 'plan', strategy: 'avalanche', createdAt: ts, updatedAt: ts };
+}
+
+/**
+ * Changes some of the plan and saves it. A field patched to `undefined` is
+ * taken out of the record rather than stored as undefined, so clearing the
+ * spending estimate really does leave nothing behind, the same rule
+ * forgetSettings follows.
+ */
+export async function saveDebtPlan(patch: Partial<Omit<DebtPlan, 'id'>>): Promise<DebtPlan> {
+  const next: Record<string, unknown> = { ...(await getDebtPlan()), ...patch, id: 'plan', updatedAt: now() };
+  for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
+  await db.debtPlan.put(next as unknown as DebtPlan);
+  return next as unknown as DebtPlan;
 }

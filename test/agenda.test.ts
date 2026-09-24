@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { agendaFor, finishedWithoutDate, unscheduled, upcomingBills } from '../src/lib/agenda';
-import type { Subscription, Task } from '../src/types';
+import { agendaFor, finishedWithoutDate, unscheduled, upcomingBills, upcomingPayments } from '../src/lib/agenda';
+import type { ScheduledPayment } from '../src/lib/payoff';
+import type { Debt, Subscription, Task } from '../src/types';
 
 /**
  * These two selectors decide what the Backlog contains. Until now agenda.ts had
@@ -94,5 +95,46 @@ describe('a subscription cancelled today', () => {
   it('has nothing after that', () => {
     expect(agendaFor('2026-10-23', [], [cancelledToday])).toEqual([]);
     expect(upcomingBills([cancelledToday], 60, '2026-09-24')).toEqual([]);
+  });
+});
+
+/*
+  Debt payments sit on Today beside subscription charges, as their own kind:
+  "Card A payment", never "renews" and never "charged". They come from the
+  plan's dated payments and are only added when passed, so a day without any
+  is exactly what it was.
+*/
+describe('debt payments on a day', () => {
+  const card: Debt = {
+    id: 'd1', name: 'Card A', kind: 'creditCard', balanceMinor: 200_000, balanceAsOf: '2026-09-24',
+    minimum: { kind: 'fixed', amountMinor: 6_300 }, dueDay: 5, autopay: true, currency: 'USD', notes: '',
+    createdAt: 0, updatedAt: 0,
+  };
+  const loan: Debt = { ...card, id: 'd2', name: 'Loan', dueDay: 16, autopay: false };
+  const payments: ScheduledPayment[] = [
+    { debt: card, dueOn: '2026-10-05', amountMinor: 6_300, autopay: true },
+    { debt: loan, dueOn: '2026-10-16', amountMinor: 18_000, autopay: false },
+    { debt: card, dueOn: '2026-11-05', amountMinor: 5_700, autopay: true },
+  ];
+
+  it('lists a payment on its due date, named as a payment', () => {
+    const items = agendaFor('2026-10-05', [], [], payments);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: 'payment', title: 'Card A payment', amountMinor: 6_300, timed: false });
+    expect(items[0].debt?.id).toBe('d1');
+  });
+
+  it('adds nothing on other days, or when no payments are passed', () => {
+    expect(agendaFor('2026-10-06', [], [], payments)).toEqual([]);
+    expect(agendaFor('2026-10-05', [], [])).toEqual([]);
+  });
+
+  it('lists the payments coming up, soonest first', () => {
+    expect(upcomingPayments(payments, 14, '2026-10-03').map((p) => [p.debt.name, p.date, p.amountMinor, p.inDays])).toEqual([
+      ['Card A', '2026-10-05', 6_300, 2],
+      ['Loan', '2026-10-16', 18_000, 13],
+    ]);
+    expect(upcomingPayments(payments, 1, '2026-10-17')).toEqual([]);
+    expect(upcomingPayments(payments, 0, '2026-10-05').map((p) => p.inDays)).toEqual([0]);
   });
 });

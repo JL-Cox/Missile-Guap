@@ -1,6 +1,7 @@
 import { CHANGES } from '../lib/changelog';
 import { shortDate } from '../lib/time';
 import { APP_VERSION, BUILD_ID, RECENT_COMMITS, versionLabel } from '../lib/version';
+import { cutTitle } from '../lib/sections';
 import { Section } from '../components/ui';
 
 /**
@@ -56,7 +57,16 @@ export default function About({ onBack }: { onBack: () => void }) {
         ))}
       </Section>
 
-      <Section title="Last 10 updates">
+      {/* Reference, folded away on every visit so the page opens on what's new. */}
+      <Section
+        title="Last 10 updates"
+        collapsible="about.updates"
+        summary={
+          RECENT_COMMITS.length === 0
+            ? 'Not included in this copy'
+            : `Newest: ${cutTitle(RECENT_COMMITS[0].subject)}`
+        }
+      >
         {RECENT_COMMITS.length === 0 ? (
           <p className="faint">This copy was built without its history, so there is no list to show.</p>
         ) : (

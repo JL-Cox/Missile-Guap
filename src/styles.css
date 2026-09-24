@@ -152,23 +152,26 @@ html {
   --press-shift: 1px;
 
   /* ---- the nav's own budget --------------------------------------------
-     Six slots on a 412px phone is 68px each. At 1.6x text a 0.8rem label is
-     21.8px, and "Settings" needs about 85px - it clips.
+     Six slots on a 412px phone is 68px each, and seven is 58px. At 1.6x text a
+     0.8rem label is 21.8px, and "Settings" needs about 85px - it clips.
 
      So the label is the ONE piece of text in this app that is capped. The nav
-     is six fixed landmarks you find by position; the text-size setting exists
-     for reading, and everything you actually read still scales. In exchange the
-     glyph gives up its space as the text grows: full size to 1.25x, gone by
-     1.35x, so at large sizes the words get the whole slot.
+     is a row of fixed landmarks you find by position; the text-size setting
+     exists for reading, and everything you actually read still scales. In
+     exchange the glyph gives up its space as the text grows: full size to
+     1.25x, gone by 1.35x, so at large sizes the words get the whole slot.
 
      The floor is 12.5px, not 11: at 1.0x the label was the smallest text in the
-     app, on the one control you use on every visit. "Backlog" at 15px is about
-     58px, but set bold - the tab you are on - it is closer to 64px, which does
-     not fit a 412px screen's 68px slot once its padding is taken off, and broke
-     as "Backlo / g". So the cap also follows the screen width: 3.4vw is 14px on
-     a 412px phone and hits the 12.5px floor on a 360px one, where bold
-     "Backlog" is about 53px in a 56px slot. At everyday text sizes the floor
-     wins either way, so nothing changes there. */
+     app, on the one control you use on every visit. The cap also follows the
+     screen width - 3.4vw is 14px on a 412px phone and the 12.5px floor on a
+     360px one - so at everyday text sizes the floor wins either way.
+
+     Equal slots stopped being enough at seven: bold "Backlog" - the tab you are
+     on - is 55px in the wide font a test browser uses and 48px in one close to
+     the phone's, against 47px of room in a 360px screen's seventh. So a slot is
+     never narrower than its own label set bold, and the rest of the width is
+     shared out equally (see .nav-btn and .nav-label below). The bold width is
+     reserved on every tab, so no slot moves when the tab you are on changes. */
   --nav-label: clamp(12.5px, min(0.76rem, 3.4vw), 15px);
   --nav-glyph: clamp(0px, calc((1.35 - var(--text-scale)) * 10rem), 1rem);
   --nav-gap: clamp(0px, calc((1.35 - var(--text-scale)) * 2rem), 3px);
@@ -557,6 +560,7 @@ html {
 [data-theme='contrast'] .card,
 [data-theme='contrast'] .item,
 [data-theme='contrast'] .btn,
+[data-theme='contrast'] .fold-state,
 [data-theme='contrast'] .capture,
 [data-theme='contrast'] .notice,
 [data-theme='contrast'] .swatch,
@@ -787,12 +791,94 @@ code {
 }
 
 /*
-  A Today section folded away for a low day: "hidden for today" runs on inside
-  its heading. It takes the faint role's size and colour from .faint; this only
-  drops the heading's weight, so the note reads as a note and not as more title.
+  A SECTION THAT FOLDS.
+
+  The heading keeps its size and weight - contrast's bold included - and the
+  whole row inside it is one button: the title, with one faint line under it
+  while closed, and a quiet "Show" pill on the right drawn exactly like
+  .btn-quiet.btn-sm. A grid, not a wrapping flex row, so at 1.6x the pill stays
+  pinned top right and the title wraps in its own column; with flex-wrap the
+  pill dropped under the title and every closed row grew by half again.
+
+  The row is 44px at least, and borrows its 4px of padding back with a
+  negative margin, so a folding heading sits exactly where a plain one would.
+  Nothing animates its height - that means measuring, and makes text jump at
+  large sizes. A section opened by a tap only fades in, and both reduce-motion
+  switches take that away too.
+
+  Low-day folds on Today use the same header, so the two cannot drift apart.
 */
-.folded-note {
+.fold-btn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--gap);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-1) 0;
+  margin: calc(-1 * var(--space-1)) 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fold-summary {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: var(--fs-meta);
   font-weight: var(--w-normal);
+  line-height: var(--lh-snug);
+}
+
+.fold-state {
+  white-space: nowrap;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-snug);
+  color: var(--text-soft);
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .fold-btn:hover .fold-state {
+    background: var(--surface-alt);
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+}
+
+.fold-btn:active .fold-state {
+  background: var(--surface-sunk);
+  transform: translateY(var(--press-shift));
+}
+
+/* `hidden` has to win over .stack's display, which would otherwise show it. */
+.fold-body[hidden] {
+  display: none;
+}
+
+.fold-fade {
+  animation: fade var(--motion-fast) var(--ease-out);
+}
+
+/*
+  Settings' groups: closed, they sit a small step apart so they read as one
+  list of headings. An open one keeps the big step below it, or its last line
+  runs straight into the next group's heading and reads as part of it.
+*/
+.fold-list > section > .fold-body {
+  padding-bottom: calc(var(--gap-section) - var(--gap));
 }
 
 /* ==========================================================================
@@ -844,6 +930,17 @@ code {
   font-size: var(--fs-display);
   font-weight: var(--w-strong);
   line-height: var(--lh-tight);
+}
+
+/*
+  The Debt tab's one date: "All paid off by March 2029". Heading size, not
+  display size: it is a date to aim at, and the one large figure on that
+  screen stays what this paycheck puts toward debt. Only the date itself is
+  set strong.
+*/
+.plan-lead {
+  font-size: var(--fs-lead);
+  line-height: var(--lh-snug);
 }
 
 /* A blurred amount is a real button, reset to look like the text it hides. */
@@ -1725,8 +1822,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 /* ==========================================================================
    THE NAV
-   Six slots have to survive 1.6x text. See --nav-label above for the one place
-   in this app where a user setting is deliberately capped, and why.
+   Up to seven slots have to survive 1.6x text on a 360px phone. See
+   --nav-label above for the one place in this app where a user setting is
+   deliberately capped, and why.
    ========================================================================== */
 
 .nav {
@@ -1746,8 +1844,11 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 .nav-btn {
   position: relative;
+  /* Equal shares of whatever the labels leave, and never narrower than the
+     label itself: min-width auto is the slot's own content, where 0 let a
+     slot shrink until its label broke in two. */
   flex: 1 1 0;
-  min-width: 0;
+  min-width: auto;
   min-height: 60px;
   display: flex;
   flex-direction: column;
@@ -1766,9 +1867,33 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   letter-spacing: -0.01em;
   text-align: center;
   cursor: pointer;
-  /* Wrap rather than clip, as a last resort if a font runs wide. */
-  overflow-wrap: anywhere;
+  /* A label is one word and is never broken: the slot grows to fit it. */
+  overflow-wrap: normal;
   transition: color var(--motion-fast) var(--ease-out);
+}
+
+/*
+  The label reserves its own bold width on every tab. Its text and a hidden,
+  bold copy of it (from data-label) share one grid column, so the column is
+  always as wide as the bold word, whichever tab is current, and nothing moves
+  when you change tabs. The copy has no height and is never read out: hidden
+  content is left out of the button's name.
+
+  Do not put overflow: hidden on the copy - it zeroes its min-content width,
+  and the reservation silently stops working.
+*/
+.nav-label {
+  display: inline-grid;
+  white-space: nowrap;
+}
+
+.nav-label::after {
+  content: attr(data-label);
+  font-weight: var(--w-strong);
+  visibility: hidden;
+  height: 0;
+  pointer-events: none;
+  user-select: none;
 }
 
 @media (hover: hover) {
@@ -1797,12 +1922,17 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 .nav-count {
   /* Capped with the label, and for the same reason: it lives in the nav's fixed
-     six-slot budget. It is lifted out of the flow and sits in the slot's top
-     corner, so "Inbox" stays on the same line as every other label whether or
-     not there is anything waiting. */
+     budget. It is lifted out of the flow and sits in the slot's top corner, so
+     "Inbox" stays on the same line as every other label whether or not there is
+     anything waiting.
+
+     Anchored to the slot's right edge, not its middle: in a narrow slot a
+     count of "12" hung from the middle reached into the Tasks slot, where a
+     tap on it still opened the Inbox. It takes no taps of its own. */
   position: absolute;
   top: 5px;
-  left: calc(50% + 10px);
+  right: 2px;
+  pointer-events: none;
   font-size: clamp(10px, 0.62rem, 13px);
   font-weight: var(--w-strong);
   font-variant-numeric: tabular-nums;
@@ -1922,6 +2052,16 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* A folded section opening: opacity only, so nothing moves under your finger. */
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
