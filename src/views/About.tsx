@@ -7,11 +7,12 @@ import { Section } from '../components/ui';
 /**
  * Which version this is, and what changed.
  *
- * Opened from Settings. Everything on it was written into the app when it was
- * built, so there is nothing to load and nothing to check online - it looks the
- * same in airplane mode.
+ * A page of its own in the Menu, and opened from Settings and from the update
+ * notice too. Back from it goes to Today, like Back from any page. Everything
+ * on it was written into the app when it was built, so there is nothing to
+ * load and nothing to check online - it looks the same in airplane mode.
  */
-export default function About({ onBack }: { onBack: () => void }) {
+export default function About() {
   // The newest few entries up to this build: enough to explain this week's
   // changes without turning the page into a history lesson, and never one for
   // a version this copy of the app does not have yet.
@@ -19,12 +20,6 @@ export default function About({ onBack }: { onBack: () => void }) {
 
   return (
     <>
-      <div className="btn-row">
-        <button type="button" className="btn btn-sm" onClick={onBack}>
-          Back to Settings
-        </button>
-      </div>
-
       <Section title="Steady">
         <div className="card stack-sm">
           <div className="figure">

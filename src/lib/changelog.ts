@@ -13,9 +13,25 @@ export interface ChangeEntry {
   version: number;
   /** Short bullets. Kept under 90 characters each by test/build-info.test.ts. */
   items: string[];
+  /**
+   * One line the "Steady updated" notice adds, for a version that moved
+   * something you would otherwise go looking for. Most versions have none.
+   */
+  notice?: string;
 }
 
 export const CHANGES: ChangeEntry[] = [
+  {
+    version: 26,
+    notice: 'Pages are in the Menu now, at the top left.',
+    items: [
+      'Pages are in a menu now: tap Menu at the top left. Back still goes to Today.',
+      'The bar at the bottom splits each page into zones, so no page is one long scroll.',
+      'Each page opens on the zone you were last on. Today always opens on today.',
+      'Tasks and Notes each have a Search zone that looks through everything.',
+      'Settings and About are in the menu. Hide now stays at the top right.',
+    ],
+  },
   {
     version: 25,
     items: [

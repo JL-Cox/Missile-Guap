@@ -56,13 +56,21 @@ opposite on all three counts.
 | **Debt** | Cards, loans, lines of credit, buy now pay later, medical bills, money a friend lent you: each with its balance (typed from the statement, with the date it was true), rate, how its minimum is worked out, due date, and any promo rate or loan terms. **This paycheck** says what this check should put toward debt, split into minimums and extra, and which debt gets the extra and why. **The plan** gives the date everything is paid off, each debt's own date, and how much interest and time that saves over paying only the minimums. You choose *highest interest first* (least interest) or *smallest balance first* (quickest wins), and how much goes toward debt from each check; Steady can suggest a cautious amount once you give it a rough figure for everything it doesn't track. It is a calculator, not financial advice, and it says so. |
 | **Settings** | Appearance, notifications, an optional app lock, backup and restore, calendar export, a plain-English account of what happens to your data, and About: the version number, what's new, and the last ten updates. |
 
-Three things hold across every screen:
+Four things hold across every screen:
 
-- **Long sections fold.** A section that isn't the reason you opened the
-  screen has a Show / Hide button on its heading, and while it is folded the
-  heading still says what is in it ("5 charges, $71.48 in all"). It stays in
-  its place either way, and the app remembers how you left it. Settings is a
-  short list of groups that open one at a time, and starts folded every visit.
+- **Pages are in the Menu; each page is split into zones.** *Menu*, at the top
+  left, opens a panel listing every page (Today, Inbox, Tasks, Backlog, Notes,
+  Debt, Money, then Settings and About), with your Inbox count on the button.
+  The bar at the bottom splits the page you are on into two to four zones -
+  Money is *Coming out · Paychecks · Subscriptions · Income* - so no page is
+  one long scroll. Each page opens on the zone you were last on, except Today,
+  which always opens on today; its first zone ends with a short "More on
+  Today" card saying what is in the others. Tasks and Notes each have a Search
+  zone that looks through everything. *Hide now* sits at the top right when
+  the app lock is on.
+- **A few reference sections fold.** Averages on Money, *How this works* and
+  *Paid off* on Debt, and every Settings group have a Show / Hide button on
+  their heading, and while folded the heading still says what is in it.
 - **Nothing just vanishes.** Anything that moves or disappears - ticking a task
   off, moving it to today, taking its date off, keeping a capture as a note,
   cancelling or deleting something - says where it went in a short line at the
@@ -71,10 +79,10 @@ Three things hold across every screen:
   there, unless you have changed it again since, in which case your change wins
   and it says so. Deleting still asks twice first; Undo is as well as that, not
   instead of it.
-- **Back does what Android's Back should.** It closes the form or confirmation
-  you have open, then goes to Today, then leaves the app - never through every
-  tab you happened to visit. A half-written task is kept if you switch tabs and
-  come back.
+- **Back does what Android's Back should.** It closes the Menu or the form you
+  have open, then goes to the page's first zone, then to Today, then leaves
+  the app - never through every page you happened to visit. A half-written
+  task is kept if you go to another page and come back.
 
 A few things are there for harder days, and none of them keeps score:
 
@@ -358,7 +366,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-998 unit tests cover the parts where a quiet wrong answer would make the app
+1032 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between

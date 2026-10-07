@@ -151,6 +151,50 @@ const openSection = async (title) => {
 /** What is on screen, leaving out anything folded away (textContent reads hidden text too). */
 const visibleText = () => page.locator('.main').innerText();
 
+/*
+  Getting around. Pages are in the Menu, and each working page is split into
+  zones picked from the bar at the bottom. Both are found by their fixed ids -
+  data-page and data-zone - never by their words, so a change of wording can
+  never send a test to the wrong place.
+*/
+/** The page showing, by its id: 'today', 'money', 'settings'... */
+const onPage = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-page') ?? null);
+/** The zone showing, by its id, or null where there is no bar (Settings, About, an open editor). */
+const zoneNow = () =>
+  page.evaluate(() => document.querySelector('.zones [role="tab"][aria-selected="true"]')?.getAttribute('data-zone') ?? null);
+const openMenu = async () => {
+  if (!(await page.locator('#menu').count())) await page.click('.header .menu-btn');
+  await page.waitForSelector('#menu');
+};
+/** Goes to a page through the Menu, then to one of its zones. */
+const goTo = async (pageId, zoneId) => {
+  if ((await onPage()) !== pageId) {
+    await openMenu();
+    await page.click(`#menu .drawer-item[data-page="${pageId}"]`);
+    await page.waitForSelector(`.main[data-page="${pageId}"]`);
+  }
+  if (zoneId && (await zoneNow()) !== zoneId) await page.click(`.zones [role="tab"][data-zone="${zoneId}"]`);
+  await page.waitForTimeout(150);
+};
+/** The text of the first thing in the zone showing. */
+const firstInZone = () => page.$eval('.view:not([hidden]) .zone:not([hidden]) > :first-child', (el) => el.textContent);
+/** Everything a page shows, zone by zone: what you would see visiting each in turn. */
+const allZonesText = async (pageId) => {
+  await goTo(pageId);
+  const ids = await page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => t.getAttribute('data-zone')));
+  let text = '';
+  for (const id of ids) {
+    await goTo(pageId, id);
+    text += `\n${await visibleText()}`;
+  }
+  return text;
+};
+/** The count on the Menu button as drawn - without the words only TalkBack reads. */
+const menuCount = () =>
+  page.$eval('.menu-count', (el) =>
+    [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join(''),
+  );
+
 const todayKey = (() => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -209,6 +253,9 @@ check(
   true,
 );
 await page.screenshot({ path: `${OUT}/update-notice.png`, fullPage: true });
+await page.click('.card button:text-is("What\'s new")');
+await page.waitForTimeout(300);
+check('"What\'s new" opens the About page', await onPage(), 'about');
 
 // The build is recorded as soon as it is shown, so it must not come back.
 await page.reload({ waitUntil: 'networkidle' });
@@ -254,11 +301,16 @@ await page.fill('#capture-input', 'Call the dentist about the referral\nAsk for 
 check('in the box, Save and the hint appear', await page.locator('button:text-is("Save to inbox")').count(), 1);
 await page.click('button:text-is("Save to inbox")');
 await page.waitForTimeout(400);
-check('capture lands in the inbox', await page.textContent('.nav-count'), '1');
+check('capture lands in the inbox, counted on the Menu button', await menuCount(), '1');
 check('and the box folds back to one line', await page.locator('button:text-is("Save to inbox")').count(), 0);
+// The count is drawn as a number, and read out in words with the button's name.
+check('TalkBack reads the Menu button as "Menu, 1 in your inbox"', await page.getByRole('button', { name: 'Menu, 1 in your inbox', exact: true }).count(), 1);
+await openMenu();
+check('and the Menu\'s Inbox item as "Inbox, 1 to sort"', await page.locator('#menu').getByRole('button', { name: 'Inbox, 1 to sort', exact: true }).count(), 1);
+await page.click('#menu button:text-is("Close")');
 
 // --- inbox item becomes a task with steps, a time and a reminder ---------
-await page.click('.nav-btn:has-text("Inbox")');
+await goTo('inbox', 'open');
 await page.click('button:has-text("Make it a task")');
 await page.waitForSelector('#task-title');
 // A two-line capture: the first line is the title, the rest the notes.
@@ -275,7 +327,7 @@ await page.click('button:has-text("30 min")');
 await page.click('button:has-text("10 min before")');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
-check('inbox is emptied once the item becomes a task', await page.locator('.nav-count').count(), 0);
+check('inbox is emptied once the item becomes a task', await page.locator('.menu-count').count(), 0);
 check('and it says where the task went', await page.locator('.toast:has-text("Saved to Tasks.")').count(), 1);
 
 // --- a reminder follows the task when its time changes ----------------------
@@ -289,7 +341,7 @@ const localMs = (hh, mm) => page.evaluate(([h, m]) => {
   return d.getTime();
 }, [hh, mm]);
 check('the reminder is set from the time chosen', await dentistRemindAt(), await localMs(9, 20));
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today', 'day');
 await page.click('button.item-title:has-text("Call the dentist")');
 await page.click('button:text-is("Edit")');
 await page.waitForSelector('#task-time');
@@ -298,36 +350,63 @@ await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
 check('moving the time moves the reminder with it', await dentistRemindAt(), await localMs(10, 50));
 
-// --- Android Back closes what is open, then goes home, then leaves ----------
-await page.click('.nav-btn:has-text("Tasks")');
-await page.click('button:text-is("New task")');
+// --- Android Back closes what is open, then the zone, then goes home, then leaves ---
+/** How many entries the app has stacked above its first. 0 is Today's first zone: Back from there leaves. */
+const historyDepth = () => page.evaluate(() => window.history.state?.steady ?? 0);
+await goTo('tasks', 'dated');
+await page.click('button:text-is("New task"):visible');
 await page.waitForSelector('#task-title');
 await page.fill('#task-title', 'Half-written task');
-// Switching tab keeps the draft rather than throwing it away.
-await page.click('.nav-btn:has-text("Notes")');
+check('the zone bar steps aside while an editor has the page', await page.locator('.zones').count(), 0);
+// Changing page through the Menu keeps the draft rather than throwing it away.
+await goTo('notes');
 await page.waitForTimeout(200);
-await page.click('.nav-btn:has-text("Tasks")');
+await goTo('tasks');
 await page.waitForTimeout(200);
-check('a half-written task survives a trip to another tab', await page.inputValue('#task-title'), 'Half-written task');
+check('a half-written task survives a trip to Notes through the Menu', await page.inputValue('#task-title'), 'Half-written task');
 await page.goBack();
 await page.waitForTimeout(300);
 check('Back closes the editor instead of leaving the app', await page.locator('#task-title').count(), 0);
-check('and stays on the same tab', await page.getAttribute('.nav-btn:has-text("Tasks")', 'aria-current'), 'page');
+check('and stays on the same page', await onPage(), 'tasks');
+check('with the zone bar back, on the same zone', await zoneNow(), 'dated');
 await page.goBack();
 await page.waitForTimeout(300);
-check('Back from a tab goes to Today', await page.getAttribute('.nav-btn:has-text("Today")', 'aria-current'), 'page');
+check('Back from a page goes to Today', await onPage(), 'today');
 check('and the app is still open', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
-await page.click('.nav-btn:has-text("Money")');
-await page.click('.header button:text-is("Settings")');
-await page.click('.header button:text-is("Done")');
-await page.waitForTimeout(200);
-check('Settings Done goes back where you were', await page.getAttribute('.nav-btn:has-text("Money")', 'aria-current'), 'page');
+
+// From a zone that is not the page's first: Back goes to the first, then to
+// Today, and Today's first zone is the bottom of the history.
+await goTo('money', 'subscriptions');
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back from Money › Subscriptions goes to Money › Coming out', `${await onPage()} ${await zoneNow()}`, 'money soon');
+await page.goBack();
+await page.waitForTimeout(300);
+check('and Back again goes to Today, on its first zone', `${await onPage()} ${await zoneNow()}`, 'today day');
+check('which is the bottom of the history, so the next Back leaves', await historyDepth(), 0);
+
+// The Menu is on top of everything: Back closes it, and nothing else moves.
+await goTo('backlog');
+const depthBeforeMenu = await historyDepth();
+await openMenu();
+await page.goBack();
+await page.waitForTimeout(300);
+check('with the Menu open, Back closes it', await page.locator('#menu').count(), 0);
+check('and stays on the page', await onPage(), 'backlog');
+check('and takes away only its own history entry', await historyDepth(), depthBeforeMenu);
+
+// Settings and About are pages like any other.
+await goTo('settings');
+check('Settings has no zone bar', await page.locator('.zones').count(), 0);
+check('and no capture box', await page.locator('#capture-input').count(), 0);
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back from Settings goes to Today', await onPage(), 'today');
 
 // --- About: version, what's new, recent updates, and Back ------------------
-await page.click('.header button:text-is("Settings")');
-await page.click('button:text-is("About and what\'s new")');
-await page.waitForTimeout(200);
+await goTo('about');
 check('About has its own title', await page.textContent('.header h1'), 'About');
+check('and no zone bar', await page.locator('.zones').count(), 0);
 const aboutText = await page.textContent('.main');
 check('About shows a version number', /Version \d+/.test(aboutText), true);
 check("About lists what's new", (await page.locator('section[aria-label="What\'s new"] li').count()) > 0, true);
@@ -338,26 +417,155 @@ const updates = await page.locator('ol[aria-label^="Last 10 updates"] li:visible
 check('About lists between 1 and 10 recent updates', updates >= 1 && updates <= 10, true);
 await page.goBack();
 await page.waitForTimeout(300);
-check('Back from About returns to Settings', await page.locator('button:text-is("About and what\'s new")').count(), 1);
-await page.goBack();
-await page.waitForTimeout(300);
-check('and Back again closes Settings', await page.getAttribute('.nav-btn:has-text("Money")', 'aria-current'), 'page');
+check('Back from About goes to Today', await onPage(), 'today');
+await goTo('settings');
+await page.click('button:text-is("About and what\'s new")');
+await page.waitForTimeout(200);
+check('Settings\' "About and what\'s new" opens the About page', await onPage(), 'about');
 
-// --- the nav, all seven tabs, at every text size: each label on one line ----
-// The tab you are on is set bold, which is what used to break "Backlog" in two.
-// A slot is as wide as its own label set bold, reserved on every tab, so
-// every tab is visited: none may break, and no slot may move when the tab
-// you are on changes. Checked at both ends of the text scale and at 1.0x.
-check('the nav holds seven tabs', await page.locator('.nav-btn').count(), 7);
+// --- the Menu: every page, in a fixed order ---------------------------------
+await goTo('backlog');
+await openMenu();
 check(
-  'in a fixed order, with Debt between Notes and Money',
-  (await page.$$eval('.nav-btn .nav-label', (ls) => ls.map((l) => l.textContent.trim()))).join(' '),
-  'Today Inbox Tasks Backlog Notes Debt Money',
+  'the menu lists nine pages in this order',
+  (await page.$$eval('#menu .drawer-item > span:nth-child(2)', (ls) => ls.map((l) => l.textContent.trim()))).join(' '),
+  'Today Inbox Tasks Backlog Notes Debt Money Settings About',
 );
-const navState = () =>
+check('it is a modal dialog called Menu', await page.getByRole('dialog', { name: 'Menu' }).count(), 1);
+check('its list of pages is named', await page.getByRole('navigation', { name: 'Pages' }).count(), 1);
+check('opening it moves focus to the page you are on', await page.evaluate(() => document.activeElement?.getAttribute('data-page')), 'backlog');
+const currentItem = page.locator('#menu .drawer-item[aria-current="page"]');
+check('the page you are on is the one item marked current', `${await currentItem.count()} ${await currentItem.getAttribute('data-page')}`, '1 backlog');
+// Not colour alone: the weight and a rule on its edge say it too.
+const itemLook = (selector) =>
+  page.$eval(selector, (el) => {
+    const s = getComputedStyle(el);
+    return { weight: Number(s.fontWeight), rule: s.borderLeftWidth, ruleColour: s.borderLeftColor };
+  });
+const hereLook = await itemLook('#menu .drawer-item[aria-current="page"]');
+const otherLook = await itemLook('#menu .drawer-item[data-page="tasks"]');
+check('it is set bold, and the others are not', hereLook.weight >= 700 && otherLook.weight < 700, true);
+check('with a 4px rule on its left edge, which the others do not show', hereLook.rule === '4px' && otherLook.ruleColour === 'rgba(0, 0, 0, 0)', true);
+check('everything behind the Menu is inert', await page.evaluate(() => document.querySelector('.app-frame').inert), true);
+check('and does not scroll', await page.evaluate(() => document.documentElement.classList.contains('menu-open')), true);
+check('every page in it is at least 44px tall', (await page.$$eval('#menu .drawer-item', (bs) => bs.map((b) => b.getBoundingClientRect().height))).every((h) => h >= 44), true);
+// Tab goes round inside it rather than out to the page behind.
+await page.focus('#menu .drawer-item[data-page="about"]');
+await page.keyboard.press('Tab');
+check('Tab from the last item goes round to Close', await page.evaluate(() => document.activeElement?.textContent.trim()), 'Close');
+await page.keyboard.press('Shift+Tab');
+check('and Shift+Tab goes back round', await page.evaluate(() => document.activeElement?.getAttribute('data-page')), 'about');
+await page.screenshot({ path: `${OUT}/menu.png` });
+await page.keyboard.press('Escape');
+await page.waitForTimeout(200);
+check('Escape closes the Menu', await page.locator('#menu').count(), 0);
+check('and puts focus back on the Menu button', await page.evaluate(() => document.activeElement?.classList.contains('menu-btn')), true);
+check('and the page behind is no longer inert', await page.evaluate(() => document.querySelector('.app-frame').inert), false);
+check('nothing else moved', await onPage(), 'backlog');
+await openMenu();
+// The strip of page beside the drawer is one big Close.
+await page.mouse.click((page.viewportSize()?.width ?? 412) - 20, 400);
+await page.waitForTimeout(200);
+check('a tap on the page beside it closes the Menu', await page.locator('#menu').count(), 0);
+check('and stays on the page', await onPage(), 'backlog');
+await openMenu();
+await page.click('#menu button:text-is("Close")');
+await page.waitForTimeout(200);
+check('so does Close', await page.locator('#menu').count(), 0);
+await openMenu();
+await page.click('#menu .drawer-item[data-page="backlog"]');
+await page.waitForTimeout(200);
+check('choosing the page you are on closes it, and nothing else moves', `${await page.locator('#menu').count()} ${await onPage()}`, '0 backlog');
+await openMenu();
+await page.click('#menu .drawer-item[data-page="tasks"]');
+await page.waitForTimeout(200);
+check('choosing another page goes there and closes the Menu', `${await page.locator('#menu').count()} ${await onPage()}`, '0 tasks');
+check('with focus on the new page\'s heading, for TalkBack', await page.evaluate(() => (document.activeElement?.tagName === 'H1' ? document.activeElement.textContent : '')), 'Tasks');
+
+// --- the zone bar: each page's zones, in the registry's order -----------------
+const ZONE_REGISTRY = {
+  today: 'day:Today waiting:Waiting money:Money undated:No date',
+  inbox: 'open:To sort cleared:Dealt with',
+  tasks: 'dated:Has a date undated:No date finished:Finished search:Search',
+  backlog: 'open:To do routines:Routines finished:Finished',
+  notes: 'all:All notes search:Search',
+  debt: 'paychecks:Paychecks plan:Plan debts:Debts',
+  money: 'soon:Coming out paychecks:Paychecks subscriptions:Subscriptions income:Income',
+};
+const ZONED = Object.keys(ZONE_REGISTRY);
+/** A page's zone ids, in order: labels can hold spaces, ids cannot. */
+const zoneIdsOf = (id) => [...ZONE_REGISTRY[id].matchAll(/([a-z]+):/g)].map((m) => m[1]);
+const zoneTabs = () =>
+  page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => `${t.getAttribute('data-zone')}:${t.querySelector('.nav-label').textContent}`).join(' '));
+for (const id of ZONED) {
+  await goTo(id);
+  check(`${id}'s zones are, in order, ${ZONE_REGISTRY[id].replace(/[a-z]+:/g, '')}`, await zoneTabs(), ZONE_REGISTRY[id]);
+}
+for (const id of ['settings', 'about']) {
+  await goTo(id);
+  check(`${id} has no zone bar`, await page.locator('.zones').count(), 0);
+}
+await goTo('money', 'soon');
+check('the bar is a list of tabs, named for its page', await page.getByRole('tablist', { name: 'Money zones' }).count(), 1);
+check(
+  'each tab names the zone it shows, which is always there',
+  await page.$$eval('.zones [role="tab"]', (tabs) => tabs.every((t) => document.getElementById(t.getAttribute('aria-controls'))?.getAttribute('role') === 'tabpanel')),
+  true,
+);
+check(
+  'only the zone showing is in the Tab order',
+  await page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => t.getAttribute('tabindex')).join('')),
+  '0-1-1-1',
+);
+// The keys tabs always have: Left and Right go round, Home and End to the ends.
+await page.focus('.zones [role="tab"][aria-selected="true"]');
+await page.keyboard.press('ArrowLeft');
+check('Left from the first zone goes round to the last, and shows it', `${await zoneNow()} ${await page.evaluate(() => document.activeElement?.getAttribute('data-zone'))}`, 'income income');
+await page.keyboard.press('ArrowRight');
+// Sampled for a while, not read once: each switch is saved in the background,
+// and a save from the earlier switch landing late used to put the bar back on
+// Income for a moment.
+const afterRight = await page.evaluate(
+  () =>
+    new Promise((resolve) => {
+      const seen = new Set();
+      const started = performance.now();
+      const look = () => {
+        seen.add(document.querySelector('.zones [role="tab"][aria-selected="true"]')?.getAttribute('data-zone'));
+        if (performance.now() - started < 400) requestAnimationFrame(look);
+        else resolve([...seen].join(' '));
+      };
+      look();
+    }),
+);
+check('Right from the last goes round to the first, and stays there', afterRight, 'soon');
+await page.keyboard.press('End');
+check('End goes to the last', await zoneNow(), 'income');
+await page.keyboard.press('Home');
+check('Home goes to the first', await zoneNow(), 'soon');
+// The bold copy that reserves a label's width is drawn hidden, so it must not
+// be read out as part of the tab's name ("Routines Routines").
+await goTo('backlog');
+check(
+  'each tab is read out by its label alone',
+  await page.getByRole('tablist', { name: 'Backlog zones' }).getByRole('tab', { name: 'Routines', exact: true }).count(),
+  1,
+);
+// Changing zone shows the new one from its top.
+await goTo('money', 'soon');
+await page.evaluate(() => window.scrollTo(0, 400));
+await goTo('money', 'subscriptions');
+check('a new zone shows from its top', await page.evaluate(() => window.scrollY), 0);
+
+// --- the zone bar and the header, at every text size: each label on one line ----
+// The zone you are on is set bold. A slot is as wide as its own label set
+// bold, reserved on every slot, so every zone of every page is visited: none
+// may break, and no slot may move when the zone showing changes. Checked at
+// both ends of the text scale and at 1.0x, on a 412px and a 360px phone.
+const barState = () =>
   page.evaluate(() => {
-    const buttons = [...document.querySelectorAll('.nav-btn')];
-    const nav = document.querySelector('.nav');
+    const buttons = [...document.querySelectorAll('.zones [role="tab"]')];
+    const bar = document.querySelector('.zones');
     return {
       widths: buttons.map((b) => b.getBoundingClientRect().width),
       broken: buttons
@@ -367,54 +575,77 @@ const navState = () =>
         })
         .map((b) => b.textContent.trim()),
       clipped: buttons.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim()),
-      overflows: nav.scrollWidth > nav.clientWidth + 1,
+      overflows: bar.scrollWidth > bar.clientWidth + 1,
+    };
+  });
+const headerState = () =>
+  page.evaluate(() => {
+    const inner = document.querySelector('.header-inner');
+    const h1 = document.querySelector('.header h1');
+    return {
+      height: Math.round(document.querySelector('.header').getBoundingClientRect().height),
+      overflows: inner.scrollWidth > inner.clientWidth + 1 || document.documentElement.scrollWidth > window.innerWidth,
+      titleBreaks: h1.getBoundingClientRect().height > parseFloat(getComputedStyle(h1).lineHeight) * 1.5,
     };
   });
 for (const scale of ['0.9', '1', '1.6']) {
-await page.click('.header button:text-is("Settings")');
-await openSection('How it looks');
-await page.fill('#text-scale', scale);
-await page.click('.header button:text-is("Done")');
-for (const width of [412, 360]) {
-  await page.setViewportSize({ width, height: 915 });
-  const seen = [];
-  const tabs = await page.locator('.nav-btn').count();
-  for (let i = 0; i < tabs; i++) {
-    await page.locator('.nav-btn').nth(i).click();
-    await page.waitForTimeout(150);
-    seen.push(await navState());
+  await goTo('settings');
+  await openSection('How it looks');
+  await page.fill('#text-scale', scale);
+  await page.waitForTimeout(200);
+  for (const width of [412, 360]) {
+    await page.setViewportSize({ width, height: 915 });
+    const at = `at ${scale === '1' ? '1.0' : scale}x and ${width}px`;
+    const broken = new Set();
+    const clipped = new Set();
+    const shifts = [];
+    let narrowest = Infinity;
+    let overflows = false;
+    const headers = {};
+    for (const id of [...ZONED, 'settings', 'about']) {
+      await goTo(id);
+      headers[id] = await headerState();
+      if (!ZONE_REGISTRY[id]) continue;
+      const seen = [];
+      for (const zone of zoneIdsOf(id)) {
+        await page.click(`.zones [role="tab"][data-zone="${zone}"]`);
+        await page.waitForTimeout(120);
+        seen.push(await barState());
+      }
+      for (const s of seen) {
+        s.broken.forEach((b) => broken.add(b));
+        s.clipped.forEach((c) => clipped.add(c));
+        narrowest = Math.min(narrowest, ...s.widths);
+        overflows ||= s.overflows;
+      }
+      shifts.push(Math.max(...seen[0].widths.map((_, slot) => Math.max(...seen.map((s) => s.widths[slot])) - Math.min(...seen.map((s) => s.widths[slot])))));
+      // Back to the first zone, so each page starts the next size where it began.
+      await page.click(`.zones [role="tab"][data-zone="${zoneIdsOf(id)[0]}"]`);
+    }
+    check(`${at}, no zone label breaks onto two lines, whichever zone is showing`, [...broken].join(', '), '');
+    check(`${at}, no zone label is clipped`, [...clipped].join(', '), '');
+    check(`${at}, no slot changes width when the zone changes`, Math.max(...shifts) < 0.5, true);
+    check(`${at}, the narrowest slot is at least 44px`, narrowest >= 44, true);
+    check(`${at}, every zone bar fits the screen`, overflows, false);
+    const pages = Object.keys(headers);
+    check(`${at}, no header runs off the screen`, pages.filter((p) => headers[p].overflows).join(', '), '');
+    check(`${at}, no page's name breaks onto two lines`, pages.filter((p) => headers[p].titleBreaks).join(', '), '');
+    check(
+      `${at}, every page but Today has a header of the same height`,
+      new Set(pages.filter((p) => p !== 'today').map((p) => headers[p].height)).size,
+      1,
+    );
   }
-  const shift = Math.max(
-    ...seen[0].widths.map((_, slot) => {
-      const across = seen.map((s) => s.widths[slot]);
-      return Math.max(...across) - Math.min(...across);
-    }),
-  );
-  const at = `at ${scale === '1' ? '1.0' : scale}x and ${width}px`;
-  check(`${at}, no tab label breaks onto two lines, whichever tab is open`, [...new Set(seen.flatMap((s) => s.broken))].join(', '), '');
-  check(`${at}, no label is clipped`, [...new Set(seen.flatMap((s) => s.clipped))].join(', '), '');
-  check(`${at}, no slot changes width when the tab changes`, shift < 0.5, true);
-  check(`${at}, the narrowest slot is at least 44px`, Math.min(...seen.flatMap((s) => s.widths)) >= 44, true);
-  check(`${at}, the nav fits the screen`, seen.some((s) => s.overflows), false);
 }
-}
-// The bold copy that reserves a label's width is drawn hidden, so it must not
-// be read out as part of the tab's name ("Backlog Backlog").
-check(
-  'each tab is read out by its label alone',
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Backlog', exact: true }).count(),
-  1,
-);
 await page.setViewportSize({ width: 412, height: 915 });
-await page.click('.header button:text-is("Settings")');
+await goTo('settings');
 await openSection('How it looks');
 await page.fill('#text-scale', '1');
-await page.click('.header button:text-is("Done")');
-await page.click('.nav-btn:has-text("Money")');
+await page.waitForTimeout(200);
 
 // --- a subscription, in one journey -------------------------------------
-await page.click('.nav-btn:has-text("Money")');
-await page.click('button:has-text("Add a subscription")');
+await goTo('money', 'soon');
+await page.click('button:has-text("Add a subscription"):visible');
 await page.waitForSelector('#sub-name');
 // A recognised name should fill the category in by itself.
 // Service suggestions must be visible buttons with readable names. The
@@ -473,9 +704,12 @@ await page.screenshot({ path: `${OUT}/subscription-saved.png`, fullPage: true })
 
 await page.click('button:has-text("Done")');
 await page.waitForTimeout(400);
+check('Done goes back to the zone the subscription was added from', `${await onPage()} ${await zoneNow()}`, 'money soon');
 await page.screenshot({ path: `${OUT}/money.png`, fullPage: true });
 
 // --- exporting subscriptions to look for savings elsewhere ------------------
+// After the list, in the Subscriptions zone.
+await goTo('money', 'subscriptions');
 check(
   'the export says what goes in before you tap it',
   (await page.textContent('.main')).includes('Notes and how-to-cancel steps stay here'),
@@ -498,8 +732,8 @@ check('it never carries the cancel steps', subCsv.includes('Cancel Membership'),
 // --- a name is saved exactly as typed --------------------------------------
 // "Gym membership" used to be saved as "Gymmembership": the moment the box held
 // "Gym " it matched the Gym preset and was overwritten, space and all.
-await page.click('.nav-btn:has-text("Money")');
-await page.click('button:has-text("Add a subscription")');
+await goTo('money', 'soon');
+await page.click('button:has-text("Add a subscription"):visible');
 await page.waitForSelector('#sub-name');
 await page.locator('#sub-name').pressSequentially('Gym membership', { delay: 15 });
 check('a typed name keeps its spaces', await page.inputValue('#sub-name'), 'Gym membership');
@@ -515,8 +749,8 @@ await page.waitForTimeout(300);
 // The yearly figure is the one that would be quietly wrong if any of the
 // fortnightly maths were wrong, and the one you would never spot by eye:
 // £15 every 2 weeks is £390 a year, not £180 as twice-monthly would imply.
-await page.click('.nav-btn:has-text("Money")');
-await page.click('button:has-text("Add a subscription")');
+await goTo('money', 'soon');
+await page.click('button:has-text("Add a subscription"):visible');
 await page.waitForSelector('#sub-name');
 await page.fill('#sub-name', 'Veg box');
 await page.fill('#sub-amount', '15.00');
@@ -541,7 +775,7 @@ await page.waitForTimeout(300);
 // The other half of the same distinction, and the one that is invisible by eye:
 // £15 twice a month is £360 a year, not the £390 the fortnightly one above
 // costs. Two charges a year is exactly what separates them.
-await page.click('button:has-text("Add a subscription")');
+await page.click('button:has-text("Add a subscription"):visible');
 await page.waitForSelector('#sub-name');
 await page.fill('#sub-name', 'Cleaner');
 await page.fill('#sub-amount', '15.00');
@@ -595,7 +829,7 @@ await page.waitForTimeout(300);
 // A rhythm no button covers must survive a round-trip through the form. If
 // picking presets clobbered `every`, an every-2-months bill would silently
 // become monthly - doubling its yearly cost and changing its charge dates.
-await page.click('button:has-text("Add a subscription")');
+await page.click('button:has-text("Add a subscription"):visible');
 await page.waitForSelector('#sub-name');
 await page.fill('#sub-name', 'Odd one');
 await page.fill('#sub-amount', '20.00');
@@ -626,9 +860,10 @@ await page.waitForTimeout(300);
 // --- income, and the numbers nobody checks by hand ------------------------
 // $2,500 gross / $1,850 net, twice a month. That is 24 paycheques a year, not
 // 26 - take-home is $3,700 a month. Getting the frequency wrong here would
-// overstate income by two whole paycheques.
-await page.click('.nav-btn:has-text("Money")');
-await page.click('button:has-text("Add income")');
+// overstate income by two whole paycheques. Added from the Income zone, where
+// incomes are listed.
+await goTo('money', 'income');
+await page.click('button:has-text("Add income"):visible');
 await page.waitForSelector('#income-name');
 check('a new, unsaved income has no Delete button', await page.locator('form.card button:text-is("Delete")').count(), 0);
 await page.fill('#income-name', 'Main job');
@@ -657,7 +892,8 @@ await page.waitForTimeout(150);
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(500);
 
-check('the averages are folded away to start with', (await visibleText()).includes('60,000.00'), false);
+check('saving goes back to the Income zone, with the income in it', `${await zoneNow()} ${(await visibleText()).includes('Main job')}`, 'income true');
+check('the averages are folded away to start with, at the end of Income', (await visibleText()).includes('60,000.00'), false);
 check(
   'with what is left each month in their one line',
   /Left each month, on average: \$[\d,]+\.\d{2}/.test(await foldButton('Averages').textContent()),
@@ -731,10 +967,13 @@ check(
 // given - but both must parse as money, and neither may be negative.
 const amounts = [...flowText.matchAll(/\$([\d,]+\.\d{2})/g)].map((m) => Number(m[1].replace(/,/g, '')));
 check('every figure on the screen parses as money', amounts.every((n) => Number.isFinite(n)), true);
+await goTo('money', 'paychecks');
 await page.screenshot({ path: `${OUT}/money-flow.png`, fullPage: true });
 
 // --- every 6 months is offered as a button -------------------------------
-await page.click('button:has-text("Add a subscription")');
+// Added from the Subscriptions zone this time, which has the button too.
+await goTo('money', 'subscriptions');
+await page.click('button:has-text("Add a subscription"):visible');
 await page.waitForSelector('#sub-name');
 await page.fill('#sub-name', 'Domain renewal');
 await page.fill('#sub-amount', '18.00');
@@ -752,9 +991,10 @@ check('it is costed as two charges a year', halfYearly.includes('36.00'), true);
 check('and described in plain words', halfYearly.includes('every 6 months'), true);
 await page.click('button:has-text("Done")');
 await page.waitForTimeout(300);
+check('and Done goes back to Subscriptions, where it was added', await zoneNow(), 'subscriptions');
 
 // --- a note --------------------------------------------------------------
-await page.click('.nav-btn:has-text("Notes")');
+await goTo('notes', 'all');
 await page.click('button:has-text("New note")');
 await page.waitForSelector('#note-title');
 await page.fill('#note-title', "Doctor's office");
@@ -766,7 +1006,7 @@ await page.waitForTimeout(400);
 // Teach it a theme by writing several tagged notes, then check a brand-new
 // note about the same theme gets a suggestion, and that tapping it sticks.
 const makeNote = async (title, body, tags) => {
-  await page.click('.nav-btn:has-text("Notes")');
+  await goTo('notes', 'all');
   await page.click('button:has-text("New note")');
   await page.waitForSelector('#note-title');
   await page.fill('#note-title', title);
@@ -779,7 +1019,7 @@ const makeNote = async (title, body, tags) => {
 // Below the cold-start floor it must say nothing at all.
 await makeNote('Dentist appointment', 'Dentist appointment booked for Tuesday', 'health');
 await makeNote('Prescription', 'Prescription ready at the pharmacy', 'health');
-await page.click('.nav-btn:has-text("Notes")');
+await goTo('notes', 'all');
 await page.click('button:has-text("New note")');
 await page.waitForSelector('#note-title');
 await page.fill('#note-body', 'Dentist appointment next week');
@@ -797,7 +1037,7 @@ await makeNote('Plumber invoice', 'Invoice from the plumber needs paying', 'mone
 await makeNote('Refund', 'Refund for the invoice came through', 'money');
 await makeNote('Overcharge', 'Paid the invoice and got a refund on the overcharge', 'money');
 
-await page.click('.nav-btn:has-text("Notes")');
+await goTo('notes', 'all');
 await page.click('button:has-text("New note")');
 await page.waitForSelector('#note-title');
 await page.fill('#note-title', 'Call the dentist');
@@ -839,18 +1079,28 @@ check(
 await page.screenshot({ path: `${OUT}/tag-suggestions.png`, fullPage: true });
 
 // --- a notes search points at matching tasks too ------------------------------
-await page.click('.nav-btn:has-text("Notes")');
+// Search is a zone of its own, under its own heading, below the capture box.
+await goTo('notes', 'search');
+check('an empty search box says what it looks through', (await visibleText()).includes('Type a word to look through every note.'), true);
 await page.fill('input[aria-label="Search notes"]', 'dentist');
 await page.waitForTimeout(200);
-check('a notes search says how many tasks match too', await page.locator('button:has-text("matching task")').count(), 1);
+check('a notes search finds notes', (await visibleText()).includes('Dentist appointment'), true);
+check('and says how many tasks match too', await page.locator('button:has-text("matching task")').count(), 1);
+// Tasks is left on another zone first, so landing on Search means something.
+await goTo('tasks', 'finished');
+await goTo('notes', 'search');
+await page.fill('input[aria-label="Search notes"]', 'dentist');
+await page.waitForTimeout(200);
 await page.click('button:has-text("matching task")');
 await page.waitForTimeout(300);
-check('and opens Tasks with the same search', await page.inputValue('input[aria-label="Search tasks"]'), 'dentist');
+check('and opens Tasks on its Search zone', `${await onPage()} ${await zoneNow()}`, 'tasks search');
+check('with the same search in the box', await page.inputValue('input[aria-label="Search tasks"]'), 'dentist');
+check('and the matching task found', (await visibleText()).includes('Call the dentist'), true);
 
 // --- pinning is not an edit -----------------------------------------------------
 const doctorNote = async () => (await readStore('notes')).find((n) => n.title === "Doctor's office");
 const beforePin = await doctorNote();
-await page.click('.nav-btn:has-text("Notes")');
+await goTo('notes', 'all');
 await page.locator('.card', { hasText: "Doctor's office" }).locator('button:text-is("Pin")').click();
 await page.waitForTimeout(300);
 const afterPin = await doctorNote();
@@ -864,7 +1114,7 @@ check(
 
 // The tidy-up screen should offer the same suggestion for an untagged note.
 await makeNote('Old note', 'Dentist rang about the appointment', '');
-await page.click('.nav-btn:has-text("Notes")');
+await goTo('notes', 'all');
 await page.click('button:has-text("Tidy up untagged notes")');
 await page.waitForTimeout(400);
 check('tidy-up offers suggestions', await page.locator('button:has-text("+ health")').count() >= 1, true);
@@ -877,7 +1127,7 @@ const libraryNotes = async () =>
   (await readStore('notes')).filter((n) => n.title === 'Library card number 29384').length;
 await page.fill('#capture-input', 'Library card number 29384');
 await page.click('button:has-text("Save to inbox")');
-await page.click('.nav-btn:has-text("Inbox")');
+await goTo('inbox', 'open');
 await page.click('button:has-text("Keep as a note")');
 await page.waitForTimeout(300);
 check('keeping it as a note makes one note', await libraryNotes(), 1);
@@ -888,22 +1138,19 @@ check('undoing it takes that note away again', await libraryNotes(), 0);
 await page.click('button:has-text("Keep as a note")');
 await page.waitForTimeout(300);
 check('so filing it again leaves exactly one', await libraryNotes(), 1);
-// What has been cleared folds away under "Already dealt with", closed to start.
-check('what has been dealt with starts folded', await foldButton('Already dealt with').getAttribute('aria-expanded'), 'false');
+// What has been cleared moves to a zone of its own, "Dealt with".
+check('what has been dealt with is out of the way, in its own zone', (await visibleText()).includes('Already dealt with'), false);
+await goTo('inbox', 'cleared');
+check('the Dealt with zone holds it, under "Already dealt with"', (await visibleText()).includes('Already dealt with'), true);
+check('saying nothing was deleted', (await visibleText()).includes('Nothing is ever deleted when you clear it.'), true);
 check(
-  'saying how many, and that nothing was deleted',
-  /\d+ cleared\. Nothing is deleted when you clear it\./.test(await foldButton('Already dealt with').textContent()),
-  true,
-);
-await openSection('Already dealt with');
-check(
-  'opened, each one can be put back',
+  'and each one can be put back',
   (await page.locator('section[aria-label="Already dealt with"] button:text-is("Put it back"):visible').count()) > 0,
   true,
 );
 
 // --- today pulls it all together ----------------------------------------
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today', 'day');
 await page.waitForTimeout(400);
 const todayText = await page.textContent('.main');
 check('the task shows on Today', todayText.includes('Call the dentist'), true);
@@ -918,7 +1165,7 @@ await page.screenshot({ path: `${OUT}/today.png`, fullPage: true });
 // The order is the whole feature. If Critical did not float to the top, or the
 // chosen sort reset itself every time the app was opened, the list would be a
 // pile rather than a queue.
-await page.click('.nav-btn:has-text("Backlog")');
+await goTo('backlog', 'open');
 await page.waitForTimeout(300);
 check(
   'the backlog starts empty, and says so without calling it a failure',
@@ -964,7 +1211,7 @@ check(
 // survives the app being closed and reopened, which is how it is actually used.
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
-await page.click('.nav-btn:has-text("Backlog")');
+await goTo('backlog', 'open');
 await page.waitForTimeout(400);
 check(
   'the chosen sort is still chosen after a reload',
@@ -984,10 +1231,10 @@ await page.waitForTimeout(400);
 check('Undo puts it back in the list', (await visibleText()).includes('Book the optician'), true);
 await page.click('.item input[type="checkbox"]');
 await page.waitForTimeout(500);
-check('but is still there to be found, folded away', await foldButton('Finished').getAttribute('aria-expanded'), 'false');
-check('under a line that says so', (await foldButton('Finished').textContent()).includes('1 thing you finished'), true);
-await openSection('Finished');
-check('and reappears when asked for', (await visibleText()).includes('Book the optician'), true);
+check('but is still there to be found, in the Backlog\'s Finished zone', (await page.textContent('section[aria-label="Finished"]')).includes('Book the optician'), true);
+check('which the bar names "Finished"', await page.textContent('.zones [role="tab"][data-zone="finished"]'), 'Finished');
+await goTo('backlog', 'finished');
+check('and shows it when that zone is chosen', (await visibleText()).includes('Book the optician'), true);
 
 // --- a low day --------------------------------------------------------------
 // One button, first on Today, every day. On, Today keeps what has a time, what
@@ -1044,35 +1291,48 @@ await page.evaluate(
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 check('the three seeded tasks are on Today', (await page.textContent('.main')).includes('Sort the recycling'), true);
-/** Section headings on Today: the title alone, without a folded section's one line or its Show. */
-const todayHeadings = () =>
-  page.$$eval('.main h2', (hs) => hs.map((h) => (h.querySelector('.fold-title') ?? h).textContent.trim()));
+const TODAY_ZONES = ['day', 'waiting', 'money', 'undated'];
+/** Section headings in each of Today's zones: the title alone, without a folded section's one line or its Show. */
+const todayHeadings = async () => {
+  const out = {};
+  for (const zone of TODAY_ZONES) {
+    await goTo('today', zone);
+    out[zone] = await page.$$eval('.zone:not([hidden]) h2', (hs) => hs.map((h) => (h.querySelector('.fold-title') ?? h).textContent.trim()));
+  }
+  await goTo('today', 'day');
+  return out;
+};
 /** The low day's fold on "Going out today", inside the Today section. */
 const chargedFold = 'section[aria-label="Today"] h3.fold-heading > .fold-btn:has-text("Going out today")';
-const firstOnToday = () => page.$eval('.view:not([hidden]) > :first-child', (el) => el.textContent);
 const todaySection = () => page.textContent('section[aria-label="Today"]');
 
 check('Today offers a low day, as a labelled button', await page.locator('button:text-is("Today is a low day")').count(), 1);
-check('first on the screen', (await firstOnToday()).includes('Today is a low day'), true);
+check('first in the Today zone', (await firstInZone()).includes('Today is a low day'), true);
+check('and only there', await page.locator('button:text-is("Today is a low day")').count(), 1);
 const normalHeadings = await todayHeadings();
 await page.click('button:text-is("Today is a low day")');
 await page.waitForTimeout(400);
 check('turning it on keeps only today\'s date', (await storedSettings()).lowDay, todayKey);
-check('the same place says it is on, with a way to end it', (await firstOnToday()).includes('End low day'), true);
-check('and that it ends by itself at midnight', (await firstOnToday()).includes('ends by itself at midnight'), true);
-check('every section keeps its heading and its place', JSON.stringify(await todayHeadings()), JSON.stringify(normalHeadings));
+check('the same place says it is on, with a way to end it', (await firstInZone()).includes('End low day'), true);
+check('and that it ends by itself at midnight', (await firstInZone()).includes('ends by itself at midnight'), true);
+check('every section of every zone keeps its heading and its place', JSON.stringify(await todayHeadings()), JSON.stringify(normalHeadings));
 check('what has a time stays', (await todaySection()).includes('Call the dentist'), true);
 check('what you can do on a low day stays', (await todaySection()).includes('Water the plants'), true);
-check('Critical stays, even with no date', (await page.textContent('.main')).includes('Renew the parking permit'), true);
+await goTo('today', 'undated');
+check('Critical stays, even with no date', (await visibleText()).includes('Renew the parking permit'), true);
 check('the rest is folded away', (await page.textContent('.main')).includes('Sort the recycling'), false);
-check('money going out today is folded to one line', (await todaySection()).includes('Netflix'), false);
-check('which says so, with Show', (await page.locator(chargedFold).textContent()).includes('Hidden for today'), true);
+await goTo('today', 'money');
 // Next payday is always folded whole on a low day (money is never on its list).
+check('Next payday says "Hidden for today"', (await foldButton('Next payday').textContent()).includes('Hidden for today'), true);
 check(
-  'a section the low day folds says "Hidden for today", in the same look as any folded section',
-  (await page.locator('.main h2.fold-heading > .fold-btn[aria-expanded="false"]:has-text("Hidden for today")').count()) >= 1,
+  'in the same look as any folded section',
+  (await page.locator('.zone:not([hidden]) h2.fold-heading > .fold-btn[aria-expanded="false"]:has-text("Hidden for today")').count()) >= 1,
   true,
 );
+await goTo('today', 'day');
+check('money going out today is folded to one line', (await todaySection()).includes('Netflix'), false);
+check('which says so, with Show', (await page.locator(chargedFold).textContent()).includes('Hidden for today'), true);
+check('and the line about Money in "More on Today" says it is hidden for today', (await page.textContent('.signpost[data-zone="money"]')).includes('Hidden for today'), true);
 await page.screenshot({ path: `${OUT}/low-day.png`, fullPage: true });
 
 await page.click(chargedFold);
@@ -1083,6 +1343,12 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 check('the low day survives a reload', await page.locator('button:text-is("End low day")').count(), 1);
 check('but what you opened is not saved - it folds again', (await todaySection()).includes('Netflix'), false);
+await page.click(chargedFold);
+await page.waitForTimeout(200);
+check('opened for today, its heading says Hide', `${await page.getAttribute(chargedFold, 'aria-expanded')} ${(await page.textContent(chargedFold)).includes('Hide')}`, 'true true');
+await page.click(chargedFold);
+await page.waitForTimeout(200);
+check('which folds it back for today', (await todaySection()).includes('Netflix'), false);
 
 // The energy question is asked as the question it answers; what is stored does not change.
 await page.locator('.item', { hasText: 'Water the plants' }).locator('.details-btn').click();
@@ -1099,7 +1365,7 @@ await page.click('form.card button:text-is("Cancel")');
 await page.waitForTimeout(200);
 
 // A backup is a file that can travel. It must not carry a record of low days.
-await page.click('.header button:text-is("Settings")');
+await goTo('settings');
 await page.waitForTimeout(300);
 await openSection('Backup and restore');
 const lowDayBackup = await Promise.all([
@@ -1111,16 +1377,17 @@ const lowDayBackupText = readFileSync(`${OUT}/e2e-low-day-backup.json`, 'utf8');
 check('a backup made on a low day does not mention it', lowDayBackupText.includes('lowDay'), false);
 check('but still carries the settings', JSON.parse(lowDayBackupText).settings.backlogSort, 'az');
 check(
-  'including which sections you opened or folded, which is a preference',
-  JSON.parse(lowDayBackupText).settings.sections?.['backlog.finished'],
-  true,
+  'including the zone each page was left on, which is a preference',
+  JSON.parse(lowDayBackupText).settings.zones?.backlog,
+  'finished',
 );
-await page.click('.header button:text-is("Done")');
+check('but never Today\'s, which always opens on today', 'today' in (JSON.parse(lowDayBackupText).settings.zones ?? {}), false);
+await goTo('today');
 await page.waitForTimeout(300);
 
 await page.click('button:text-is("End low day")');
 await page.waitForTimeout(400);
-check('ending it puts the button back in the same place', (await firstOnToday()).includes('Today is a low day'), true);
+check('ending it puts the button back in the same place', (await firstInZone()).includes('Today is a low day'), true);
 check('and deletes the date rather than keeping it', 'lowDay' in (await storedSettings()), false);
 check('everything is showing again', (await page.textContent('.main')).includes('Sort the recycling'), true);
 
@@ -1155,17 +1422,21 @@ const debtCard = (name) => page.locator('section[aria-label="Your debts"] .card-
 const paycheck = page.locator('section[aria-label="This paycheck"]');
 const planSection = page.locator('section[aria-label="The plan"]');
 
-await page.click('.nav-btn:has-text("Debt")');
+await goTo('debt');
 await page.waitForTimeout(300);
-check('the Debt tab opens from the nav', await page.getAttribute('.nav-btn:has-text("Debt")', 'aria-current'), 'page');
-check('Add a debt is the first thing on it', (await firstOnToday()).includes('Add a debt'), true);
-const emptyDebt = await visibleText();
-check('an empty Debt tab says what this paycheck will show', emptyDebt.includes('Once you add a debt, this shows what each paycheck needs to cover'), true);
-check('and what the list is for, with nothing looked up', emptyDebt.includes('Nothing is looked up, and nothing leaves this phone.'), true);
-check('the plan says when it appears', emptyDebt.includes('The plan appears here once a debt has a balance'), true);
+check('the Debt page opens from the menu', await onPage(), 'debt');
+check('on its first zone, Paychecks', await zoneNow(), 'paychecks');
+check('Add a debt is the first thing on it', (await firstInZone()).includes('Add a debt'), true);
+check('an empty Debt page says what this paycheck will show', (await visibleText()).includes('Once you add a debt, this shows what each paycheck needs to cover'), true);
 await page.screenshot({ path: `${OUT}/debt-empty.png`, fullPage: true });
+await goTo('debt', 'debts');
+check('the Debts zone starts with Add a debt too', (await firstInZone()).includes('Add a debt'), true);
+check('and says what the list is for, with nothing looked up', (await visibleText()).includes('Nothing is looked up, and nothing leaves this phone.'), true);
+await goTo('debt', 'plan');
+check('the plan says when it appears', (await visibleText()).includes('The plan appears here once a debt has a balance'), true);
+await goTo('debt', 'paychecks');
 
-await page.click('button:text-is("Add a debt")');
+await page.click('button:text-is("Add a debt"):visible');
 await page.waitForSelector('#debt-name');
 check('a new, unsaved debt has no Delete button', await page.locator('form.card button:text-is("Delete")').count(), 0);
 await page.click('form.card button:text-is("Store card")');
@@ -1236,19 +1507,22 @@ check(
 );
 await page.click('button:text-is("Done")');
 await page.waitForTimeout(300);
+check('Done goes back to the zone the debt was added from', await zoneNow(), 'paychecks');
 
 const planText = await planSection.textContent();
 check('the plan gives the date it is all paid off', /All paid off by [A-Z][a-z]+ \d{4}/.test(planText), true);
 check('highest interest first is the starting order', await planSection.locator('button:text-is("Highest interest first")').getAttribute('aria-pressed'), 'true');
+await goTo('debt', 'plan');
 check('the plan says once, plainly, that it is a calculator', (await visibleText()).split('not financial advice').length - 1, 1);
+await goTo('debt', 'paychecks');
 check('This paycheck never folds', await paycheck.locator('.fold-btn').count(), 0);
-check('the screen has one large figure', await page.locator('.main .amount-key').count(), 1);
+check('the zone has one large figure', await page.locator('.zone:not([hidden]) .amount-key').count(), 1);
 check('and it is what this paycheck puts toward debt', (await paycheck.locator('.figure', { has: page.locator('.amount-key') }).textContent()).includes('From this paycheck'), true);
 check('the payment due tomorrow is on this paycheck, by its date', /Harbor Visa[\s\S]*by [A-Z][a-z]{2}, /.test(await paycheck.textContent()), true);
 check('with no amount chosen, it says what an extra would do', (await paycheck.textContent()).includes('No extra amount yet.'), true);
-await foldButton('Your debts').click();
-check('folded, Your debts says how many and the total, as of when', /1 debt, \$2,480\.00 as of [A-Z][a-z]{2} \d/.test(await foldButton('Your debts').textContent()), true);
-await foldButton('Your debts').click();
+await goTo('debt', 'debts');
+check('the Debts zone lists it with its balance, as of when', /Harbor Visa\s*\$2,480\.00[\s\S]*as of [A-Z][a-z]{2} \d/.test(await debtCard('Harbor Visa').textContent()), true);
+await goTo('debt', 'paychecks');
 
 // The amount from each check, from the suggestion - never filled in by itself.
 await paycheck.locator('button:text-is("Choose an amount")').click();
@@ -1281,6 +1555,7 @@ check('with the estimate kept alongside it', savedPlan?.untrackedMonthlyMinor, 1
 check('this paycheck now says where its extra goes, and why', (await paycheck.textContent()).includes('The extra goes to Harbor Visa, because'), true);
 check('and the plan shows the amount', (await planSection.textContent()).includes('From each check'), true);
 
+await goTo('debt', 'plan');
 await planSection.locator('button:text-is("Smallest balance first")').click();
 await page.waitForTimeout(300);
 check('switching the order saves at once', (await readStore('debtPlan'))[0]?.strategy, 'snowball');
@@ -1292,6 +1567,7 @@ await page.screenshot({ path: `${OUT}/debt-planned.png`, fullPage: true });
 
 // "Paid": one date and the balance after it - no record of payments - and Undo.
 await dismissToast();
+await goTo('debt', 'paychecks');
 const beforePaid = await storedDebt('Harbor Visa');
 await paycheck.locator('button:has-text("Paid")').first().click();
 const balanceNow = page.locator(`#balance-${beforePaid.id}`);
@@ -1309,7 +1585,8 @@ await page.click('.toast button:text-is("Undo")');
 await page.waitForTimeout(400);
 check('Undo puts the debt back exactly as it was', JSON.stringify(await storedDebt('Harbor Visa')), JSON.stringify(beforePaid));
 
-// Update balance, from the debt's own details.
+// Update balance, from the debt's own details, in the Debts zone.
+await goTo('debt', 'debts');
 await debtCard('Harbor Visa').locator('.details-btn').click();
 await debtCard('Harbor Visa').locator('button:text-is("Update balance")').click();
 await page.fill(`#balance-${beforePaid.id}`, '2400.00');
@@ -1342,7 +1619,7 @@ await debtCard('Harbor Visa').locator('.details-btn').click();
 
 // A medical bill at 0%, paid off and brought back.
 await dismissToast();
-await page.click('button:text-is("Add a debt")');
+await page.click('button:text-is("Add a debt"):visible');
 await page.waitForSelector('#debt-name');
 await page.fill('#debt-name', 'Riverside Clinic');
 await page.click('form.card button:text-is("Medical bill")');
@@ -1388,13 +1665,12 @@ check('back under Your debts', await debtCard('Riverside Clinic').count(), 1);
 
 // Money shows when payments go out, and what each check leaves - never a balance.
 const debtLeft = await paycheck.locator('.figure', { hasText: 'Left from this paycheck' }).locator('.amount').textContent();
-await page.click('.nav-btn:has-text("Money")');
-await page.waitForTimeout(300);
-const moneyWithDebt = await visibleText();
+// Every zone of Money, as you would see it visiting each in turn.
+const moneyWithDebt = await allZonesText('money');
 check('Money counts the debt payment in what is still to come out', /\d+ debt payments?, up to/.test(moneyWithDebt), true);
 check('each paycheck shows its debt payments', moneyWithDebt.includes('Debt payments due'), true);
 check('and the extra toward debt from the plan', moneyWithDebt.includes('Extra toward debt'), true);
-check('with the way to the Debt tab', (await page.locator('button:text-is("Open Debt")').count()) >= 1, true);
+check('with the way to the Debt page', (await page.locator('button:text-is("Open Debt")').count()) >= 1, true);
 check(
   '"Left from this paycheck" is the same figure on Money and on Debt',
   await page.locator('section[aria-label="Each paycheck"] .figure', { hasText: 'Left from this paycheck' }).locator('.amount').first().textContent(),
@@ -1402,21 +1678,42 @@ check(
 );
 check('Money never shows a debt balance', moneyWithDebt.includes('2,350.00') || moneyWithDebt.includes('640.00'), false);
 check('or a payoff date', /paid off/i.test(moneyWithDebt), false);
+await goTo('money', 'income');
 await openSection('Averages');
 check('the averages count the debt payments each month', (await visibleText()).includes('Debt payments each month'), true);
 await foldButton('Averages').click();
+await goTo('money', 'paychecks');
 await page.screenshot({ path: `${OUT}/money-with-debt.png`, fullPage: true });
 
+// The two pages send you to each other, and land on the zone that answers.
+await goTo('debt', 'plan');
+await goTo('money', 'paychecks');
+await page.click('section[aria-label="Each paycheck"] button:text-is("Open Debt")');
+await page.waitForTimeout(300);
+check('Money\'s "Open Debt" goes to Debt › Paychecks', `${await onPage()} ${await zoneNow()}`, 'debt paychecks');
+await goTo('money', 'income');
+await goTo('debt', 'paychecks');
+await paycheck.locator('button:text-is("See this paycheck on Money")').click();
+await page.waitForTimeout(300);
+check('"See this paycheck on Money" goes to Money › Paychecks', `${await onPage()} ${await zoneNow()}`, 'money paychecks');
+
 // Today lists the payment among the money leaving soon, as a payment.
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today', 'money');
 await page.waitForTimeout(300);
 check('Today lists the payment as "<name> payment"', (await visibleText()).includes('Harbor Visa payment'), true);
+await page.screenshot({ path: `${OUT}/today-with-debt.png`, fullPage: true });
+await goTo('today', 'day');
 check(
-  'counted apart from the charges in its folded line',
-  /payments?/.test(await page.locator('section[aria-label^="Money leaving soon"]').textContent()),
+  'counted apart from the charges in the line about Money on "More on Today"',
+  /charges? and \d+ payments?/.test(await page.textContent('.signpost[data-zone="money"]')),
   true,
 );
-await page.screenshot({ path: `${OUT}/today-with-debt.png`, fullPage: true });
+// A row there opens its zone, with focus on that zone's tab.
+await page.click('.signpost[data-zone="money"]');
+await page.waitForTimeout(200);
+check('tapping it opens Today › Money', await zoneNow(), 'money');
+check('with focus on the Money tab', await page.evaluate(() => document.activeElement?.id), 'tab-today-money');
+await goTo('today', 'day');
 
 // --- getting ready for an appointment ---------------------------------------
 // An offer in the editor, never automatic. It adds only what is missing, says
@@ -1469,16 +1766,18 @@ check(
   (await page.inputValue('#note-body')).startsWith('Questions to ask:\n- Do I need a filling?\n\nWhat was said:'),
   true,
 );
+check('the note opens on the Notes page, over its list', await onPage(), 'notes');
 await dismissToast();
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
+check('and saving it shows All notes', await zoneNow(), 'all');
 const saidNote = async () => (await readStore('notes')).find((n) => n.title === saidTitle);
 check(
   'the task keeps a link to the note',
   (await readStore('tasks')).find((t) => t.title === 'Dentist check-up')?.followUpNoteId,
   (await saidNote())?.id,
 );
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today');
 await page.waitForTimeout(300);
 check('the row then opens it instead', await apptRow.locator('button:text-is("Open what was said")').count(), 1);
 await apptRow.locator('button:text-is("Open what was said")').click();
@@ -1488,7 +1787,7 @@ await dismissToast();
 await page.click('form.card button:text-is("Delete")');
 await page.click('button:text-is("Yes, delete it")');
 await page.waitForTimeout(400);
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today');
 await page.waitForTimeout(300);
 check('with the note deleted, it offers to write one again', await apptRow.locator('button:text-is("Write down what was said")').count(), 1);
 await apptRow.locator('button:text-is("Write down what was said")').click();
@@ -1496,7 +1795,7 @@ await page.waitForSelector('#note-title');
 await dismissToast();
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today');
 await page.waitForTimeout(300);
 await apptRow.locator('.details-btn').click();
 await apptRow.locator('button:text-is("Edit")').click();
@@ -1509,8 +1808,9 @@ check('the appointment is deleted', (await readStore('tasks')).some((t) => t.tit
 check('and the note about it is not', (await readStore('notes')).filter((n) => n.title === saidTitle).length, 1);
 
 // --- a routine: steps you reuse ----------------------------------------------
-await page.click('.nav-btn:has-text("Backlog")');
-await page.waitForTimeout(300);
+await goTo('backlog', 'routines');
+check('with none yet, the Routines zone says what a routine is and how to make one', (await visibleText()).includes('To make one, open a task with steps and tick'), true);
+await goTo('backlog', 'open');
 await page.click('button:has-text("Add something")');
 await page.waitForSelector('#task-title');
 await page.fill('#task-title', 'Leaving the house');
@@ -1522,13 +1822,18 @@ await page.click('text=Reuse these steps each time');
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
 const routinesGroup = page.locator('section[aria-label="Routines"]');
-check('routines have their own group on the Backlog', await routinesGroup.locator('.item').count(), 1);
+check('routines have their own zone on the Backlog', await routinesGroup.locator('.item').count(), 1);
 check('and are not listed a second time', await page.locator('.main .item', { hasText: 'Leaving the house' }).count(), 1);
 for (const label of ['Priority', 'Oldest', 'Newest', 'A–Z']) {
   await page.click(`button:text-is("${label}")`);
   await page.waitForTimeout(250);
-  check(`sorted by ${label}, the routines are still at the top`, (await page.locator('.main .item').first().textContent()).includes('Leaving the house'), true);
+  check(
+    `sorted by ${label}, the routines stay in their own zone, apart from the list`,
+    `${await routinesGroup.locator('.item').count()} ${(await visibleText()).includes('Leaving the house')}`,
+    '1 false',
+  );
 }
+await goTo('backlog', 'routines');
 await page.screenshot({ path: `${OUT}/routines.png`, fullPage: true });
 
 const routineRow = page.locator('.item', { hasText: 'Leaving the house' });
@@ -1577,7 +1882,7 @@ check(
   'true,true,false',
 );
 check('and says so', await page.locator('.toast:has-text("Put back as it was.")').count(), 1);
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today', 'undated');
 await page.waitForTimeout(300);
 check(
   'a routine is not offered among the undated things on Today',
@@ -1586,7 +1891,7 @@ check(
 );
 
 // --- appearance settings really apply ------------------------------------
-await page.click('.header button:has-text("Settings")');
+await goTo('settings');
 await page.waitForTimeout(300);
 await openSection('How it looks');
 // :text-is(), not :has-text(). has-text() is a case-insensitive SUBSTRING match,
@@ -1635,54 +1940,76 @@ check('and switching back to a CSS theme clears them', await page.evaluate(() =>
 // --- sections that fold ------------------------------------------------------
 // One way to fold, everywhere: the heading is the button. A closed section
 // keeps its place and says in one line what is in it; what is in it is hidden,
-// not thrown away; the glance screens remember, and Settings starts closed on
-// every visit.
-await page.click('.nav-btn:has-text("Today")');
+// not thrown away; the pages you come back to remember, and Settings starts
+// closed on every visit. Zones now do most of what folds did; the averages
+// at the end of Money's Income zone are one that stays.
+await goTo('money', 'income');
 await page.waitForTimeout(300);
-// "No date on these" is always here by now: the backlog has undated tasks in it.
-const looseFold = foldButton('No date on these');
+const averagesFold = foldButton('Averages');
 check(
   'a section that folds is a button inside its heading, so TalkBack still finds the heading',
-  await page.locator('section[aria-label="No date on these"] > h2.fold-heading > button.fold-btn').count(),
+  await page.locator('section[aria-label="Averages"] > h2.fold-heading > button.fold-btn').count(),
   1,
 );
-check('it says it is open', await looseFold.getAttribute('aria-expanded'), 'true');
+check('it says it is closed, as the averages start', await averagesFold.getAttribute('aria-expanded'), 'false');
 check(
   'and points at what it opens',
-  await looseFold.evaluate((b) => Boolean(document.getElementById(b.getAttribute('aria-controls')))),
+  await averagesFold.evaluate((b) => Boolean(document.getElementById(b.getAttribute('aria-controls')))),
   true,
 );
-check('it is at least 44px tall to a finger', (await looseFold.boundingBox()).height >= 44, true);
-check('and full width', Math.round((await looseFold.boundingBox()).width), Math.round((await page.locator('section[aria-label="Today"]').boundingBox()).width));
-/** Where the heading sits on the page, not in the window, which may scroll. */
-const pageTop = (locator) => locator.evaluate((el) => Math.round(el.getBoundingClientRect().top + window.scrollY));
-const headingTop = await pageTop(looseFold);
-await looseFold.click();
-await page.waitForTimeout(200);
-check('tapping it folds the section', await looseFold.getAttribute('aria-expanded'), 'false');
-check('and the heading stays where it was', await pageTop(looseFold), headingTop);
+check('it is at least 44px tall to a finger', (await averagesFold.boundingBox()).height >= 44, true);
+check('and full width', Math.round((await averagesFold.boundingBox()).width), Math.round((await page.locator('section[aria-label="Income"]').boundingBox()).width));
 check(
-  'to its heading and one line: what it holds',
-  /No date on these\s*The top (one|\d) from your backlog/.test(await looseFold.textContent()),
+  'folded to its heading and one line: what it holds',
+  /Averages\s*Left each month, on average: \$[\d,]+\.\d{2}/.test(await averagesFold.textContent()),
   true,
 );
 check(
   'read out as its title and that line',
-  await page.getByRole('button', { name: /^No date on these The top (one|\d) from your backlog$/ }).count(),
+  await page.getByRole('button', { name: /^Averages Left each month, on average: \$[\d,]+\.\d{2}$/ }).count(),
   1,
 );
 check(
   'what is in it is hidden, not thrown away',
-  await page.locator('section[aria-label="No date on these"] > .fold-body').evaluate((el) => el.hidden && el.childElementCount > 0),
+  await page.locator('section[aria-label="Averages"] > .fold-body').evaluate((el) => el.hidden && el.childElementCount > 0),
   true,
 );
-check('only the change from how it starts is saved', (await storedSettings()).sections?.['today.loose'], false);
-check('and nothing is saved for sections left as they started', 'today.waiting' in ((await storedSettings()).sections ?? {}), false);
+/** Where the heading sits on the page, not in the window, which may scroll. */
+const pageTop = (locator) => locator.evaluate((el) => Math.round(el.getBoundingClientRect().top + window.scrollY));
+const headingTop = await pageTop(averagesFold);
+await averagesFold.click();
+await page.waitForTimeout(200);
+check('tapping it opens the section, in place', await averagesFold.getAttribute('aria-expanded'), 'true');
+check('and the heading stays where it was', await pageTop(averagesFold), headingTop);
+check('only the change from how it starts is saved', (await storedSettings()).sections?.['money.averages'], true);
+check('and nothing is saved for sections left as they started', 'debt.howItWorks' in ((await storedSettings()).sections ?? {}), false);
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
-check('a folded section is still folded after a reload', await looseFold.getAttribute('aria-expanded'), 'false');
+await goTo('money', 'income');
+check('an opened section is still open after a reload', await averagesFold.getAttribute('aria-expanded'), 'true');
+await averagesFold.click();
+await page.waitForTimeout(200);
 
-await page.click('.header button:has-text("Settings")');
+// --- zones a page was left on -------------------------------------------------
+// Each page opens on the zone you left it on - remembered, like a fold - except
+// Today, which always opens on today.
+await goTo('money', 'subscriptions');
+check('the zone a page was left on is saved', (await storedSettings()).zones?.money, 'subscriptions');
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(800);
+check('after a reload the app opens on Today, on its first zone', `${await onPage()} ${await zoneNow()}`, 'today day');
+await goTo('money');
+check('and Money opens on Subscriptions, where it was left', await zoneNow(), 'subscriptions');
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back to its first zone forgets it, rather than saving the first', 'money' in ((await storedSettings()).zones ?? {}), false);
+await goTo('today', 'waiting');
+check('Today\'s zone is never saved', 'today' in ((await storedSettings()).zones ?? {}), false);
+await goTo('notes');
+await goTo('today');
+check('so Today always opens on today, even from the Menu', await zoneNow(), 'day');
+
+await goTo('settings');
 await page.waitForTimeout(300);
 check(
   'Settings opens with every group folded',
@@ -1691,14 +2018,14 @@ check(
 );
 check('each group says where it stands', (await foldButton('App lock').textContent()).includes('Off'), true);
 await openSection('App lock');
-await page.click('.header button:text-is("Done")');
-await page.click('.header button:has-text("Settings")');
+await goTo('today');
+await goTo('settings');
 await page.waitForTimeout(300);
 check('and folds them all again on the next visit', await foldButton('App lock').getAttribute('aria-expanded'), 'false');
 check('without saving anything about them', Object.keys((await storedSettings()).sections ?? {}).some((k) => k.startsWith('settings.')), false);
 
 // --- blurring hides every amount, not just most of them ------------------
-// Folded sections included: their one line leaves the amount out instead.
+// In every zone, and in every one-line summary: a line leaves the amount out.
 await openSection('How it looks');
 await page.click('text=Blur money amounts until I tap them');
 await page.waitForTimeout(200);
@@ -1712,59 +2039,88 @@ const unblurred = () =>
     }
     return out;
   });
-await page.click('.nav-btn:has-text("Today")');
-await page.waitForTimeout(300);
-const billsTitle = await page.$eval('section[aria-label^="Money leaving soon"]', (s) => s.getAttribute('aria-label')).catch(() => null);
-if (billsTitle) await foldButton(billsTitle).click();
-await page.waitForTimeout(200);
-check('with blur on, Today shows no amount in the clear', (await unblurred()).join(' | '), '');
-await page.click('.nav-btn:has-text("Money")');
-await page.waitForTimeout(300);
-for (const title of ['Each paycheck', 'Subscriptions', 'Income']) await foldButton(title).click();
-await page.waitForTimeout(200);
-check('with blur on, Money shows no amount in the clear', (await unblurred()).join(' | '), '');
-check('a folded line still says what it can', (await foldButton('Subscriptions').textContent()).includes('active'), true);
-await page.screenshot({ path: `${OUT}/money-folded-blurred.png`, fullPage: true });
-await page.click('.nav-btn:has-text("Debt")');
-await page.waitForTimeout(300);
+/** Checks every zone of a page for an amount in the clear, and names the zones that show one. */
+const zonesInTheClear = async (pageId) => {
+  await goTo(pageId);
+  const ids = await page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => t.getAttribute('data-zone')));
+  const found = [];
+  for (const id of ids) {
+    await goTo(pageId, id);
+    const clear = await unblurred();
+    if (clear.length) found.push(`${id}: ${clear.join(' | ')}`);
+  }
+  return found.join(' / ');
+};
+check('with blur on, no zone of Today shows an amount in the clear', await zonesInTheClear('today'), '');
+await goTo('today', 'day');
+check(
+  'and the line about Money on "More on Today" still says what it can, without the amount',
+  /^Money\s*\d+ charges?/.test((await page.textContent('.signpost[data-zone="money"]')).trim()) &&
+    !(await page.textContent('.signpost[data-zone="money"]')).includes('$'),
+  true,
+);
+check('with blur on, no zone of Money shows an amount in the clear', await zonesInTheClear('money'), '');
+await goTo('money', 'subscriptions');
+await page.screenshot({ path: `${OUT}/money-blurred.png`, fullPage: true });
+await goTo('debt', 'plan');
 await openSection('How this works');
+await goTo('debt', 'debts');
 for (const details of await page.locator('section[aria-label="Your debts"] .details-btn').all()) await details.click();
+await goTo('debt', 'paychecks');
 await paycheck.locator('button:has-text("Paid")').first().click();
 await page.waitForTimeout(200);
-check('with blur on, the Debt tab shows no amount in the clear', (await unblurred()).join(' | '), '');
+check('with blur on, no zone of the Debt page shows an amount in the clear, its forms open', await zonesInTheClear('debt'), '');
+await goTo('debt', 'paychecks');
 await paycheck.locator('form button:text-is("Cancel")').click();
+await goTo('debt', 'debts');
 for (const details of await page.locator('section[aria-label="Your debts"] .details-btn').all()) await details.click();
-for (const title of ['The plan', 'Your debts', 'How this works']) await foldButton(title).click();
+await goTo('debt', 'plan');
+await foldButton('How this works').click();
 await page.waitForTimeout(200);
-check('and its folded lines leave the amounts out', (await unblurred()).join(' | '), '');
-check('while still saying how many debts', (await foldButton('Your debts').textContent()).includes('2 debts'), true);
-await page.screenshot({ path: `${OUT}/debt-folded-blurred.png`, fullPage: true });
-for (const title of ['The plan', 'Your debts']) await foldButton(title).click();
+check('and its folded lines leave the amounts out', await zonesInTheClear('debt'), '');
+check('while still listing both debts', await page.locator('section[aria-label="Your debts"] .card-tight').count(), 2);
+await page.screenshot({ path: `${OUT}/debt-blurred.png`, fullPage: true });
 
-// "Put every section back the way it started", with Undo.
-await page.click('.header button:has-text("Settings")');
+// "Put every page back the way it started", with Undo: zones and folds both.
+await goTo('money', 'subscriptions');
+await goTo('debt', 'plan');
+await openSection('How this works');
+await goTo('settings');
 await openSection('How it looks');
 await page.click('text=Blur money amounts until I tap them');
 await page.waitForTimeout(200);
 const foldedBefore = (await storedSettings()).sections;
+const zonesBefore = (await storedSettings()).zones;
+check(
+  'before putting them back, folds and zones are both remembered',
+  `${foldedBefore?.['debt.howItWorks']} ${zonesBefore?.money} ${zonesBefore?.debt}`,
+  'true subscriptions plan',
+);
 await dismissToast();
-await page.click('button:text-is("Put every section back the way it started")');
+await page.click('button:text-is("Put every page back the way it started")');
 await page.waitForTimeout(300);
-check('putting every section back says so, with Undo', await page.locator('.toast:has-text("Every section is back the way it started") button:text-is("Undo")').count(), 1);
+check('putting every page back says so, with Undo', await page.locator('.toast:has-text("Every page is back the way it started") button:text-is("Undo")').count(), 1);
 check('and forgets every fold, not just some', 'sections' in (await storedSettings()), false);
+check('and every zone a page was left on', 'zones' in (await storedSettings()), false);
 await page.click('.toast button:text-is("Undo")');
 await page.waitForTimeout(300);
 check('Undo brings back exactly the folds you had', JSON.stringify((await storedSettings()).sections), JSON.stringify(foldedBefore));
+check('and exactly the zones', JSON.stringify((await storedSettings()).zones), JSON.stringify(zonesBefore));
 await dismissToast();
-await page.click('button:text-is("Put every section back the way it started")');
+await page.click('button:text-is("Put every page back the way it started")');
 await page.waitForTimeout(300);
-await page.click('.nav-btn:has-text("Money")');
+await dismissToast();
+await page.click('button:text-is("Put every page back the way it started")');
 await page.waitForTimeout(300);
-check('and then Money opens as it started', await foldButton('Income').getAttribute('aria-expanded'), 'true');
+check('a second time, it says there is nothing to put back', await page.locator('.toast:has-text("Every page is already the way it started.")').count(), 1);
+await goTo('money');
+await page.waitForTimeout(300);
+check('and then Money opens as it started, on Coming out', await zoneNow(), 'soon');
+await goTo('money', 'income');
 check('with the averages folded, as they started', await foldButton('Averages').getAttribute('aria-expanded'), 'false');
 
 // --- an ended job can be brought back ------------------------------------
-await page.click('.nav-btn:has-text("Money")');
+await goTo('money', 'income');
 await page.click('.card:has-text("Main job") button:text-is("Edit")');
 await page.waitForSelector('#income-name');
 await page.click('button:text-is("This has ended")');
@@ -1780,7 +2136,7 @@ await page.waitForTimeout(400);
 check('and made current again from there', (await page.textContent('.main')).includes('Next:'), true);
 
 // --- calendar notes are opt-in, and the switch works ---------------------
-await page.click('.header button:has-text("Settings")');
+await goTo('settings');
 await page.waitForTimeout(200);
 await openSection('Reminders and calendar');
 check(
@@ -1865,11 +2221,30 @@ await page.click('button:has-text("Yes, replace everything")');
 await page.waitForTimeout(600);
 check('and the backup puts every table back', JSON.stringify(await rowCounts()), JSON.stringify(before));
 
-// --- ?view=debt opens the Debt tab ----------------------------------------
+// --- shortcuts: ?view= opens a page on its first zone ----------------------
+// Each page is left on another zone first, so landing on the first means something.
+await goTo('debt', 'plan');
 await page.goto(`${BASE}?view=debt`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
-check('?view=debt opens on the Debt tab', await page.getAttribute('.nav-btn:has-text("Debt")', 'aria-current'), 'page');
+check('?view=debt opens on the Debt page', await onPage(), 'debt');
+check('on its first zone, Paychecks', await zoneNow(), 'paychecks');
+check('which is then where it is left', 'debt' in ((await storedSettings()).zones ?? {}), false);
 check('with the restored debts on it', (await visibleText()).includes('Harbor Visa'), true);
+await goTo('backlog', 'finished');
+await page.goto(`${BASE}?view=backlog`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+check('?view=backlog opens Backlog on To do', `${await onPage()} ${await zoneNow()}`, 'backlog open');
+await page.goto(`${BASE}?view=settings`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+check('?view=settings opens Settings', await onPage(), 'settings');
+await goTo('money', 'income');
+await page.goto(`${BASE}?view=money&add=subscription`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+check('?view=money&add=subscription opens the subscription form', await page.locator('#sub-name').count(), 1);
+await page.click('form.card button:text-is("Cancel")');
+await page.waitForTimeout(300);
+check('and Cancel leaves you on Money › Coming out, where the button is', `${await onPage()} ${await zoneNow()}`, 'money soon');
+await goTo('today');
 
 // --- the privacy claim ---------------------------------------------------
 // The whole promise is that this page cannot send your data anywhere. Prove it
@@ -1909,7 +2284,11 @@ await new Promise((r) => setTimeout(r, 1500));
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(2500);
 check('the app still renders with no server', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
-check('the whole nav is there', await page.evaluate(() => document.querySelectorAll('.nav-btn').length), 7);
+check(
+  "the Menu button is there, and Today's 4 zone tabs",
+  await page.evaluate(() => `${document.querySelectorAll('.header .menu-btn').length} ${document.querySelectorAll('.zones [role="tab"]').length}`),
+  '1 4',
+);
 check('the data is still there', (await page.textContent('.main')).includes('Call the dentist'), true);
 await page.screenshot({ path: `${OUT}/offline.png`, fullPage: true });
 

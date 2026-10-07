@@ -64,12 +64,12 @@ export default function TaskRow({
     const note = await saveNote(blankNote(followUpNote(task, todayKey())));
     await saveTask({ ...task, followUpNoteId: note.id });
     toast("Started a note — it's in Notes.");
-    navigate('notes', { note });
+    navigate('notes', { zone: 'all', note });
   };
 
   const openWhatWasSaid = async () => {
     const note = linkedNoteId ? await db.notes.get(linkedNoteId) : undefined;
-    if (note) navigate('notes', { note });
+    if (note) navigate('notes', { zone: 'all', note });
     else await writeWhatWasSaid();
   };
 

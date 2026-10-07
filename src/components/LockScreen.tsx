@@ -6,9 +6,9 @@ import { FormError } from './ui';
 
 /**
  * The lock screen. When Steady is locked this is the ONLY thing rendered - App
- * does not mount the header, the nav, any tab, a toast or the missed-reminders
- * card behind it - so there is nothing in the page to read, whatever anyone
- * does to the styles.
+ * does not mount the header, the Menu, the zone bar, any page, a toast or the
+ * missed-reminders card behind it - so there is nothing in the page to read,
+ * whatever anyone does to the styles.
  *
  * Plain on purpose: the name of the app, a number pad, and a way in for when
  * the PIN has gone. No date, no counts, nothing that says what is inside.

@@ -17,7 +17,7 @@ import { FormError, Section, useToast } from './ui';
 
 /**
  * Where a change to the lock has got to. Nothing is saved until the last step,
- * so leaving part-way - Cancel, Back, another tab - changes nothing.
+ * so leaving part-way - Cancel, Back, another page - changes nothing.
  */
 type Flow =
   | { step: 'idle' }

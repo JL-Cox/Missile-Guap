@@ -2,15 +2,20 @@
  * Sections that fold, and how each one starts.
  *
  * A long screen is easier to face when the parts you are not using today can
- * be folded down to one line. Every section that folds is listed here, with
- * the way it starts on a phone that has never folded anything. This is the one
- * place those defaults live: a section says which entry it is, never whether
- * it starts open, so there is no second place for a default to drift from.
+ * be folded down to one line. Most of that job is now done by zones - each
+ * page is split into a few short ones, see src/lib/zones.ts - so a fold is
+ * kept only where it still earns its place inside a zone: reference you look
+ * at now and then, and Settings' groups.
+ *
+ * Every section that folds is listed here, with the way it starts on a phone
+ * that has never folded anything. This is the one place those defaults live:
+ * a section says which entry it is, never whether it starts open, so there is
+ * no second place for a default to drift from.
  *
  * `memory` says what happens to a fold you changed:
  *
  *   remember - kept, in settings, so the screen opens the way you left it.
- *              For the screens you glance at many times a day.
+ *              For the pages you come back to many times a week.
  *   visit    - forgotten when you leave. Settings and About look the same
  *              every time you open them, because you go there to do one
  *              thing and a page that remembers is a page that moved.
@@ -28,19 +33,8 @@ export interface Fold {
 }
 
 export const FOLDS = {
-  'today.waiting': { open: true, memory: 'remember' },
-  'today.bills': { open: true, memory: 'remember' },
-  'today.nextPayday': { open: true, memory: 'remember' },
-  'today.loose': { open: true, memory: 'remember' },
-  'inbox.cleared': { open: false, memory: 'remember' },
-  'backlog.routines': { open: true, memory: 'remember' },
-  'backlog.finished': { open: false, memory: 'remember' },
-  'money.paychecks': { open: true, memory: 'remember' },
-  'money.subscriptions': { open: true, memory: 'remember' },
-  'money.income': { open: true, memory: 'remember' },
+  // Reference figures, at the end of Money's Income zone: there when wanted.
   'money.averages': { open: false, memory: 'remember' },
-  'debt.plan': { open: true, memory: 'remember' },
-  'debt.list': { open: true, memory: 'remember' },
   // Looking back, and the reference page: there when wanted, folded to start.
   'debt.paidOff': { open: false, memory: 'remember' },
   'debt.howItWorks': { open: false, memory: 'remember' },
@@ -54,6 +48,28 @@ export const FOLDS = {
   'settings.privacy': { open: false, memory: 'visit' },
   'about.updates': { open: false, memory: 'visit' },
 } as const satisfies Record<string, Fold>;
+
+/**
+ * Folds that a page's zones now do the job of (see src/lib/zones.ts): each of
+ * these sections became a zone of its own, or fits in about one screen inside
+ * one. They are listed so the words are never given to anything else. A value
+ * saved for one is ignored by isOpen and dropped the next time any fold is
+ * saved, so nothing needs migrating.
+ */
+export const RETIRED_FOLDS = [
+  'today.waiting',
+  'today.bills',
+  'today.nextPayday',
+  'today.loose',
+  'inbox.cleared',
+  'backlog.routines',
+  'backlog.finished',
+  'money.paychecks',
+  'money.subscriptions',
+  'money.income',
+  'debt.plan',
+  'debt.list',
+] as const;
 
 export type FoldId = keyof typeof FOLDS;
 

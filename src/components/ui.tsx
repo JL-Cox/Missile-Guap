@@ -2,6 +2,7 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useRef, us
 import type { DateKey, Note } from '../types';
 import { addDays } from '../lib/time';
 import { FOLDS, isOpen as savedOpen, type Fold, type FoldId } from '../lib/sections';
+import { pageTitle, zonesOf, type PageId, type ZonedPage, type ZoneOf } from '../lib/zones';
 
 /** Small shared pieces. Everything is labelled in words - no icon-only controls. */
 
@@ -48,7 +49,7 @@ export function Section(props: FixedSection | FoldingSection) {
 /**
  * How a remembered fold is read and changed. App provides the real one, which
  * reads and saves `settings.sections`; this default is simply how every
- * section starts. Today lays the low day over it - see Today.tsx.
+ * section starts.
  */
 export interface Folds {
   isOpen: (id: FoldId) => boolean;
@@ -284,7 +285,9 @@ export function Toast({ toast, onDismiss }: { toast: ToastState; onDismiss: () =
    On Android, Back used to leave the app from anywhere, because nothing in it
    ever made a history entry. A view with something open on top of it - an
    editor, a confirmation - declares it here, and App turns that into a history
-   entry, so Back closes the editor rather than the app. See App.tsx.
+   entry, so Back closes the editor rather than the app. It also takes the
+   zone bar away while it is open: the whole page is the form then, and
+   Save, Cancel or Back brings the bar back on the same zone. See App.tsx.
    -------------------------------------------------------------------------- */
 
 export const LayerContext = createContext<(close: (() => void) | null) => void>(() => undefined);
@@ -302,22 +305,138 @@ export function useBackLayer(open: boolean, close: () => void): void {
 }
 
 /* ---------------------------------------------------------------------------
-   Moving between screens from inside one
+   Moving between pages from inside one
    -------------------------------------------------------------------------- */
 
+export interface NavigateOptions<P extends PageId> {
+  /** The zone to land on, where it matters: "See this paycheck on Money" lands on Paychecks. */
+  zone?: P extends ZonedPage ? ZoneOf<P> : never;
+  /** Opens Tasks on its Search zone with this already in the box. */
+  query?: string;
+  /** Opens Notes with this note in the editor: how a task row gets you to the note it points at. */
+  note?: Note;
+}
+
 /**
- * `query` opens Tasks with a search already in the box; `note` opens Notes with
- * that note in the editor, which is how a task row gets you to the note it
- * points at. Money and Debt send you to each other, and Today to Debt, with
- * nothing to hand over.
+ * Changes page, the way choosing it from the Menu does, and optionally lands
+ * on one of its zones. Money and Debt send you to each other, Today to Debt
+ * and the Backlog, and Notes to Tasks with a search.
  */
-export type Navigate = (
-  view: 'tasks' | 'notes' | 'money' | 'debt',
-  options?: { query?: string; note?: Note },
-) => void;
+export type Navigate = <P extends PageId>(page: P, options?: NavigateOptions<P>) => void;
 export const NavigateContext = createContext<Navigate>(() => undefined);
 export function useNavigate(): Navigate {
   return useContext(NavigateContext);
+}
+
+/* ---------------------------------------------------------------------------
+   Zones
+
+   Each working page is split into a few zones, so no page is one long scroll
+   (see src/lib/zones.ts). The bar at the bottom picks one; the page draws
+   every zone it has, and the ones not picked are hidden rather than removed,
+   so an open Details row or a "Show 2 more" is as you left it when you come
+   back - the same reason a folded section is hidden rather than removed.
+   -------------------------------------------------------------------------- */
+
+export interface ZoneState {
+  page: ZonedPage;
+  /** The zone showing now. */
+  zone: string;
+  /** Shows another of this page's zones from its top. `focusTab` moves focus to its tab in the bar. */
+  choose: (zone: string, focusTab?: boolean) => void;
+}
+
+export const ZoneContext = createContext<ZoneState | null>(null);
+
+export function useZone(): ZoneState | null {
+  return useContext(ZoneContext);
+}
+
+/**
+ * One zone of a page: a tab panel, named by its tab in the bar. Every zone is
+ * always drawn, and the bar's tabs point at them, so `aria-controls` always
+ * leads somewhere real. test/zones.test.ts checks each page draws each of its
+ * zones exactly once.
+ */
+export function Zone({ id, children }: { id: string; children: ReactNode }) {
+  const at = useZone();
+  if (!at) return <div className="zone">{children}</div>;
+  return (
+    <div
+      role="tabpanel"
+      id={`zone-${at.page}-${id}`}
+      aria-labelledby={`tab-${at.page}-${id}`}
+      className="zone"
+      hidden={at.zone !== id}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The bar at the bottom: this page's zones, as tabs. TalkBack reads one as
+ * "Coming out, tab, 1 of 4, selected", which says where you are, how many
+ * there are and which one is showing. Labels are words, never icons.
+ *
+ * The keys are the usual ones for tabs: Left and Right move along and wrap,
+ * Home and End go to the ends, and moving shows that zone straight away.
+ * Only the zone showing is in the Tab order, so Tab leaves the bar in one go.
+ */
+export function ZoneBar({
+  page,
+  zone,
+  onChoose,
+}: {
+  page: ZonedPage;
+  zone: string;
+  onChoose: (zone: string) => void;
+}) {
+  const zones = zonesOf(page);
+  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
+  const moveTo = (index: number) => {
+    const next = (index + zones.length) % zones.length;
+    onChoose(zones[next].id);
+    tabs.current[next]?.focus();
+  };
+
+  return (
+    <div className="nav zones" role="tablist" aria-label={`${pageTitle(page)} zones`}>
+      {zones.map((z, i) => {
+        const selected = z.id === zone;
+        return (
+          <button
+            key={z.id}
+            ref={(el) => {
+              tabs.current[i] = el;
+            }}
+            type="button"
+            role="tab"
+            className="nav-btn"
+            id={`tab-${page}-${z.id}`}
+            data-zone={z.id}
+            aria-selected={selected}
+            aria-controls={`zone-${page}-${z.id}`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChoose(z.id)}
+            onKeyDown={(e) => {
+              const to =
+                e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? zones.length - 1 : null;
+              if (to === null) return;
+              e.preventDefault();
+              moveTo(to);
+            }}
+          >
+            {/* The bold width is reserved on every tab (see .nav-label), so the
+                slots never shift when the zone showing changes. */}
+            <span className="nav-label" data-label={z.label}>
+              {z.label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 /**

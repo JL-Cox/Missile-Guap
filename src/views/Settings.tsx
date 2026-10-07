@@ -29,7 +29,7 @@ import { formatBytes, requestPersistence, storageOrigin, storageStatus, type Sto
 import { shareOrDownload } from '../lib/share';
 import { versionLabel } from '../lib/version';
 import { lockAfterLabel, lockAvailable, readLock } from '../lib/lock';
-import { ConfirmButton, FormError, Section, useToast } from '../components/ui';
+import { ConfirmButton, FormError, Section, useNavigate, useToast } from '../components/ui';
 import LockSettings from '../components/LockSettings';
 
 /**
@@ -96,17 +96,15 @@ function swatchStyle(tokens: Record<string, string>): CSSProperties {
 export default function Settings({
   settings,
   onChange,
-  onAbout,
   focus = null,
 }: {
   settings: SettingsType;
   onChange: (settings: SettingsType) => void;
-  /** Opens the About page: version, what's new, recent updates. */
-  onAbout: () => void;
   /** A group to open on arrival, for a button elsewhere that sends you to it. */
   focus?: 'lock' | null;
 }) {
   const onToast = useToast();
+  const navigate = useNavigate();
   const [permission, setPermission] = useState<PermissionState>(notificationSupport());
   const [importMode, setImportMode] = useState<ImportMode>('merge');
   const [importError, setImportError] = useState('');
@@ -239,20 +237,24 @@ export default function Settings({
   };
 
   /*
-    "Put every section back the way it started". Every fold you changed is
-    forgotten at once, and Undo brings back exactly the ones you had.
+    "Put every page back the way it started". The zone each page was left on
+    and every fold you changed are forgotten at once, and Undo brings back
+    exactly what you had - and only that, so a setting that was not stored
+    before is not stored after.
   */
-  const resetSections = async () => {
-    const before = settings.sections;
-    if (!before || Object.keys(before).length === 0) {
-      onToast('Every section is already the way it started.');
+  const resetPages = async () => {
+    const { sections, zones } = settings;
+    const hadSections = Boolean(sections && Object.keys(sections).length > 0);
+    const hadZones = Boolean(zones && Object.keys(zones).length > 0);
+    if (!hadSections && !hadZones) {
+      onToast('Every page is already the way it started.');
       return;
     }
-    onChange(await forgetSettings('sections'));
-    onToast('Every section is back the way it started.', {
+    onChange(await forgetSettings('sections', 'zones'));
+    onToast('Every page is back the way it started.', {
       label: 'Undo',
       run: async () => {
-        onChange(await saveSettings({ sections: before }));
+        onChange(await saveSettings({ ...(hadSections ? { sections } : {}), ...(hadZones ? { zones } : {}) }));
         onToast('Put back as you had them.');
       },
     });
@@ -347,12 +349,13 @@ export default function Settings({
 
           <div className="stack-sm">
             <div className="btn-row">
-              <button type="button" className="btn btn-sm" onClick={() => void resetSections()}>
-                Put every section back the way it started
+              <button type="button" className="btn btn-sm" onClick={() => void resetPages()}>
+                Put every page back the way it started
               </button>
             </div>
             <p className="faint">
-              Opens or folds each section the way it was when you first used Steady. Nothing else changes.
+              Each page opens on its first zone again, and every section opens or folds the way it did when you
+              first used Steady. Nothing else changes.
             </p>
           </div>
         </Section>
@@ -494,7 +497,7 @@ export default function Settings({
           </p>
           <p className="faint">
             Debt payments are not in it. A lender's name and an amount say more than a streaming bill does, so each
-            debt has its own "Add to my calendar" button on the Debt tab, and goes in only if you choose it.
+            debt has its own "Add to my calendar" button on the Debt page, and goes in only if you choose it.
           </p>
           <p className="faint">
             {calendarContents('all', settings.calendarIncludeNotes)} {CALENDAR_CAUTION}
@@ -726,7 +729,7 @@ export default function Settings({
         <div className="card stack-sm">
           <p>Steady, {versionLabel().toLowerCase()}</p>
           <div className="btn-row">
-            <button type="button" className="btn btn-sm" onClick={onAbout}>
+            <button type="button" className="btn btn-sm" onClick={() => navigate('about')}>
               About and what's new
             </button>
           </div>
@@ -853,7 +856,7 @@ function CustomThemeEditor({
           })}
         </div>
         <p className="faint">
-          Used for the tab you are on and the button you are about to press. Nothing else in the app is colored,
+          Used to show where you are and the button you are about to press. Nothing else in the app is colored,
           which is what keeps it quiet.
         </p>
       </fieldset>

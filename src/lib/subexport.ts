@@ -59,7 +59,7 @@ const COLUMNS = [
 /**
  * Every subscription not marked as cancelled, most expensive first, with a
  * total row at the end. Monthly and yearly figures use the same rules as the
- * Money tab, so the file and the screen agree.
+ * Money page, so the file and the page agree.
  */
 export function subscriptionsCsv(subs: Subscription[], options: SubscriptionExportOptions): string {
   const { today, includeNotes = false } = options;

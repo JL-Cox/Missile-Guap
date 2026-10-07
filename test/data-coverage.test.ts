@@ -268,7 +268,7 @@ describe('settings that stay on this phone', () => {
  */
 describe('folded sections are a preference that travels', () => {
   const settingsRow = () => (store.settings[0] ?? {}) as Record<string, unknown>;
-  const folded = { 'today.bills': false, 'money.averages': true };
+  const folded = { 'debt.paidOff': true, 'money.averages': true };
 
   it('is not a device-only setting', () => {
     expect([...DEVICE_SETTINGS]).not.toContain('sections');
@@ -283,7 +283,7 @@ describe('folded sections are a preference that travels', () => {
   it('is put back by a replace restore', async () => {
     fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', sections: folded } as never] });
     const file = parseBackup(JSON.stringify(await exportBackup()));
-    fakeStorage({ settings: [{ id: 'settings', sections: { 'inbox.cleared': true } } as never] });
+    fakeStorage({ settings: [{ id: 'settings', sections: { 'debt.howItWorks': true } } as never] });
     await importBackup(file, 'replace');
     expect(settingsRow().sections).toEqual(folded);
   });
@@ -291,9 +291,9 @@ describe('folded sections are a preference that travels', () => {
   it('is left as this phone has it by a merge restore', async () => {
     fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', sections: folded } as never] });
     const file = parseBackup(JSON.stringify(await exportBackup()));
-    fakeStorage({ settings: [{ id: 'settings', sections: { 'inbox.cleared': true } } as never] });
+    fakeStorage({ settings: [{ id: 'settings', sections: { 'debt.howItWorks': true } } as never] });
     await importBackup(file, 'merge');
-    expect(settingsRow().sections).toEqual({ 'inbox.cleared': true });
+    expect(settingsRow().sections).toEqual({ 'debt.howItWorks': true });
   });
 
   it('is kept by Delete everything', async () => {
@@ -321,6 +321,76 @@ describe('folded sections are a preference that travels', () => {
     fakeStorage({ settings: [{ id: 'settings', theme: 'amber', sections: folded } as never] });
     const after = await forgetSettings('sections');
     expect('sections' in after).toBe(false);
+    expect('sections' in settingsRow()).toBe(false);
+    expect(settingsRow().theme).toBe('amber');
+  });
+});
+
+/**
+ * The zone each page was left on is the same kind of preference as a fold:
+ * it travels in a backup, a replace restore puts it back, a merge restore
+ * leaves this phone's alone, Delete everything keeps it, and the app lock
+ * never touches it. "Put every page back" forgets it along with the folds.
+ */
+describe('the zone each page was left on is a preference that travels', () => {
+  const settingsRow = () => (store.settings[0] ?? {}) as Record<string, unknown>;
+  const zones = { money: 'subscriptions', debt: 'plan' };
+
+  it('is not a device-only setting', () => {
+    expect([...DEVICE_SETTINGS]).not.toContain('zones');
+  });
+
+  it('goes into a backup file', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', zones } as never] });
+    const backup = await exportBackup();
+    expect(backup.settings.zones).toEqual(zones);
+  });
+
+  it('is put back by a replace restore', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', zones } as never] });
+    const file = parseBackup(JSON.stringify(await exportBackup()));
+    fakeStorage({ settings: [{ id: 'settings', zones: { inbox: 'cleared' } } as never] });
+    await importBackup(file, 'replace');
+    expect(settingsRow().zones).toEqual(zones);
+  });
+
+  it('is left as this phone has it by a merge restore', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', zones } as never] });
+    const file = parseBackup(JSON.stringify(await exportBackup()));
+    fakeStorage({ settings: [{ id: 'settings', zones: { inbox: 'cleared' } } as never] });
+    await importBackup(file, 'merge');
+    expect(settingsRow().zones).toEqual({ inbox: 'cleared' });
+  });
+
+  it('is kept by Delete everything', async () => {
+    fakeStorage({ ...oneOfEach(), settings: [{ id: 'settings', zones } as never] });
+    await wipeAll();
+    expect(settingsRow().zones).toEqual(zones);
+  });
+
+  it('is not touched by setting or removing the app lock', async () => {
+    fakeStorage({ settings: [{ id: 'settings', zones } as never] });
+    await saveLock({
+      pinHash: toBase64(new Uint8Array(32).fill(4)),
+      pinSalt: toBase64(new Uint8Array(16).fill(5)),
+      phraseHash: toBase64(new Uint8Array(32).fill(6)),
+      phraseSalt: toBase64(new Uint8Array(16).fill(7)),
+      iterations: 600_000,
+      afterMinutes: 5,
+    });
+    expect((await getSettings()).zones).toEqual(zones);
+    await saveLock(null);
+    expect((await getSettings()).zones).toEqual(zones);
+  });
+
+  it('"Put every page back" takes zones and folds away together, and nothing else', async () => {
+    fakeStorage({
+      settings: [{ id: 'settings', theme: 'amber', zones, sections: { 'money.averages': true } } as never],
+    });
+    const after = await forgetSettings('sections', 'zones');
+    expect('zones' in after).toBe(false);
+    expect('sections' in after).toBe(false);
+    expect('zones' in settingsRow()).toBe(false);
     expect('sections' in settingsRow()).toBe(false);
     expect(settingsRow().theme).toBe('amber');
   });

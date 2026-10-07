@@ -93,7 +93,7 @@ await ctx.addInitScript((secrets) => {
   const look = () => {
     const html = document.documentElement?.outerHTML ?? '';
     if (secrets.some((s) => html.includes(s))) window.__sawSecret = true;
-    if (document.querySelector('.main, .nav, .header, .toast')) window.__sawApp = true;
+    if (document.querySelector('.main, .nav, .header, .toast, .drawer-layer, .menu-btn')) window.__sawApp = true;
   };
   new MutationObserver(look).observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
 }, SECRETS);
@@ -222,14 +222,34 @@ const groupButton = (title) => `section[aria-label="${title}"] > .fold-heading >
 const openGroup = async (title) => {
   if ((await page.getAttribute(groupButton(title), 'aria-expanded')) === 'false') await page.click(groupButton(title));
 };
+
+/*
+  Getting around, as in app-check.mjs: pages through the Menu, zones from the
+  bar, both by their fixed ids.
+*/
+const onPage = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-page') ?? null);
+const zoneNow = () =>
+  page.evaluate(() => document.querySelector('.zones [role="tab"][aria-selected="true"]')?.getAttribute('data-zone') ?? null);
+const openMenu = async () => {
+  if (!(await page.locator('#menu').count())) await page.click('.header .menu-btn');
+  await page.waitForSelector('#menu');
+};
+const goTo = async (pageId, zoneId) => {
+  if ((await onPage()) !== pageId) {
+    await openMenu();
+    await page.click(`#menu .drawer-item[data-page="${pageId}"]`);
+    await page.waitForSelector(`.main[data-page="${pageId}"]`);
+  }
+  if (zoneId && (await zoneNow()) !== zoneId) await page.click(`.zones [role="tab"][data-zone="${zoneId}"]`);
+  await page.waitForTimeout(150);
+};
+
 /**
  * Opens Settings, or stays there if it is already open (unlocking returns to
  * where you were), with the App lock group open.
  */
 const openSettings = async () => {
-  if ((await page.locator('.header button:text-is("Done")').count()) === 0) {
-    await page.click('.header button:text-is("Settings")');
-  }
+  if ((await page.locator('.main[data-page="settings"]').count()) === 0) await goTo('settings');
   await page.waitForSelector('section[aria-label="App lock"]');
   await openGroup('App lock');
 };
@@ -281,7 +301,7 @@ await idb(
           id: 'lock-sub', name: 'Headspace', amountMinor: 1299, currency: 'USD', cycle: 'monthly', every: 1,
           firstBilled: today, notes: '', cancelHow: '', remindDaysBefore: 3, createdAt: at, updatedAt: at,
         });
-        // Due tomorrow, so its payment is on Today as well as on the Debt tab.
+        // Due tomorrow, so its payment is on Today as well as on the Debt page.
         tx.objectStore('debts').put({
           id: 'lock-debt', name: 'Nelnet', kind: 'studentFederal', balanceMinor: 1_850_000, balanceAsOf: today,
           aprPercent: 5.5, minimum: { kind: 'fixed', amountMinor: 18_000 }, dueDay: tomorrow.getDate(), autopay: true,
@@ -319,7 +339,7 @@ check(
   true,
 );
 check('nothing about a lock is stored until one is set', 'lock' in ((await readSettings()) ?? {}), false);
-await page.click('.header button:text-is("Done")');
+await goTo('today');
 
 /* --------------------------------------------------------------- setting up */
 
@@ -377,7 +397,7 @@ check(
   false,
 );
 check('the recovery phrase is gone from the screen once the lock is on', await page.locator('ol.phrase-words').count(), 0);
-await page.click('.header button:text-is("Done")');
+await goTo('today');
 await openSettings();
 const settingsText = await page.textContent('.main');
 check(
@@ -387,7 +407,7 @@ check(
 );
 check('Settings says the lock is on', (await page.textContent(LOCK_SECTION)).includes('On. Steady asks for the PIN'), true);
 await shotSection(`settings-lock-on`);
-await page.click('.header button:text-is("Done")');
+await goTo('today');
 check('Hide now is in the header once a lock is set', await page.locator('.header button:text-is("Hide now")').count(), 1);
 await page.screenshot({ path: `${OUT}/today-hide-now.png` });
 
@@ -400,7 +420,7 @@ await comeBack(20_000);
 check('a 20-second trip to another app does not lock', await isLocked(), false);
 check('and the page is not left blank', await page.evaluate(() => document.documentElement.classList.contains('veiled')), false);
 
-await page.click('.nav-btn:has-text("Tasks")');
+await goTo('tasks', 'finished');
 await page.waitForTimeout(200);
 await goBackground();
 await comeBack(2 * 60_000);
@@ -409,12 +429,13 @@ check('the veil comes off only once the lock is up', await page.evaluate(() => d
 check('while locked, no task, note, capture, subscription or debt is anywhere in the DOM', (await leaks()).join(', '), '');
 check('no header', await page.locator('.header').count(), 0);
 check('no nav', await page.locator('.nav').count(), 0);
-check('no tab is mounted, not even hidden', await page.locator('.main, .view').count(), 0);
+check('no menu', await page.locator('.drawer-layer, .menu-btn').count(), 0);
+check('no page is mounted, not even hidden', await page.locator('.main, .view, .zone').count(), 0);
 check('no toast', await page.locator('.toast').count(), 0);
 check('the lock screen says so, plainly', (await page.textContent('main.lock h1')).trim(), 'Steady is locked');
 await page.waitForTimeout(300);
 check(
-  'the lock sits at the bottom of the history, so Back leaves rather than changing tabs behind it',
+  'the lock sits at the bottom of the history, so Back leaves rather than changing pages behind it',
   await page.evaluate(() => window.history.state?.steady ?? 0),
   0,
 );
@@ -422,6 +443,9 @@ await page.screenshot({ path: `${OUT}/lock-screen.png` });
 
 /* ------------------------------------------------------------- wrong, right */
 
+// The settings as they stand now: the zone Tasks was left on is in them, and
+// nothing a wrong PIN does may add to them.
+const beforeMisses = await readSettings();
 check('Unlock waits for at least 4 digits', await page.locator('main.lock .pin-pad button.btn-primary').isDisabled(), true);
 await typePin('1111', 'main.lock');
 await submitPad('main.lock');
@@ -449,11 +473,11 @@ check('and it says so without counting anything', /\d/.test(pauseText), false);
 await page.screenshot({ path: `${OUT}/lock-wrong-pause.png` });
 await page.waitForTimeout(2300);
 check('two seconds later they are back - no lockout', await page.locator('main.lock .pin-pad button:text-is("5")').isDisabled(), false);
-check('nothing about the misses was saved', JSON.stringify(await readSettings()) === JSON.stringify(stored), true);
+check('nothing about the misses was saved', JSON.stringify(await readSettings()) === JSON.stringify(beforeMisses), true);
 
 await unlock();
 check('the right PIN opens it', await isLocked(), false);
-check('back where you were', await page.getAttribute('.nav-btn:has-text("Tasks")', 'aria-current'), 'page');
+check('back where you were, page and zone', `${await onPage()} ${await zoneNow()}`, 'tasks finished');
 check('with everything there', (await leaks()).includes('Okafor'), true);
 
 /* ------------------------------------------------------------------ reload */
@@ -468,15 +492,31 @@ await unlock();
 
 /* ---------------------------------------------------------------- hide now */
 
-await page.click('.nav-btn:has-text("Debt")');
+await goTo('debt', 'plan');
 await page.waitForTimeout(300);
-check('the Debt tab shows the debt (so hiding it means something)', (await leaks()).includes('Nelnet'), true);
+check('the Debt page shows the debt (so hiding it means something)', (await leaks()).includes('Nelnet'), true);
 await page.click('.header button:text-is("Hide now")');
 await page.waitForSelector('main.lock');
-check('Hide now locks straight away, from the Debt tab too', await isLocked(), true);
+check('Hide now locks straight away, from the Debt page too', await isLocked(), true);
 check('and leaves nothing on the page, the debt included', (await leaks()).join(', '), '');
 await unlock();
-check('unlocking goes back to the Debt tab', await page.getAttribute('.nav-btn:has-text("Debt")', 'aria-current'), 'page');
+check('unlocking goes back to the Debt page, on the same zone', `${await onPage()} ${await zoneNow()}`, 'debt plan');
+
+/* ------------------------------------------------- the Menu, when it locks */
+
+// The Menu is app furniture like the rest: it goes with the lock, and it
+// does not open again by itself once the lock comes off.
+await openMenu();
+check('the Menu is open (so locking over it means something)', await page.locator('.drawer-layer').count(), 1);
+await goBackground();
+await comeBack(2 * 60_000);
+check('with the Menu open, two minutes away still locks', await isLocked(), true);
+check('and no part of the Menu is left in the page', await page.locator('.drawer-layer, #menu, .menu-btn').count(), 0);
+check('nor anything from the page behind it', (await leaks()).join(', '), '');
+await unlock();
+check('after unlocking, the Menu is closed', await page.locator('#menu').count(), 0);
+check('nothing behind it is left inert', await page.evaluate(() => document.querySelector('.app-frame')?.inert), false);
+check('and the page and zone are as they were', `${await onPage()} ${await zoneNow()}`, 'debt plan');
 
 /* -------------------------------------------------------------- immediately */
 
@@ -612,8 +652,7 @@ check(
   true,
 );
 check('and the note is gone', await page.locator('.card:has-text("The lock is off.")').count(), 0);
-await page.click('.header button:text-is("Done")');
-await page.click('.nav-btn:has-text("Today")');
+await goTo('today');
 check('the task is right there on Today', (await leaks()).includes('Okafor'), true);
 
 /* ----------------------------------------------------- delete everything */
@@ -673,6 +712,20 @@ for (const theme of ['calm', 'midnight']) {
     await unlock();
     await page.waitForTimeout(200);
     await page.screenshot({ path: `${OUT}/header-${tag}.png` });
+    // Hide now stays a single tap at the top of every page. At large text the
+    // header takes two rows: Menu and Hide now on the first, the page's name
+    // under them; at everyday sizes it is all one row.
+    const header = await page.evaluate(() => {
+      const top = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().top);
+      const bottom = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().bottom);
+      return { menu: top('.menu-btn'), hide: top('.header-action'), menuBottom: bottom('.menu-btn'), title: top('.header h1') };
+    });
+    check(`${tag}: Hide now is on the first row, beside Menu`, Math.abs(header.hide - header.menu) <= 2, true);
+    check(
+      `${tag}: the page's name is ${textScale === 1 ? 'on that row too' : 'on a row of its own under them'}`,
+      textScale === 1 ? header.title < header.menuBottom : header.title >= header.menuBottom,
+      true,
+    );
 
     await openSettings();
     await shotSection(`settings-lock-${tag}`);
@@ -691,7 +744,7 @@ for (const theme of ['calm', 'midnight']) {
     await shotSection(`settings-phrase-${tag}`);
     await page.click(`${LOCK_SECTION} button:text-is("Cancel")`);
     check(`${tag}: cancelling a new phrase keeps the old one`, (await readSettings()).lock.phraseHash, lockBeforeWipe.phraseHash);
-    await page.click('.header button:text-is("Done")');
+    await goTo('today');
   }
 }
 
@@ -719,7 +772,8 @@ await plain.addInitScript(() => {
 const bare = await plain.newPage();
 await bare.goto(BASE, { waitUntil: 'networkidle' });
 await bare.waitForSelector('.main');
-await bare.click('.header button:text-is("Settings")');
+await bare.click('.menu-btn');
+await bare.click('#menu [data-page="settings"]');
 await bare.waitForSelector(LOCK_SECTION);
 check(
   'without WebCrypto the lock says it is unavailable, rather than failing',

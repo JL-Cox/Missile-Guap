@@ -8,7 +8,7 @@ import type { DebtPlanView, DebtSummary, ExtraReason } from '../lib/payoff';
 import { whyNoPayPeriod } from '../lib/cashflow';
 import { calendarForDebt, DEBT_CALENDAR_ENTRY_STAYS, debtCalendarFilename } from '../lib/ics';
 import { formatMoney } from '../lib/money';
-import { countOf, cutTitle, nameList } from '../lib/sections';
+import { cutTitle, nameList } from '../lib/sections';
 import {
   dueWords,
   extraBecause,
@@ -19,7 +19,6 @@ import {
   promoWords,
   rateWords,
   spanWords,
-  STRATEGY_LABELS,
   weekdayDate,
   wholeMoney,
 } from '../lib/debtwords';
@@ -35,6 +34,7 @@ import {
   DetailsButton,
   Empty,
   Section,
+  Zone,
   useBackLayer,
   useNavigate,
   useToast,
@@ -62,9 +62,10 @@ type Money = (minor: number) => string;
  * useDebtPlan). The screen chooses words and lays out what comes back; it
  * does no sums of its own.
  *
- * Top to bottom, the same every time: Add a debt; This paycheck, which never
- * folds; the plan; the debts themselves; what is paid off; and how the
- * numbers are worked out.
+ * Three zones, the same every time. Paychecks: Add a debt, then This
+ * paycheck, which never folds. Plan: the plan, and how the numbers are worked
+ * out, folded. Debts: Add a debt again, the debts themselves, and what is paid
+ * off, folded.
  */
 export default function DebtScreen({ settings }: { settings: Settings }) {
   const today = todayKey();
@@ -183,7 +184,7 @@ export default function DebtScreen({ settings }: { settings: Settings }) {
         onCancel={() => setPlanOpen(false)}
         onOpenMoney={() => {
           setPlanOpen(false);
-          navigate('money');
+          navigate('money', { zone: 'income' });
         }}
       />
     );
@@ -222,155 +223,153 @@ export default function DebtScreen({ settings }: { settings: Settings }) {
     );
   }
 
-  /*
-    One line for each section while it is closed. With amounts blurred the
-    line leaves the amount out rather than blurring it, because a tappable
-    blurred amount cannot sit inside the button that opens the section.
-  */
-  const strategy = STRATEGY_LABELS[view.strategy];
-  const planSummary =
-    view.planned.length === 0
-      ? 'Appears once a debt has a balance and a due date'
-      : view.result.status === 'paidOff' && view.result.paidOffOn
-        ? `${strategy} · all paid off by ${monthYear(view.result.paidOffOn)}`
-        : view.result.status === 'stuck'
-          ? `${strategy} · the balances don't go down at this amount`
-          : `${strategy} · more than 50 years at this amount`;
-  const o = view.open;
-  const listSummary =
-    o.count === 0
-      ? 'Nothing added yet'
-      : blur || o.otherCurrency > 0
-        ? countOf(o.count, 'debt', 'debts')
-        : `${countOf(o.count, 'debt', 'debts')}, ${money(o.totalMinor)}${o.asOf ? ` as of ${shortDate(o.asOf, today)}` : ''}`;
+  /** The one thing you come here to add, where it is never hunted for. */
+  const addDebt = (
+    <div className="btn-row btn-row-fill">
+      <button type="button" className="btn btn-primary" onClick={startNew}>
+        Add a debt
+      </button>
+    </div>
+  );
 
   return (
     <>
-      {/* The one thing you come here to add, where it is never hunted for. */}
-      <div className="btn-row btn-row-fill">
-        <button type="button" className="btn btn-primary" onClick={startNew}>
-          Add a debt
-        </button>
-      </div>
+      <Zone id="paychecks">
+        {addDebt}
 
-      {/* What you came for, so it never folds. */}
-      <Section title="This paycheck">
-        <ThisPaycheck
-          view={view}
-          open={open}
-          incomes={incomes}
-          today={today}
-          blur={blur}
-          money={money}
-          onChooseAmount={() => setPlanOpen(true)}
-          onPaid={markPaid}
-        />
-      </Section>
+        {/* What you came for, so it never folds. */}
+        <Section title="This paycheck">
+          <ThisPaycheck
+            view={view}
+            open={open}
+            incomes={incomes}
+            today={today}
+            blur={blur}
+            money={money}
+            onChooseAmount={() => setPlanOpen(true)}
+            onPaid={markPaid}
+          />
+        </Section>
+      </Zone>
 
-      <Section title="The plan" collapsible="debt.plan" summary={planSummary}>
-        <ThePlan
-          view={view}
-          plan={plan}
-          incomes={incomes}
-          currency={currency}
-          today={today}
-          blur={blur}
-          money={money}
-          onChooseAmount={() => setPlanOpen(true)}
-          onEdit={(debt) => edit(debt)}
-        />
-      </Section>
+      <Zone id="plan">
+        <Section title="The plan">
+          <ThePlan
+            view={view}
+            plan={plan}
+            incomes={incomes}
+            currency={currency}
+            today={today}
+            blur={blur}
+            money={money}
+            onChooseAmount={() => setPlanOpen(true)}
+            onEdit={(debt) => edit(debt)}
+          />
+        </Section>
 
-      <Section title="Your debts" collapsible="debt.list" summary={listSummary}>
-        {open.length === 0 ? (
-          <Empty>
-            Anything you're paying back: a credit card, a loan, a line of credit, buy now pay later, money a friend
-            lent you. Type the numbers from your statement or app. Nothing is looked up, and nothing leaves this phone.
-          </Empty>
-        ) : (
-          <>
-            {open.length > 1 && (
-              <div className="btn-row">
-                <button type="button" className="btn btn-sm" onClick={() => setUpdatingAll(true)}>
-                  Update balances
-                </button>
+        <HowThisWorks />
+      </Zone>
+
+      <Zone id="debts">
+        {addDebt}
+
+        <Section title="Your debts">
+          {open.length === 0 ? (
+            <Empty>
+              Anything you're paying back: a credit card, a loan, a line of credit, buy now pay later, money a friend
+              lent you. Type the numbers from your statement or app. Nothing is looked up, and nothing leaves this
+              phone.
+            </Empty>
+          ) : (
+            <>
+              {open.length > 1 && (
+                <div className="btn-row">
+                  <button type="button" className="btn btn-sm" onClick={() => setUpdatingAll(true)}>
+                    Update balances
+                  </button>
+                </div>
+              )}
+              <div className="stack-sm">
+                {open.map((debt) => (
+                  <DebtCard
+                    key={debt.id}
+                    debt={debt}
+                    summary={summaryOf(debt.id)}
+                    currency={currency}
+                    today={today}
+                    blur={blur}
+                    onEdit={() => edit(debt)}
+                    onNewBalance={(c) => newBalance(debt, c)}
+                    onPaidOff={() => markPaidOff(debt)}
+                  />
+                ))}
               </div>
-            )}
+            </>
+          )}
+        </Section>
+
+        {paidOff.length > 0 && (
+          <Section title="Paid off" collapsible="debt.paidOff" summary={paidOffSummary(paidOff)}>
+            {/* Quiet on purpose: no counts, no "it took you X months", nothing
+                to live up to next time. */}
             <div className="stack-sm">
-              {open.map((debt) => (
-                <DebtCard
-                  key={debt.id}
-                  debt={debt}
-                  summary={summaryOf(debt.id)}
-                  currency={currency}
-                  today={today}
-                  blur={blur}
-                  onEdit={() => edit(debt)}
-                  onNewBalance={(c) => newBalance(debt, c)}
-                  onPaidOff={() => markPaidOff(debt)}
-                />
+              {paidOff.map((debt) => (
+                <div key={debt.id} className="item">
+                  <div className="grow">
+                    <div className="item-title">{debt.name}</div>
+                    <div className="faint">Paid off in {monthYear(debt.paidOffOn!)}</div>
+                  </div>
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => edit(debt)}>
+                    Edit
+                  </button>
+                </div>
               ))}
             </div>
-          </>
+            <p className="faint">Kept so you can look back at it, and bring it back if you use it again.</p>
+            <p className="faint">{DEBT_CALENDAR_ENTRY_STAYS}</p>
+          </Section>
         )}
-      </Section>
-
-      {paidOff.length > 0 && (
-        <Section title="Paid off" collapsible="debt.paidOff" summary={paidOffSummary(paidOff)}>
-          {/* Quiet on purpose: no counts, no "it took you X months", nothing
-              to live up to next time. */}
-          <div className="stack-sm">
-            {paidOff.map((debt) => (
-              <div key={debt.id} className="item">
-                <div className="grow">
-                  <div className="item-title">{debt.name}</div>
-                  <div className="faint">Paid off in {monthYear(debt.paidOffOn!)}</div>
-                </div>
-                <button type="button" className="btn btn-quiet btn-sm" onClick={() => edit(debt)}>
-                  Edit
-                </button>
-              </div>
-            ))}
-          </div>
-          <p className="faint">Kept so you can look back at it, and bring it back if you use it again.</p>
-          <p className="faint">{DEBT_CALENDAR_ENTRY_STAYS}</p>
-        </Section>
-      )}
-
-      <Section title="How this works" collapsible="debt.howItWorks" summary="How the dates and amounts are worked out">
-        <ul className="plain-list stack-sm small">
-          <li>
-            Interest is worked out a month at a time: the balance times the APR, divided by 12, to the cent. Card
-            companies use a daily rate, so your statements will differ a little.
-          </li>
-          <li>
-            Each month every debt gets its minimum first. What's left of the amount you chose - the extra - goes to one
-            debt at a time: the highest rate first, or the smallest balance first, whichever you picked.
-          </li>
-          <li>
-            When a debt is paid off, what went to it moves to the next one, so the total you put in stays the same.
-            That is what brings the dates closer.
-          </li>
-          <li>
-            Card minimums are worked out the way most statements do it - a share of the balance plus the month's
-            interest - and rounded up to the dollar. Other minimums stay at what you typed.
-          </li>
-          <li>
-            A promo rate is used until its end date. One that adds the interest back if it isn't paid in full is paced
-            to be cleared a payment early, whichever order you picked.
-          </li>
-          <li>
-            Each payment comes from the last paycheck that arrives before its due date. One due on a payday comes from
-            the check before, because money that lands that morning may not be there in time.
-          </li>
-          <li>
-            The suggestion is the minimums, plus half of what's left after subscriptions and your estimate for
-            everything else. The other half stays with you for surprises.
-          </li>
-          <li>New spending on a card isn't counted. Nothing is looked up, and nothing leaves this phone.</li>
-        </ul>
-      </Section>
+      </Zone>
     </>
+  );
+}
+
+/** The reference page for the plan's numbers, folded to start with. */
+function HowThisWorks() {
+  return (
+    <Section title="How this works" collapsible="debt.howItWorks" summary="How the dates and amounts are worked out">
+      <ul className="plain-list stack-sm small">
+        <li>
+          Interest is worked out a month at a time: the balance times the APR, divided by 12, to the cent. Card
+          companies use a daily rate, so your statements will differ a little.
+        </li>
+        <li>
+          Each month every debt gets its minimum first. What's left of the amount you chose - the extra - goes to one
+          debt at a time: the highest rate first, or the smallest balance first, whichever you picked.
+        </li>
+        <li>
+          When a debt is paid off, what went to it moves to the next one, so the total you put in stays the same.
+          That is what brings the dates closer.
+        </li>
+        <li>
+          Card minimums are worked out the way most statements do it - a share of the balance plus the month's
+          interest - and rounded up to the dollar. Other minimums stay at what you typed.
+        </li>
+        <li>
+          A promo rate is used until its end date. One that adds the interest back if it isn't paid in full is paced
+          to be cleared a payment early, whichever order you picked.
+        </li>
+        <li>
+          Each payment comes from the last paycheck that arrives before its due date. One due on a payday comes from
+          the check before, because money that lands that morning may not be there in time.
+        </li>
+        <li>
+          The suggestion is the minimums, plus half of what's left after subscriptions and your estimate for
+          everything else. The other half stays with you for surprises.
+        </li>
+        <li>New spending on a card isn't counted. Nothing is looked up, and nothing leaves this phone.</li>
+      </ul>
+    </Section>
   );
 }
 
@@ -459,14 +458,18 @@ function ThisPaycheck({
         <WhyExtra extras={view.month.extras} today={today} chosen={chosen} />
         <p className="faint">
           {why.kind === 'needsRecentPayday'
-            ? `Add a recent payday to ${why.source.name} on the Money tab and this will line payments up with your paychecks. For now it shows this month.`
+            ? `Add a recent payday to ${why.source.name} on the Money page and this will line payments up with your paychecks. For now it shows this month.`
             : why.kind === 'noIncome'
-              ? 'Add your income on the Money tab and this will line payments up with your paychecks. For now it shows this month.'
+              ? 'Add your income on the Money page and this will line payments up with your paychecks. For now it shows this month.'
               : "Paydays can't be worked out from your income yet, so for now this shows this month."}
         </p>
         <div className="btn-row">
           {amountButton}
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => navigate('money')}>
+          <button
+            type="button"
+            className="btn btn-quiet btn-sm"
+            onClick={() => navigate('money', { zone: 'income' })}
+          >
             Open Money
           </button>
         </div>
@@ -548,7 +551,11 @@ function ThisPaycheck({
         )}
         <div className="btn-row">
           {amountButton}
-          <button type="button" className="btn btn-quiet btn-sm" onClick={() => navigate('money')}>
+          <button
+            type="button"
+            className="btn btn-quiet btn-sm"
+            onClick={() => navigate('money', { zone: 'paychecks' })}
+          >
             See this paycheck on Money
           </button>
         </div>

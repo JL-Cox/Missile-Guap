@@ -47,7 +47,6 @@ import {
   type ServicePreset,
 } from '../lib/subscriptions';
 import { cancelledMessage } from '../lib/feedback';
-import { cutTitle, nameList } from '../lib/sections';
 import { undoAction } from '../lib/undo';
 import { describeDate, shortDate, todayKey } from '../lib/time';
 import {
@@ -58,6 +57,7 @@ import {
   Empty,
   FormError,
   Section,
+  Zone,
   useAutoFocus,
   useBackLayer,
   useNavigate,
@@ -77,7 +77,7 @@ interface EditorFocus {
 
 /**
  * The home-screen shortcut opens the add form once, on launch - not every time
- * the Money tab is visited afterwards.
+ * the Money page is visited afterwards.
  */
 let shortcutUsed = false;
 
@@ -91,11 +91,11 @@ let shortcutUsed = false;
  * and the next screen already knows what it costs a year, when it next charges,
  * and offers to put it in your phone's calendar. No trip to Settings.
  *
- * The screen reads top to bottom from glance to reference: the two things to
- * add, what is still to come out and what this paycheck leaves - the two
- * figures set large - then subscriptions, income, and the averages, folded
- * away at the bottom for when you want them. Everything below "Still to come
- * out" folds to one line, so the screen can be as short as you want it.
+ * Four zones, from glance to reference. Coming out: the two things to add,
+ * then what is still to come out - the first of the two figures set large.
+ * Paychecks: what each one leaves, the second. Subscriptions, with the way to
+ * export them. Income, with the averages folded away at the end for when you
+ * want them.
  */
 export default function Money({ settings, startAdding = false }: { settings: Settings; startAdding?: boolean }) {
   const [editing, setEditing] = useState<Subscription | null>(null);
@@ -116,7 +116,7 @@ export default function Money({ settings, startAdding = false }: { settings: Set
   /*
     The debt plan, for its dated payments and what each check puts toward
     debt. Money shows when payments leave and what they leave behind - never
-    a balance or a payoff date, which are the Debt tab's.
+    a balance or a payoff date, which are the Debt page's.
   */
   const { view: debtView } = useDebtPlan(settings, incomes, subs, today);
   const navigate = useNavigate();
@@ -228,7 +228,7 @@ export default function Money({ settings, startAdding = false }: { settings: Set
   const endedIncomes = incomes.filter((src) => !isActiveIncome(src));
   const netMonthly = totalNetMonthlyMinor(incomes);
   // The plan's monthly amount, when there is a plan: the same figure the Debt
-  // tab plans on, so the two screens never disagree about what goes to debt.
+  // page plans on, so the two screens never disagree about what goes to debt.
   const debtMonthly = debtView.planned.length > 0 ? debtView.budgetMinor : 0;
   const leftover = leftoverMonthlyMinor(incomes, subs, debtMonthly);
   const grossYearly = totalGrossYearlyMinor(incomes);
@@ -246,11 +246,10 @@ export default function Money({ settings, startAdding = false }: { settings: Set
   /*
     What the debt plan has each check do. "Left from this paycheck" is read
     from here whenever there is one, so it is the same number on Money and on
-    the Debt tab: take-home, less subscriptions, less everything the check
+    the Debt page: take-home, less subscriptions, less everything the check
     puts toward debt. With no amount chosen that is exactly the minimums.
   */
   const checkFor = (c: PeriodOutlook) => debtView.checks.find((k) => k.period.start === c.period.start);
-  const leftOf = (c: PeriodOutlook) => checkFor(c)?.leftMinor ?? c.leftoverMinor;
   const hasDebt = debtView.planned.length > 0;
 
   const charges = (count: number, paymentCount: number, until: string) =>
@@ -259,48 +258,11 @@ export default function Money({ settings, startAdding = false }: { settings: Set
       : `${chargesAndPayments(count, paymentCount)}, up to ${describeDate(until, today)}`;
 
   /*
-    One line for each section while it is closed: the fact you would open it
-    for. With amounts blurred the line leaves the amount out rather than
-    blurring it, because a tappable blurred amount cannot sit inside the
-    button that opens the section.
+    The averages' one line while folded: the fact you would open them for.
+    With amounts blurred the line leaves the amount out rather than blurring
+    it, because a tappable blurred amount cannot sit inside the button that
+    opens the section.
   */
-  const chequeName = firstCheque?.current ? 'This paycheck' : 'The next paycheck';
-  const laterCount = laterCheques.length === 1 ? 'one' : String(laterCheques.length);
-  const chequeLine = !firstCheque
-    ? ''
-    : !blur
-      ? `${chequeName} leaves ${money(leftOf(firstCheque))}`
-      : laterCheques.length === 0
-        ? chequeName
-        : firstCheque.current
-          ? `${chequeName} and the next ${laterCount}`
-          : `${chequeName} and the ${laterCount} after it`;
-  // A paycheck that does not cover its subscriptions is never hidden (see
-  // SHORT_CHEQUE), so a folded section says so in its line, in the same words.
-  const covers = hasDebt ? 'its subscriptions and payments' : 'its own subscriptions';
-  const chequeSummary =
-    firstCheque && leftOf(firstCheque) < 0
-      ? `${chequeName} does not cover ${covers}`
-      : laterCheques.some((c) => leftOf(c) < 0)
-        ? `${chequeLine}. A later one does not cover ${covers}`
-        : chequeLine;
-  const subsSummary =
-    active.length === 0
-      ? ended.length > 0
-        ? `None active, ${ended.length} cancelled`
-        : 'Nothing tracked yet'
-      : blur
-        ? `${active.length} active`
-        : `${active.length} active, about ${money(monthly)} a month`;
-  const incomeNames = nameList(activeIncomes.map((src) => cutTitle(src.name)));
-  const incomeSummary =
-    activeIncomes.length === 0
-      ? endedIncomes.length > 0
-        ? `None current, ${endedIncomes.length} ended`
-        : 'Nothing added yet'
-      : blur
-        ? incomeNames
-        : `${incomeNames}, about ${money(netMonthly)} a month`;
   const averagesSummary =
     activeIncomes.length === 0
       ? 'Where the subscription money goes, over a year'
@@ -317,313 +279,357 @@ export default function Money({ settings, startAdding = false }: { settings: Set
     pending.period.count === pending.month.count &&
     pending.period.paymentCount === pending.month.paymentCount;
 
+  // Why there is no paycheck to show, when there is none, so the Paychecks
+  // zone says what would fix it rather than asking for income already there.
+  const noCheque = firstCheque ? null : whyNoPayPeriod(incomes, today);
+
   return (
     <>
-      {/* The two things you come here to add, together, where they are never
-          hunted for. Once there is income, adding more is rarer, and it moves
-          to the first button inside Income. */}
-      <div className="btn-row btn-row-fill">
-        <button type="button" className="btn btn-primary" onClick={startNew}>
-          Add a subscription
-        </button>
-        {activeIncomes.length === 0 && (
-          <button type="button" className="btn" onClick={addIncome}>
-            Add income
+      <Zone id="soon">
+        {/* The two things you come here to add, together, where they are never
+            hunted for. Once there is income, adding more is rarer, and it moves
+            to the top of the Income zone. */}
+        <div className="btn-row btn-row-fill">
+          <button type="button" className="btn btn-primary" onClick={startNew}>
+            Add a subscription
           </button>
-        )}
-      </div>
+          {activeIncomes.length === 0 && (
+            <button type="button" className="btn" onClick={addIncome}>
+              Add income
+            </button>
+          )}
+        </div>
 
-      {(subs.some((s) => isActive(s, today)) || payments.length > 0) && (
         <Section title="Still to come out">
-          <div className="card stack-sm">
-            {pending.period ? (
-              <>
-                <FigureRow
-                  anchor
-                  label="Before your next payday"
-                  detail={charges(pending.period.count, pending.period.paymentCount, pending.period.until)}
-                  amount={money(pending.period.minor)}
-                  blur={blur}
-                />
-                <hr className="divider" />
-                {sameAsPeriod ? (
-                  <div className="figure">
-                    <div className="item-title">Rest of this month</div>
-                    <span className="figure-value muted">
-                      {pending.month.paymentCount > 0 ? 'The same charges and payments' : 'The same charges'}
-                    </span>
-                  </div>
-                ) : (
+          {!subs.some((s) => isActive(s, today)) && payments.length === 0 ? (
+            <Empty>
+              What is still to come out before your next payday, and this month, shows up here once you add a
+              subscription.
+            </Empty>
+          ) : (
+            <div className="card stack-sm">
+              {pending.period ? (
+                <>
                   <FigureRow
+                    anchor
+                    label="Before your next payday"
+                    detail={charges(pending.period.count, pending.period.paymentCount, pending.period.until)}
+                    amount={money(pending.period.minor)}
+                    blur={blur}
+                  />
+                  <hr className="divider" />
+                  {sameAsPeriod ? (
+                    <div className="figure">
+                      <div className="item-title">Rest of this month</div>
+                      <span className="figure-value muted">
+                        {pending.month.paymentCount > 0 ? 'The same charges and payments' : 'The same charges'}
+                      </span>
+                    </div>
+                  ) : (
+                    <FigureRow
+                      label="Rest of this month"
+                      detail={charges(pending.month.count, pending.month.paymentCount, pending.month.until)}
+                      amount={money(pending.month.minor)}
+                      blur={blur}
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <FigureRow
+                    anchor
                     label="Rest of this month"
                     detail={charges(pending.month.count, pending.month.paymentCount, pending.month.until)}
                     amount={money(pending.month.minor)}
                     blur={blur}
                   />
-                )}
-              </>
-            ) : (
-              <>
-                <FigureRow
-                  anchor
-                  label="Rest of this month"
-                  detail={charges(pending.month.count, pending.month.paymentCount, pending.month.until)}
-                  amount={money(pending.month.minor)}
-                  blur={blur}
-                />
-                <p className="faint">
-                  {noPeriod?.kind === 'needsRecentPayday'
-                    ? `Add a recent payday to ${noPeriod.source.name} so paydays can be worked out. Then this will also show what is due before your next payday.`
-                    : noPeriod?.kind === 'noIncome'
-                      ? 'Add your income and this will also show what is due before your next payday.'
-                      : "Paydays can't be worked out from your income yet, so what is due before your next payday is left out."}
-                </p>
-              </>
-            )}
-            <p className="faint">
-              {payments.length > 0
-                ? 'Counted from today on the real charge and due dates, so anything that already went out this month is not in here.'
-                : 'Counted from today on the real charge dates, so a bill that already went out this month is not in here.'}
-            </p>
-          </div>
+                  <p className="faint">
+                    {noPeriod?.kind === 'needsRecentPayday'
+                      ? `Add a recent payday to ${noPeriod.source.name} so paydays can be worked out. Then this will also show what is due before your next payday.`
+                      : noPeriod?.kind === 'noIncome'
+                        ? 'Add your income and this will also show what is due before your next payday.'
+                        : "Paydays can't be worked out from your income yet, so what is due before your next payday is left out."}
+                  </p>
+                </>
+              )}
+              <p className="faint">
+                {payments.length > 0
+                  ? 'Counted from today on the real charge and due dates, so anything that already went out this month is not in here.'
+                  : 'Counted from today on the real charge dates, so a bill that already went out this month is not in here.'}
+              </p>
+            </div>
+          )}
         </Section>
-      )}
+      </Zone>
 
-      {firstCheque && (
-        <Section title="Each paycheck" collapsible="money.paychecks" summary={chequeSummary}>
-          <p className="faint">
-            What each one has to cover before the next arrives. Only the subscriptions
-            {hasDebt ? ' and debt payments' : ''} this app knows about — rent, food, fuel and everything else still
-            come out of what is left.
-          </p>
-          <ChequeCard
-            cheque={firstCheque}
-            check={checkFor(firstCheque)}
-            hasDebt={hasDebt}
-            today={today}
-            money={money}
-            blur={blur}
-            onOpenDebt={() => navigate('debt')}
-          />
-          {laterCheques.length > 0 && (
-            <div className="stack-sm">
-              <h3>The next ones</h3>
-              <div className="card card-rows">
-                {laterCheques.map((c, i) => (
-                  <ChequeRow
-                    key={c.period.start}
-                    cheque={c}
-                    check={checkFor(c)}
-                    hasDebt={hasDebt}
-                    today={today}
-                    money={money}
-                    blur={blur}
-                    first={i === 0}
+      <Zone id="paychecks">
+        <Section title="Each paycheck">
+          {firstCheque ? (
+            <>
+              <p className="faint">
+                What each one has to cover before the next arrives. Only the subscriptions
+                {hasDebt ? ' and debt payments' : ''} this app knows about — rent, food, fuel and everything else
+                still come out of what is left.
+              </p>
+              <ChequeCard
+                cheque={firstCheque}
+                check={checkFor(firstCheque)}
+                hasDebt={hasDebt}
+                today={today}
+                money={money}
+                blur={blur}
+                onOpenDebt={() => navigate('debt', { zone: 'paychecks' })}
+              />
+              {laterCheques.length > 0 && (
+                <div className="stack-sm">
+                  <h3>The next ones</h3>
+                  <div className="card card-rows">
+                    {laterCheques.map((c, i) => (
+                      <ChequeRow
+                        key={c.period.start}
+                        cheque={c}
+                        check={checkFor(c)}
+                        hasDebt={hasDebt}
+                        today={today}
+                        money={money}
+                        blur={blur}
+                        first={i === 0}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : noCheque?.kind === 'needsRecentPayday' ? (
+            <Empty>
+              Add a recent payday to {noCheque.source.name} so paydays can be worked out. Then this shows what each
+              paycheck has to cover before the next one arrives.
+            </Empty>
+          ) : noCheque?.kind === 'noIncome' ? (
+            <>
+              <Empty>
+                Add your income and this shows what each paycheck has to cover before the next one arrives.
+              </Empty>
+              <div className="btn-row">
+                <button type="button" className="btn btn-sm" onClick={addIncome}>
+                  Add income
+                </button>
+              </div>
+            </>
+          ) : (
+            <Empty>Paydays can't be worked out from your income yet, so there is no paycheck to show.</Empty>
+          )}
+        </Section>
+      </Zone>
+
+      <Zone id="subscriptions">
+        <div className="btn-row btn-row-fill">
+          <button type="button" className="btn btn-primary" onClick={startNew}>
+            Add a subscription
+          </button>
+        </div>
+
+        <Section title="Subscriptions">
+          {active.length === 0 ? (
+            <Empty>
+              Nothing tracked yet. Add anything that takes money on a repeat: streaming, phone, gym, storage, that
+              app you signed up for once.
+            </Empty>
+          ) : (
+            <>
+              <div className="card stack-sm">
+                <div className="figure">
+                  <span className="muted">Every month, roughly</span>
+                  <Amount className="figure-value" text={money(monthly)} blur={blur} />
+                </div>
+                <div className="figure">
+                  <span className="muted">Every year</span>
+                  <Amount className="figure-value" text={money(yearly)} blur={blur} />
+                </div>
+                <p className="faint">
+                  {active.length} active {active.length === 1 ? 'subscription' : 'subscriptions'}. Weekly costs are
+                  counted as 52 a year, so the monthly figure is an average rather than an exact bill.
+                </p>
+              </div>
+              <div className="stack-sm">
+                {active.map((sub) => (
+                  <SubscriptionCard
+                    key={sub.id}
+                    sub={sub}
+                    settings={settings}
+                    onEdit={(s) => edit(s, { expand: true })}
+                    onCancelled={cancelSub}
                   />
                 ))}
               </div>
-            </div>
+              <ExportSubscriptions subs={active} />
+            </>
           )}
-        </Section>
-      )}
 
-      <Section title="Subscriptions" collapsible="money.subscriptions" summary={subsSummary}>
-        {active.length === 0 ? (
-          <Empty>
-            Nothing tracked yet. Add anything that takes money on a repeat: streaming, phone, gym, storage, that
-            app you signed up for once.
-          </Empty>
-        ) : (
-          <>
-            <div className="card stack-sm">
-              <div className="figure">
-                <span className="muted">Every month, roughly</span>
-                <Amount className="figure-value" text={money(monthly)} blur={blur} />
-              </div>
-              <div className="figure">
-                <span className="muted">Every year</span>
-                <Amount className="figure-value" text={money(yearly)} blur={blur} />
-              </div>
-              <p className="faint">
-                {active.length} active {active.length === 1 ? 'subscription' : 'subscriptions'}. Weekly costs are
-                counted as 52 a year, so the monthly figure is an average rather than an exact bill.
-              </p>
-            </div>
-            <div className="stack-sm">
-              {active.map((sub) => (
-                <SubscriptionCard
-                  key={sub.id}
-                  sub={sub}
-                  settings={settings}
-                  onEdit={(s) => edit(s, { expand: true })}
-                  onCancelled={cancelSub}
-                />
+          {ended.length > 0 && (
+            <section className="stack-sm" aria-label="Cancelled">
+              <h3>Cancelled</h3>
+              {ended.map((sub) => (
+                <div key={sub.id} className="item">
+                  <div className="grow">
+                    <div className="item-title">{sub.name}</div>
+                    <div className="faint">Stopped {describeDate(sub.endedOn!, today)}</div>
+                  </div>
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => edit(sub, { expand: true })}>
+                    Edit
+                  </button>
+                </div>
               ))}
-            </div>
-            <ExportSubscriptions subs={active} />
-          </>
-        )}
-
-        {ended.length > 0 && (
-          <section className="stack-sm" aria-label="Cancelled">
-            <h3>Cancelled</h3>
-            {ended.map((sub) => (
-              <div key={sub.id} className="item">
-                <div className="grow">
-                  <div className="item-title">{sub.name}</div>
-                  <div className="faint">Stopped {describeDate(sub.endedOn!, today)}</div>
-                </div>
-                <button type="button" className="btn btn-quiet btn-sm" onClick={() => edit(sub, { expand: true })}>
-                  Edit
-                </button>
-              </div>
-            ))}
-            <p className="faint">Kept so you can see what you used to pay for, and restart one if you need it back.</p>
-            <p className="faint">{CALENDAR_ENTRY_STAYS}</p>
-          </section>
-        )}
-      </Section>
-
-      <Section title="Income" collapsible="money.income" summary={incomeSummary}>
-        {activeIncomes.length === 0 ? (
-          <Empty>
-            Add a paycheck and the figures above stop being half a picture. You type gross and net straight off
-            the stub - nothing here tries to work out your tax.
-          </Empty>
-        ) : (
-          <>
-            <div className="btn-row">
-              <button type="button" className="btn btn-sm" onClick={addIncome}>
-                Add income
-              </button>
-            </div>
-            <div className="stack-sm">
-              {activeIncomes.map((src) => {
-                const payday = nextPayday(src, today);
-                return (
-                  <div key={src.id} className="card card-tight stack-sm">
-                    <div className="figure">
-                      <span className="item-title">{src.name}</span>
-                      <Amount className="figure-value" text={formatMoney(src.netMinor, src.currency)} blur={blur} />
-                    </div>
-                    <div className="item-foot">
-                      <div className="stack-sm">
-                        <div className="meta">
-                          <span>{describeFrequency(src)}</span>
-                          {payday && <span>Next: {describeDate(payday, today)}</span>}
-                          <span>
-                            <Amount text={`${formatMoney(netMonthlyMinor(src), src.currency)} a month`} blur={blur} />
-                          </span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-quiet btn-sm details-btn"
-                        onClick={() => setEditingIncome(src)}
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-
-        {endedIncomes.length > 0 && (
-          // The same as Cancelled, for income: kept rather than deleted, and
-          // reachable, so "It's current again" is one tap away if a job comes back.
-          <section className="stack-sm" aria-label="Ended">
-            <h3>Ended</h3>
-            {endedIncomes.map((src) => (
-              <div key={src.id} className="item">
-                <div className="grow">
-                  <div className="item-title">{src.name}</div>
-                  <div className="faint">Ended {describeDate(src.endedOn!, today)}</div>
-                </div>
-                <button type="button" className="btn btn-quiet btn-sm" onClick={() => setEditingIncome(src)}>
-                  Edit
-                </button>
-              </div>
-            ))}
-            <p className="faint">Kept so the history is there, and so you can bring one back if it starts again.</p>
-          </section>
-        )}
-      </Section>
-
-      {/* Reference, not glance: averages across the year. Folded away to start
-          with, and in the same place whether or not it is open. */}
-      {(activeIncomes.length > 0 || grossYearly > 0 || categories.length > 1) && (
-        <Section title="Averages" collapsible="money.averages" summary={averagesSummary}>
-          {activeIncomes.length > 0 && (
-            <div className="stack-sm">
-              <h3>Each month, on average</h3>
-              <div className="card stack-sm">
-                <div className="figure">
-                  <span className="muted">Take-home each month</span>
-                  <Amount className="figure-value" text={money(netMonthly)} blur={blur} />
-                </div>
-                <div className="figure">
-                  <span className="muted">Subscriptions each month</span>
-                  <Amount className="figure-value" text={formatDeduction(monthly, settings.currency)} blur={blur} />
-                </div>
-                {debtMonthly > 0 && (
-                  <div className="figure">
-                    <span className="muted">Debt payments each month</span>
-                    <Amount className="figure-value" text={formatDeduction(debtMonthly, settings.currency)} blur={blur} />
-                  </div>
-                )}
-                <hr className="divider" />
-                <div className="figure">
-                  <span className="item-title">Left each month, on average</span>
-                  <Amount className="figure-value" text={money(leftover)} blur={blur} />
-                </div>
-                <p className="faint">
-                  It is what is left over after subscriptions{debtMonthly > 0 ? ' and debt payments' : ''}, not spare
-                  money.
-                </p>
-              </div>
-            </div>
-          )}
-          {grossYearly > 0 && (
-            <div className="stack-sm">
-              <h3>Over a year</h3>
-              <div className="card stack-sm">
-                <div className="figure">
-                  <span className="muted">You earn, a year</span>
-                  <Amount className="figure-value" text={money(grossYearly)} blur={blur} />
-                </div>
-                <div className="figure">
-                  <span className="muted">You keep</span>
-                  <Amount className="figure-value" text={money(netYearly)} blur={blur} />
-                </div>
-                <p className="faint">
-                  {Math.round(((grossYearly - netYearly) / grossYearly) * 100)}% comes out before you ever see it.
-                </p>
-              </div>
-            </div>
-          )}
-          {deductionRows.length > 0 && (
-            <Bars
-              title="What comes out of your pay"
-              rows={deductionRows.map((r) => ({ key: r.label, minor: r.minor }))}
-              max={maxDeduction}
-              money={money}
-              blur={blur}
-            />
-          )}
-          {categories.length > 1 && (
-            <Bars
-              title="Where the subscription money goes"
-              rows={categories.map((c) => ({ key: c.category, minor: c.minor }))}
-              max={maxCategory}
-              money={money}
-              blur={blur}
-            />
+              <p className="faint">Kept so you can see what you used to pay for, and restart one if you need it back.</p>
+              <p className="faint">{CALENDAR_ENTRY_STAYS}</p>
+            </section>
           )}
         </Section>
-      )}
+      </Zone>
+
+      <Zone id="income">
+        <div className="btn-row btn-row-fill">
+          <button type="button" className="btn" onClick={addIncome}>
+            Add income
+          </button>
+        </div>
+
+        <Section title="Income">
+          {activeIncomes.length === 0 ? (
+            <Empty>
+              Add a paycheck and the figures on Money stop being half a picture. You type gross and net straight off
+              the stub - nothing here tries to work out your tax.
+            </Empty>
+          ) : (
+            <>
+              <div className="stack-sm">
+                {activeIncomes.map((src) => {
+                  const payday = nextPayday(src, today);
+                  return (
+                    <div key={src.id} className="card card-tight stack-sm">
+                      <div className="figure">
+                        <span className="item-title">{src.name}</span>
+                        <Amount className="figure-value" text={formatMoney(src.netMinor, src.currency)} blur={blur} />
+                      </div>
+                      <div className="item-foot">
+                        <div className="stack-sm">
+                          <div className="meta">
+                            <span>{describeFrequency(src)}</span>
+                            {payday && <span>Next: {describeDate(payday, today)}</span>}
+                            <span>
+                              <Amount text={`${formatMoney(netMonthlyMinor(src), src.currency)} a month`} blur={blur} />
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-quiet btn-sm details-btn"
+                          onClick={() => setEditingIncome(src)}
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {endedIncomes.length > 0 && (
+            // The same as Cancelled, for income: kept rather than deleted, and
+            // reachable, so "It's current again" is one tap away if a job comes back.
+            <section className="stack-sm" aria-label="Ended">
+              <h3>Ended</h3>
+              {endedIncomes.map((src) => (
+                <div key={src.id} className="item">
+                  <div className="grow">
+                    <div className="item-title">{src.name}</div>
+                    <div className="faint">Ended {describeDate(src.endedOn!, today)}</div>
+                  </div>
+                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => setEditingIncome(src)}>
+                    Edit
+                  </button>
+                </div>
+              ))}
+              <p className="faint">Kept so the history is there, and so you can bring one back if it starts again.</p>
+            </section>
+          )}
+        </Section>
+
+        {/* Reference, not glance: averages across the year. Folded away to start
+            with, at the end of Income, in the same place whether or not it is open. */}
+        {(activeIncomes.length > 0 || grossYearly > 0 || categories.length > 1) && (
+          <Section title="Averages" collapsible="money.averages" summary={averagesSummary}>
+            {activeIncomes.length > 0 && (
+              <div className="stack-sm">
+                <h3>Each month, on average</h3>
+                <div className="card stack-sm">
+                  <div className="figure">
+                    <span className="muted">Take-home each month</span>
+                    <Amount className="figure-value" text={money(netMonthly)} blur={blur} />
+                  </div>
+                  <div className="figure">
+                    <span className="muted">Subscriptions each month</span>
+                    <Amount className="figure-value" text={formatDeduction(monthly, settings.currency)} blur={blur} />
+                  </div>
+                  {debtMonthly > 0 && (
+                    <div className="figure">
+                      <span className="muted">Debt payments each month</span>
+                      <Amount className="figure-value" text={formatDeduction(debtMonthly, settings.currency)} blur={blur} />
+                    </div>
+                  )}
+                  <hr className="divider" />
+                  <div className="figure">
+                    <span className="item-title">Left each month, on average</span>
+                    <Amount className="figure-value" text={money(leftover)} blur={blur} />
+                  </div>
+                  <p className="faint">
+                    It is what is left over after subscriptions{debtMonthly > 0 ? ' and debt payments' : ''}, not spare
+                    money.
+                  </p>
+                </div>
+              </div>
+            )}
+            {grossYearly > 0 && (
+              <div className="stack-sm">
+                <h3>Over a year</h3>
+                <div className="card stack-sm">
+                  <div className="figure">
+                    <span className="muted">You earn, a year</span>
+                    <Amount className="figure-value" text={money(grossYearly)} blur={blur} />
+                  </div>
+                  <div className="figure">
+                    <span className="muted">You keep</span>
+                    <Amount className="figure-value" text={money(netYearly)} blur={blur} />
+                  </div>
+                  <p className="faint">
+                    {Math.round(((grossYearly - netYearly) / grossYearly) * 100)}% comes out before you ever see it.
+                  </p>
+                </div>
+              </div>
+            )}
+            {deductionRows.length > 0 && (
+              <Bars
+                title="What comes out of your pay"
+                rows={deductionRows.map((r) => ({ key: r.label, minor: r.minor }))}
+                max={maxDeduction}
+                money={money}
+                blur={blur}
+              />
+            )}
+            {categories.length > 1 && (
+              <Bars
+                title="Where the subscription money goes"
+                rows={categories.map((c) => ({ key: c.category, minor: c.minor }))}
+                max={maxCategory}
+                money={money}
+                blur={blur}
+              />
+            )}
+          </Section>
+        )}
+      </Zone>
     </>
   );
 }
@@ -692,7 +698,7 @@ function LineRow({
  * up to what the check puts toward debt - the minimums due before the next
  * check, the extra, and money kept back for a busy check coming or used from
  * the one before - so "Left from this paycheck" is the same figure the Debt
- * tab shows, and each line of the way there is on the card.
+ * page shows, and each line of the way there is on the card.
  */
 function ChequeCard({
   cheque: c,
@@ -752,7 +758,7 @@ function ChequeCard({
       {left < 0 && <p className="notice">{hasDebt ? SHORT_CHEQUE_WITH_PAYMENTS : SHORT_CHEQUE}</p>}
       {towardDebt && (
         <div className="spread">
-          <span className="faint grow">Which debt, and why, is on the Debt tab.</span>
+          <span className="faint grow">Which debt, and why, is on the Debt page.</span>
           <button type="button" className="btn btn-sm" onClick={onOpenDebt}>
             Open Debt
           </button>

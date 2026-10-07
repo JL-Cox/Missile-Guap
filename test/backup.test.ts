@@ -159,8 +159,14 @@ describe('settings a backup never carries', () => {
 
   it('do not include which sections are folded, which is a preference that travels', () => {
     expect(DEVICE_SETTINGS).not.toContain('sections');
-    const sections = { 'today.bills': false };
+    const sections = { 'money.averages': true };
     expect(withoutDeviceSettings({ theme: 'dark', lowDay: '2026-09-23', sections })).toEqual({ theme: 'dark', sections });
+  });
+
+  it('do not include the zone each page was left on, which is a preference that travels', () => {
+    expect(DEVICE_SETTINGS).not.toContain('zones');
+    const zones = { money: 'subscriptions' };
+    expect(withoutDeviceSettings({ theme: 'dark', lowDay: '2026-09-23', zones })).toEqual({ theme: 'dark', zones });
   });
 
   it('are taken out of a copy, leaving the rest and the original alone', () => {

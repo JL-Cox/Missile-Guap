@@ -296,8 +296,8 @@ export default function DebtPlanEditor({
           <div className="spread">
             <span className="faint grow">
               {noPeriod?.kind === 'needsRecentPayday'
-                ? `Add a recent payday to ${noPeriod.source.name} on the Money tab, and this can be set per paycheck instead.`
-                : 'Add your income on the Money tab, and this can be set per paycheck instead.'}
+                ? `Add a recent payday to ${noPeriod.source.name} on the Money page, and this can be set per paycheck instead.`
+                : 'Add your income on the Money page, and this can be set per paycheck instead.'}
             </span>
             <button type="button" className="btn btn-sm" onClick={onOpenMoney}>
               Open Money

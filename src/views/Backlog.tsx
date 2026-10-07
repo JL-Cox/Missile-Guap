@@ -8,8 +8,7 @@ import { todayKey } from '../lib/time';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { useTaskActions } from '../components/taskActions';
-import { countOf, cutTitle, nameList } from '../lib/sections';
-import { Empty, Section, useBackLayer } from '../components/ui';
+import { Empty, Section, Zone, useBackLayer } from '../components/ui';
 
 /**
  * Everything that needs doing and has no day on it.
@@ -22,6 +21,9 @@ import { Empty, Section, useBackLayer } from '../components/ui';
  *
  * Giving one a day is how it leaves. Nothing here is late, nothing is counted,
  * and the list never tells you how long something has been sitting.
+ *
+ * Three zones: what is still to do, the routines you reuse, and what you have
+ * ticked off.
  */
 export default function Backlog({
   settings,
@@ -59,9 +61,8 @@ export default function Backlog({
   const sorted = sortTasks(unscheduled(tasks), sort);
   /*
     Routines - checklists you run again and again - are not waiting for a day
-    the way the rest are, so they get a small group of their own, at the top
-    under every sort, in the order the sort gives them. They are not listed a
-    second time below.
+    the way the rest are, so they get a zone of their own, in the order the
+    sort gives them. They are not listed a second time under To do.
   */
   const routines = sorted.filter((t) => t.routine);
   const open = sorted.filter((t) => !t.routine);
@@ -120,62 +121,71 @@ export default function Backlog({
 
   return (
     <>
-      <Section
-        title="Backlog"
-        aside={
-          <button type="button" className="btn btn-sm" onClick={() => setEditing(blankTask())}>
-            Add something
-          </button>
-        }
-      >
-        <p className="faint">
-          Things to get to when you can. Nothing here has a day on it, and nothing here is late.
-        </p>
-        <div className="btn-row" role="group" aria-label="Sort by">
-          {SORTS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              aria-pressed={sort === s.id}
-              className={`btn btn-sm${sort === s.id ? ' btn-primary' : ''}`}
-              // Saved rather than held in the component, so the list opens the
-              // way you left it rather than resetting every time you come back.
-              onClick={() => void saveSettings({ backlogSort: s.id }).then(onChange)}
-            >
-              {s.label}
+      <Zone id="open">
+        <Section
+          title="Backlog"
+          aside={
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(blankTask())}>
+              Add something
             </button>
-          ))}
-        </div>
-      </Section>
-
-      {routines.length > 0 && (
-        <Section
-          title="Routines"
-          collapsible="backlog.routines"
-          summary={nameList(routines.map((t) => cutTitle(t.title)))}
+          }
         >
-          <div className="stack-sm">{routines.map(routineRow)}</div>
-        </Section>
-      )}
-
-      {/* With Routines above them, the priority groups get a heading of their
-          own, or they would read as part of Routines - and TalkBack would file
-          them under it. Without routines the Backlog heading covers them. */}
-      {routines.length > 0 ? <Section title="Everything else">{list}</Section> : list}
-
-      {finished.length > 0 && (
-        <Section
-          title="Finished"
-          collapsible="backlog.finished"
-          summary={countOf(finished.length, 'thing you finished', 'things you finished')}
-        >
-          <div className="stack-sm">
-            {finished.map((task) => (
-              <TaskRow key={task.id} task={task} onEdit={setEditing} />
+          <p className="faint">
+            Things to get to when you can. Nothing here has a day on it, and nothing here is late.
+          </p>
+          <div className="btn-row" role="group" aria-label="Sort by">
+            {SORTS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                aria-pressed={sort === s.id}
+                className={`btn btn-sm${sort === s.id ? ' btn-primary' : ''}`}
+                // Saved rather than held in the component, so the list opens the
+                // way you left it rather than resetting every time you come back.
+                onClick={() => void saveSettings({ backlogSort: s.id }).then(onChange)}
+              >
+                {s.label}
+              </button>
             ))}
           </div>
         </Section>
-      )}
+
+        {/* The Backlog heading covers the priority groups: Routines have a
+            zone of their own, so nothing else can claim them. */}
+        {list}
+      </Zone>
+
+      <Zone id="routines">
+        <Section title="Routines">
+          {routines.length === 0 ? (
+            <Empty>
+              No routines yet. A routine is a list of steps you run again and again, like Leaving the house. To make
+              one, open a task with steps and tick "Reuse these steps each time".
+            </Empty>
+          ) : (
+            <>
+              <div className="stack-sm">{routines.map(routineRow)}</div>
+              <p className="faint">
+                To make another, open a task with steps and tick "Reuse these steps each time".
+              </p>
+            </>
+          )}
+        </Section>
+      </Zone>
+
+      <Zone id="finished">
+        <Section title="Finished">
+          {finished.length === 0 ? (
+            <Empty>Things from your backlog that you tick off are kept here.</Empty>
+          ) : (
+            <div className="stack-sm">
+              {finished.map((task) => (
+                <TaskRow key={task.id} task={task} onEdit={setEditing} />
+              ))}
+            </div>
+          )}
+        </Section>
+      </Zone>
     </>
   );
 }

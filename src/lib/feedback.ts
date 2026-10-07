@@ -3,7 +3,7 @@ import { describeDate } from './time';
 
 /**
  * The words after something moves or disappears. Each says where the thing
- * went, in terms of the tab you would look in, so nothing ever just vanishes
+ * went, in terms of the page you would look in, so nothing ever just vanishes
  * and leaves you wondering. Plain statements; nothing congratulates or scolds.
  */
 

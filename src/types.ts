@@ -523,6 +523,15 @@ export interface Settings {
    * everything leaves it.
    */
   sections?: Record<string, boolean>;
+  /**
+   * The zone each page was last left on, where that is not its first (see
+   * src/lib/zones.ts). Optional with no default, like sections: someone who
+   * never changes zone stores nothing. Fixed words only, never anything you
+   * wrote, and never Today's, which always opens on today. A preference, so it
+   * travels in backups, a restore that replaces everything puts it back, and
+   * Delete everything leaves it.
+   */
+  zones?: Record<string, string>;
   /** Bumped by backup import so views know to refetch. */
   rev: number;
 }

@@ -7,6 +7,7 @@ import {
   Empty,
   Section,
   TagList,
+  Zone,
   parseTags,
   useAutoFocus,
   useBackLayer,
@@ -22,6 +23,10 @@ import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSu
  * Notes are for things you need to look up again: the postcode, the reference
  * number, what the nurse actually said. Plain text on purpose - no formatting
  * to fiddle with, nothing to get wrong, and it reads back exactly as typed.
+ *
+ * Two zones: every note, pinned ones first, and a search. The search box is in
+ * its own zone under its own heading, so it is never mistaken for the box at
+ * the top that writes something down.
  */
 export default function Notes({ settings, openNote = null }: { settings: Settings; openNote?: Note | null }) {
   /*
@@ -69,81 +74,105 @@ export default function Notes({ settings, openNote = null }: { settings: Setting
     );
   }
 
+  const pinned = notes.filter((n) => n.pinned);
+  const rest = notes.filter((n) => !n.pinned);
+
   const needle = query.trim().toLowerCase();
-  const visible = notes.filter(
-    (n) =>
-      !needle ||
-      n.title.toLowerCase().includes(needle) ||
-      n.body.toLowerCase().includes(needle) ||
-      n.tags.some((t) => t.includes(needle)),
-  );
+  // Pinned first, as in the list.
+  const found = needle
+    ? [...pinned, ...rest].filter(
+        (n) =>
+          n.title.toLowerCase().includes(needle) ||
+          n.body.toLowerCase().includes(needle) ||
+          n.tags.some((t) => t.includes(needle)),
+      )
+    : [];
   // You should not have to remember whether the thing you wrote down was a
   // note or a task. A search here says how many tasks match too, one tap away.
   const matchingTasks = needle ? tasks.filter((t) => taskMatches(t, needle)).length : 0;
-  const pinned = visible.filter((n) => n.pinned);
-  const rest = visible.filter((n) => !n.pinned);
 
   return (
     <>
-      <Section
-        title="Notes"
-        aside={
-          <button type="button" className="btn btn-sm" onClick={() => setEditing(blankNote())}>
-            New note
-          </button>
-        }
-      >
-        <input
-          autoComplete="off"
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search everything in your notes"
-          aria-label="Search notes"
-        />
-        {/* Always here, whether or not anything is untagged. A button that comes
-            and going depending on state is one more thing to keep track of. */}
-        {settings.suggestTags && (
-          <button type="button" className="btn btn-sm" onClick={() => setTidying(true)}>
-            Tidy up untagged notes
-          </button>
+      <Zone id="all">
+        <Section
+          title="Notes"
+          aside={
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(blankNote())}>
+              New note
+            </button>
+          }
+        >
+          {/* Always here, whether or not anything is untagged. A button that comes
+              and going depending on state is one more thing to keep track of. */}
+          {settings.suggestTags && (
+            <button type="button" className="btn btn-sm" onClick={() => setTidying(true)}>
+              Tidy up untagged notes
+            </button>
+          )}
+          {notes.length === 0 && (
+            <Empty>
+              Notes live here: reference numbers, phone scripts, what someone told you, anything you will want to
+              look up rather than do.
+            </Empty>
+          )}
+        </Section>
+
+        {pinned.length > 0 && (
+          <Section title="Kept at the top">
+            <div className="stack-sm">
+              {pinned.map((note) => (
+                <NoteCard key={note.id} note={note} onEdit={setEditing} />
+              ))}
+            </div>
+          </Section>
         )}
-      </Section>
 
-      {matchingTasks > 0 && (
-        <div className="btn-row">
-          <button type="button" className="btn btn-sm" onClick={() => navigate('tasks', { query: query.trim() })}>
-            {matchingTasks === 1 ? '1 matching task' : `${matchingTasks} matching tasks`} — open Tasks
-          </button>
-        </div>
-      )}
-
-      {visible.length === 0 && (
-        <Empty>
-          {needle
-            ? `Nothing matches "${query}".`
-            : 'Notes live here: reference numbers, phone scripts, what someone told you, anything you will want to look up rather than do.'}
-        </Empty>
-      )}
-
-      {pinned.length > 0 && (
-        <Section title="Kept at the top">
+        {rest.length > 0 && (
           <div className="stack-sm">
-            {pinned.map((note) => (
+            {pinned.length > 0 && <h3>Everything else</h3>}
+            {rest.map((note) => (
               <NoteCard key={note.id} note={note} onEdit={setEditing} />
             ))}
           </div>
-        </Section>
-      )}
+        )}
+      </Zone>
 
-      {rest.length > 0 && (
-        <div className="stack-sm">
-          {pinned.length > 0 && <h3>Everything else</h3>}
-          {rest.map((note) => (
-            <NoteCard key={note.id} note={note} onEdit={setEditing} />
-          ))}
-        </div>
-      )}
+      <Zone id="search">
+        <Section title="Search notes">
+          <input
+            autoComplete="off"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="A word from any note"
+            aria-label="Search notes"
+          />
+          {matchingTasks > 0 && (
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => navigate('tasks', { zone: 'search', query: query.trim() })}
+              >
+                {matchingTasks === 1 ? '1 matching task' : `${matchingTasks} matching tasks`} — open Tasks
+              </button>
+            </div>
+          )}
+          {!needle ? (
+            <Empty>Type a word to look through every note. If any tasks match too, it says so here.</Empty>
+          ) : (
+            found.length === 0 && <Empty>Nothing matches "{query.trim()}".</Empty>
+          )}
+        </Section>
+
+        {found.length > 0 && (
+          <div className="stack-sm">
+            {found.map((note) => (
+              <NoteCard key={note.id} note={note} onEdit={setEditing} />
+            ))}
+          </div>
+        )}
+      </Zone>
     </>
   );
 }

@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { blankNote, blankTask, clearCapture, db, saveNote, unclearCapture } from '../db';
 import type { Capture, Note, Settings, Task } from '../types';
 import TaskEditor from '../components/TaskEditor';
-import { Empty, Section, useBackLayer, useToast } from '../components/ui';
+import { Empty, Section, Zone, useBackLayer, useToast } from '../components/ui';
 import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSuggestions';
 import { splitCapture, undoFiling } from '../lib/inbox';
 import { savedTaskWhere } from '../lib/feedback';
@@ -16,6 +16,9 @@ import { shortDateTime } from '../lib/time';
  *
  * Each of the three says where the thing went, and the two that clear it offer
  * Undo in the same toast every other screen uses.
+ *
+ * Two zones: what is still to sort, and what has been dealt with - kept, never
+ * deleted, and one tap from going back.
  */
 export default function Inbox({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<{ task: Task; captureId: string } | null>(null);
@@ -103,68 +106,78 @@ export default function Inbox({ settings }: { settings: Settings }) {
 
   return (
     <>
-      <Section title={open.length > 0 ? `Inbox (${open.length})` : 'Inbox'}>
-        {open.length === 0 ? (
-          <Empty>
-            The inbox is clear. Whatever you type in the box at the top of any screen arrives here, and you deal
-            with it whenever you feel like it.
-          </Empty>
-        ) : (
-          <div className="stack-sm">
-            {open.map((capture) => (
-              <div key={capture.id} className="card card-tight stack-sm">
-                <p className="pre-wrap">{capture.text}</p>
-                <p className="faint">Written {shortDateTime(capture.createdAt)}</p>
-                <div className="btn-row">
-                  <button type="button" className="btn btn-sm" onClick={() => toTask(capture)}>
-                    Make it a task
-                  </button>
-                  <button type="button" className="btn btn-sm" onClick={() => void toNote(capture)}>
-                    Keep as a note
-                  </button>
-                  <button type="button" className="btn btn-quiet btn-sm" onClick={() => void dismiss(capture)}>
-                    Done with it
-                  </button>
+      <Zone id="open">
+        <Section title={open.length > 0 ? `Inbox (${open.length})` : 'Inbox'}>
+          {open.length === 0 ? (
+            <Empty>
+              The inbox is clear. Whatever you type in the box at the top of any page arrives here, and you deal
+              with it whenever you feel like it.
+            </Empty>
+          ) : (
+            <div className="stack-sm">
+              {open.map((capture) => (
+                <div key={capture.id} className="card card-tight stack-sm">
+                  <p className="pre-wrap">{capture.text}</p>
+                  <p className="faint">Written {shortDateTime(capture.createdAt)}</p>
+                  <div className="btn-row">
+                    <button type="button" className="btn btn-sm" onClick={() => toTask(capture)}>
+                      Make it a task
+                    </button>
+                    <button type="button" className="btn btn-sm" onClick={() => void toNote(capture)}>
+                      Keep as a note
+                    </button>
+                    <button type="button" className="btn btn-quiet btn-sm" onClick={() => void dismiss(capture)}>
+                      Done with it
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+        </Section>
+
+        {/* Tags for the note just filed, offered after the fact so filing stays one tap. */}
+        {settings.suggestTags && justFiled && suggestions.length > 0 && (
+          <div className="card card-quiet stack-sm">
+            <p className="small">Filed "{justFiled.title}" in Notes.</p>
+            <TagSuggestions
+              suggestions={suggestions}
+              onAdd={async (tag) => {
+                const note = filedRef.current ?? justFiled;
+                filed(await saveNote({ ...note, tags: [...note.tags, tag] }));
+              }}
+            />
           </div>
         )}
-      </Section>
+      </Zone>
 
-      {/* Tags for the note just filed, offered after the fact so filing stays one tap. */}
-      {settings.suggestTags && justFiled && suggestions.length > 0 && (
-        <div className="card card-quiet stack-sm">
-          <p className="small">Filed "{justFiled.title}" in Notes.</p>
-          <TagSuggestions
-            suggestions={suggestions}
-            onAdd={async (tag) => {
-              const note = filedRef.current ?? justFiled;
-              filed(await saveNote({ ...note, tags: [...note.tags, tag] }));
-            }}
-          />
-        </div>
-      )}
-
-      {cleared.length > 0 && (
-        <Section
-          title="Already dealt with"
-          collapsible="inbox.cleared"
-          summary={`${cleared.length} cleared. Nothing is deleted when you clear it.`}
-        >
-          <div className="stack-sm">
-            {cleared.slice(0, 50).map((capture) => (
-              <div key={capture.id} className="item">
-                <span className="grow muted small pre-wrap">{capture.text}</span>
-                <button type="button" className="btn btn-quiet btn-sm" onClick={() => void unclearCapture(capture.id)}>
-                  Put it back
-                </button>
+      <Zone id="cleared">
+        <Section title="Already dealt with">
+          {cleared.length === 0 ? (
+            <Empty>
+              Nothing here yet. Whatever you clear from the inbox moves here. Nothing is deleted when you clear it.
+            </Empty>
+          ) : (
+            <>
+              <div className="stack-sm">
+                {cleared.slice(0, 50).map((capture) => (
+                  <div key={capture.id} className="item">
+                    <span className="grow muted small pre-wrap">{capture.text}</span>
+                    <button
+                      type="button"
+                      className="btn btn-quiet btn-sm"
+                      onClick={() => void unclearCapture(capture.id)}
+                    >
+                      Put it back
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <p className="faint">Nothing is ever deleted when you clear it. It just moves down here.</p>
+              <p className="faint">Nothing is ever deleted when you clear it. It just moves here.</p>
+            </>
+          )}
         </Section>
-      )}
+      </Zone>
     </>
   );
 }

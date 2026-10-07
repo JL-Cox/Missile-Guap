@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, forgetSettings, getSettings, saveLock, saveSettings } from './db';
@@ -6,24 +6,42 @@ import { DEFAULT_SETTINGS, type Note, type Settings as SettingsType, type Task }
 import { startScheduler } from './lib/notify';
 import { requestPersistence } from './lib/storage';
 import { THEME_TOKENS, resolveCustom } from './lib/theme';
-import { updateNotice, versionLabel } from './lib/version';
+import { APP_VERSION, updateNotice, versionLabel } from './lib/version';
+import { CHANGES } from './lib/changelog';
 import { shortDateTime, todayKey } from './lib/time';
 import { isStaleLowDay } from './lib/lowday';
 import { isOpen as savedOpen, withFold, type FoldId } from './lib/sections';
+import {
+  PAGE_IDS,
+  firstZone,
+  hasZones,
+  isPageId,
+  pageTitle,
+  remembersZone,
+  withZone,
+  zoneFor,
+  type PageId,
+  type ZonedPage,
+  type ZoneOf,
+} from './lib/zones';
 import { lockAvailable, readLock, shouldLock } from './lib/lock';
 import CaptureBar from './components/CaptureBar';
 import LockScreen from './components/LockScreen';
+import Menu from './components/Menu';
 import {
   FoldContext,
   LayerContext,
   NavigateContext,
   Toast,
   ToastContext,
+  ZoneBar,
+  ZoneContext,
   useLatest,
   type Folds,
   type Navigate,
   type ToastAction,
   type ToastState,
+  type ZoneState,
 } from './components/ui';
 import Today from './views/Today';
 import Inbox from './views/Inbox';
@@ -35,56 +53,25 @@ import Debt from './views/Debt';
 import Settings from './views/Settings';
 import About from './views/About';
 
-type ViewId = 'today' | 'inbox' | 'tasks' | 'backlog' | 'notes' | 'debt' | 'money' | 'settings';
-
-/**
- * Fixed order, fixed labels, every time. The nav never reorders itself.
- *
- * Debt sits between Notes and Money, so Today keeps the left edge and Money
- * the right, and the two money tabs sit side by side. Its glyph is a circle
- * part-way filled - "part-way there" - from the same set of shapes as the
- * others, and never an emoji.
- */
-const NAV: { id: ViewId; label: string; glyph: string }[] = [
-  { id: 'today', label: 'Today', glyph: '◎' },
-  { id: 'inbox', label: 'Inbox', glyph: '↓' },
-  { id: 'tasks', label: 'Tasks', glyph: '✓' },
-  { id: 'backlog', label: 'Backlog', glyph: '◇' },
-  { id: 'notes', label: 'Notes', glyph: '≡' },
-  { id: 'debt', label: 'Debt', glyph: '◔' },
-  { id: 'money', label: 'Money', glyph: '$' },
-];
-
-const TITLES: Record<ViewId, string> = {
-  today: 'Today',
-  inbox: 'Inbox',
-  tasks: 'Tasks',
-  backlog: 'Backlog',
-  notes: 'Notes',
-  debt: 'Debt',
-  money: 'Money',
-  settings: 'Settings',
-};
-
-/** The seven tabs, which can each hold an open editor. Settings is not one. */
-type TabId = Exclude<ViewId, 'settings'>;
-const TABS: TabId[] = NAV.map((n) => n.id as TabId);
+/** The seven working pages, which have zones and can each hold an open editor. */
+const ZONED_PAGES = PAGE_IDS.filter(hasZones);
 
 /**
  * Android home-screen shortcuts (long-press the icon) open the app with
  * `?view=inbox`, or `?view=money&add=subscription` to go straight to the form.
  * Reading them here is what makes those shortcuts real rather than decorative.
- * Any tab's name works, `?view=debt` included.
+ * Any page's name works, `?view=debt` and `?view=settings` included, and it
+ * lands on that page's first zone.
  */
-function startingPoint(): { view: ViewId; add?: 'subscription' } {
+function startingPoint(): { page: PageId; add?: 'subscription' } {
   try {
     const params = new URLSearchParams(window.location.search);
     const wanted = params.get('view');
-    const view = wanted && wanted in TITLES ? (wanted as ViewId) : 'today';
-    return { view, add: view === 'money' && params.get('add') === 'subscription' ? 'subscription' : undefined };
+    const page = wanted && isPageId(wanted) ? wanted : 'today';
+    return { page, add: page === 'money' && params.get('add') === 'subscription' ? 'subscription' : undefined };
   } catch {
     // A malformed URL is not a reason to fail to open.
-    return { view: 'today' };
+    return { page: 'today' };
   }
 }
 
@@ -94,18 +81,53 @@ function historyDepth(): number {
   return typeof depth === 'number' && depth > 0 ? depth : 0;
 }
 
+/**
+ * The one extra line the update notice says for a version that changed how
+ * you get around, read from that version's entry in the changelog. Most
+ * versions have none, and then the notice says only what it always has.
+ */
+function noticeLine(): string | undefined {
+  const entry: { notice?: unknown } | undefined = CHANGES.find((c) => c.version === APP_VERSION);
+  return typeof entry?.notice === 'string' && entry.notice.trim() ? entry.notice : undefined;
+}
+
+/**
+ * When a background save of folds or zones finishes, take everything it
+ * stored except that one setting, which the screen already shows newer.
+ *
+ * Each tap shows at once and queues its save. Without this, a save queued by
+ * an earlier tap would land after a later tap and put the screen back to the
+ * earlier choice for a moment - Income, then Coming out, then Income again,
+ * then Coming out. The stored record still ends up right, because the queue
+ * runs in order; this only stops the screen going backwards meanwhile.
+ */
+function keepShown<K extends 'sections' | 'zones'>(saved: SettingsType, key: K) {
+  return (shown: SettingsType): SettingsType => {
+    const next = { ...saved };
+    if (shown[key] === undefined) delete next[key];
+    else next[key] = shown[key];
+    return next;
+  };
+}
+
+/** Ids for the two things focus is sent to after a move. */
+const HEADING_ID = 'page-title';
+const MENU_BUTTON_ID = 'menu-button';
+
 export default function App() {
   const [start] = useState(startingPoint);
-  const [view, setView] = useState<ViewId>(start.view);
-  /** Where Settings was opened from, so Done and Back return there. */
-  const [beforeSettings, setBeforeSettings] = useState<TabId>('today');
+  const [page, setPage] = useState<PageId>(start.page);
+  /**
+   * Today's zone. Held here and never saved: Today opens on its first zone
+   * every time you come to it, from the Menu, from Back and on launch.
+   */
+  const [todayZone, setTodayZone] = useState<ZoneOf<'today'>>(firstZone('today'));
+  const [menuOpen, setMenuOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsType>(DEFAULT_SETTINGS);
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastId = useRef(0);
   const [missed, setMissed] = useState<Task[]>([]);
   const [updated, setUpdated] = useState(false);
-  /** Whether Settings is showing its About page. */
-  const [about, setAbout] = useState(false);
   /**
    * A part of Settings to open straight away, for a button elsewhere that
    * sends you to one thing there. Settings otherwise opens with every group
@@ -114,9 +136,12 @@ export default function App() {
   const [settingsFocus, setSettingsFocus] = useState<'lock' | null>(null);
   /** Whether the saved settings have arrived. See the appearance effect below. */
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  /** A search handed to the Tasks screen from Notes. */
-  const [taskQuery, setTaskQuery] = useState('');
-  /** A note handed to the Notes screen from a task row, to open in the editor. */
+  /**
+   * A search handed to the Tasks page from Notes. A new object each time, so
+   * the same words twice still land in the box.
+   */
+  const [taskSearch, setTaskSearch] = useState<{ text: string } | null>(null);
+  /** A note handed to the Notes page from a task row, to open in the editor. */
   const [noteToOpen, setNoteToOpen] = useState<Note | null>(null);
 
   /*
@@ -137,46 +162,111 @@ export default function App() {
   const [recovered, setRecovered] = useState(false);
 
   /*
-    Something open on top of a tab - an editor, a confirmation - registers how
-    to close it. Kept per tab, and a tab with something open stays mounted
-    (hidden) when you switch away, so a half-written task is still there when
-    you come back rather than silently thrown away.
+    Something open on top of a page - an editor, a confirmation - registers
+    how to close it. Kept per page, and a page with something open stays
+    mounted (hidden) when you go to another, so a half-written task is still
+    there when you come back rather than silently thrown away.
   */
-  const closers = useRef<Partial<Record<TabId, () => void>>>({});
-  const [openLayers, setOpenLayers] = useState<TabId[]>([]);
+  const closers = useRef<Partial<Record<ZonedPage, () => void>>>({});
+  const [openLayers, setOpenLayers] = useState<ZonedPage[]>([]);
   const registrars = useMemo(
     () =>
       Object.fromEntries(
-        TABS.map((tab) => [
-          tab,
+        ZONED_PAGES.map((id) => [
+          id,
           (close: (() => void) | null) => {
-            if (close) closers.current[tab] = close;
-            else delete closers.current[tab];
+            if (close) closers.current[id] = close;
+            else delete closers.current[id];
             setOpenLayers((prev) => {
-              const has = prev.includes(tab);
-              if (close && !has) return [...prev, tab];
-              if (!close && has) return prev.filter((t) => t !== tab);
+              const has = prev.includes(id);
+              if (close && !has) return [...prev, id];
+              if (!close && has) return prev.filter((t) => t !== id);
               return prev;
             });
           },
         ]),
-      ) as Record<TabId, (close: (() => void) | null) => void>,
+      ) as Record<ZonedPage, (close: (() => void) | null) => void>,
     [],
   );
 
-  const goTo = useCallback(
-    (next: ViewId) => {
-      if (next === 'settings' && view !== 'settings') setBeforeSettings(view as TabId);
-      if (next !== 'settings') {
-        setAbout(false);
-        setSettingsFocus(null);
-      }
-      // Opening Notes from the nav is opening Notes, not reopening the last
-      // note a task row sent you to.
-      setNoteToOpen(null);
-      setView(next);
+  /*
+    Zones. A page's zone shows at once and is saved behind it, one save at a
+    time, the same way a fold is. Only zones that are not a page's first are
+    kept - see src/lib/zones.ts - and none at all means the setting is taken
+    away. Today's is held above and never saved.
+  */
+  const zoneOf = <P extends ZonedPage>(p: P): ZoneOf<P> =>
+    (p === 'today' ? todayZone : zoneFor(p, settings.zones)) as ZoneOf<P>;
+  const zoneSaves = useRef<Promise<void>>(Promise.resolve());
+  const saveZone = useCallback((p: ZonedPage, zone: string) => {
+    if (!remembersZone(p)) {
+      setTodayZone(zone as ZoneOf<'today'>);
+      return;
+    }
+    setSettings((s) => ({ ...s, zones: withZone(s.zones, p, zone) }));
+    zoneSaves.current = zoneSaves.current.then(async () => {
+      const zones = withZone((await getSettings()).zones, p, zone);
+      setSettings(
+        keepShown(Object.keys(zones).length > 0 ? await saveSettings({ zones }) : await forgetSettings('zones'), 'zones'),
+      );
+    });
+  }, []);
+
+  /*
+    After a move, the page is shown from its top and focus goes where TalkBack
+    should pick up: the new page's heading after a page change, the Menu
+    button when the Menu closes with nothing changed, a zone's tab when a
+    signpost on Today opens it. Done once the move has been drawn, so focus
+    never lands on something that is about to go.
+  */
+  const afterMove = useRef<{ toTop: boolean; focus: string | null }>({ toTop: false, focus: null });
+  const [moves, setMoves] = useState(0);
+  const moved = useCallback((toTop: boolean, focus: string | null) => {
+    afterMove.current = { toTop, focus };
+    setMoves((n) => n + 1);
+  }, []);
+
+  /** Shows one of a page's zones, from its top. */
+  const showZone = useCallback(
+    (p: ZonedPage, zone: string, focusTab = false) => {
+      saveZone(p, zone);
+      moved(true, focusTab ? `tab-${p}-${zone}` : null);
     },
-    [view],
+    [saveZone, moved],
+  );
+
+  /**
+   * Changes page, closing the Menu if it is open. Every page change - the
+   * Menu, Back, a link from another page - comes through here. Today always
+   * opens on its first zone; every other page on the zone it was left on,
+   * unless the link says which.
+   */
+  const showPage = useCallback(
+    (next: PageId, options: { zone?: string; query?: string; note?: Note } = {}) => {
+      setMenuOpen(false);
+      setSettingsFocus(null);
+      setTaskSearch(options.query ? { text: options.query } : null);
+      // Opening Notes from the Menu is opening Notes, not reopening the last
+      // note a task row sent you to.
+      setNoteToOpen(options.note ?? null);
+      if (hasZones(next)) {
+        if (options.zone) saveZone(next, options.zone);
+        else if (!remembersZone(next)) setTodayZone(firstZone('today'));
+      }
+      setPage(next);
+      moved(true, HEADING_ID);
+    },
+    [saveZone, moved],
+  );
+
+  const openMenu = useCallback(() => setMenuOpen(true), []);
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    moved(false, MENU_BUTTON_ID);
+  }, [moved]);
+  const choosePage = useCallback(
+    (next: PageId) => (next === page ? closeMenu() : showPage(next)),
+    [page, closeMenu, showPage],
   );
 
   /*
@@ -186,25 +276,28 @@ export default function App() {
     made a history entry. Now the history holds, at most, one entry for each of
     these, bottom to top:
 
-      the Today screen  (always the first entry - Back from here leaves)
-      the tab you are on, if it is not Today
-      Settings, if it is open
-      About, if it is open on top of Settings
-      an editor or confirmation, if one is open on the tab you are looking at
+      Today, on its first zone  (always the first entry - Back from here leaves)
+      the page you are on, if it is not Today
+      the zone you are on, if it is not that page's first
+      an editor or confirmation, if one is open on the page you are looking at
+      the Menu, if it is open
 
-    Back takes the top one away. That is the pattern Android's own apps use for
-    a bottom nav: Back goes home, then out - never through every tab you
-    happened to visit. The entries are only counters; what Back does is decided
-    from the app's own state, so the two cannot disagree about where you are.
+    Back takes the top one away. That is the pattern Android's own apps use:
+    Back goes home, then out - never through every page you happened to visit.
+    Settings and About are pages like any other, so Back from either goes to
+    Today. The entries are only counters; what Back does is decided from the
+    app's own state, so the two cannot disagree about where you are.
   */
-  const tab: TabId = view === 'settings' ? beforeSettings : view;
-  const visibleLayer = view !== 'settings' && openLayers.includes(view);
+  const zoned = hasZones(page);
   // The lock screen sits at the bottom with nothing above it, so Back from it
   // leaves the app - as it would from the phone's own lock screen - rather
-  // than quietly changing tabs behind it.
+  // than quietly changing pages behind it.
   const depth = showLock
     ? 0
-    : (tab !== 'today' ? 1 : 0) + (view === 'settings' ? (about ? 2 : 1) : 0) + (visibleLayer ? 1 : 0);
+    : (page !== 'today' ? 1 : 0) +
+      (zoned && zoneOf(page) !== firstZone(page) ? 1 : 0) +
+      (zoned && openLayers.includes(page) ? 1 : 0) +
+      (menuOpen ? 1 : 0);
   const depthRef = useRef(historyDepth());
   const ignorePops = useRef(0);
 
@@ -217,6 +310,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Opening several things in one tap - a page chosen from the open Menu -
+    // changes the depth once, so this makes one push or one go().
     const current = depthRef.current;
     if (depth > current) {
       for (let d = current + 1; d <= depth; d++) window.history.pushState({ steady: d }, '');
@@ -230,13 +325,13 @@ export default function App() {
   }, [depth]);
 
   const back = useLatest(() => {
-    const close = view !== 'settings' ? closers.current[view] : undefined;
-    if (close) close();
-    else if (view === 'settings' && about) setAbout(false);
-    else if (view === 'settings') {
-      setSettingsFocus(null);
-      setView(beforeSettings);
-    } else if (view !== 'today') setView('today');
+    if (menuOpen) return closeMenu();
+    if (zoned) {
+      const close = closers.current[page];
+      if (close) return close();
+      if (zoneOf(page) !== firstZone(page)) return showZone(page, firstZone(page));
+    }
+    if (page !== 'today') showPage('today');
   });
 
   useEffect(() => {
@@ -252,6 +347,24 @@ export default function App() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, [back]);
+
+  /*
+    While the Menu is open, everything behind it is inert: not tappable, not
+    focusable, and not read out, so TalkBack stays in the Menu. Set through
+    the element rather than as a prop, which React 18 does not know. Before
+    the effect below that moves focus, so focus can land back on the page.
+  */
+  const frameRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (frameRef.current) frameRef.current.inert = menuOpen;
+  });
+
+  useLayoutEffect(() => {
+    const { toTop, focus } = afterMove.current;
+    afterMove.current = { toTop: false, focus: null };
+    if (toTop) window.scrollTo({ top: 0, behavior: 'instant' });
+    if (focus) document.getElementById(focus)?.focus({ preventScroll: true });
+  }, [moves]);
 
   const showToast = useCallback((message: string, action?: ToastAction) => {
     toastId.current += 1;
@@ -274,7 +387,10 @@ export default function App() {
         foldSaves.current = foldSaves.current.then(async () => {
           const sections = withFold((await getSettings()).sections, id, open);
           setSettings(
-            Object.keys(sections).length > 0 ? await saveSettings({ sections }) : await forgetSettings('sections'),
+            keepShown(
+              Object.keys(sections).length > 0 ? await saveSettings({ sections }) : await forgetSettings('sections'),
+              'sections',
+            ),
           );
         });
       },
@@ -282,11 +398,7 @@ export default function App() {
     [settings.sections],
   );
 
-  const navigate = useCallback<Navigate>((next, options) => {
-    setTaskQuery(options?.query ?? '');
-    setNoteToOpen(options?.note ?? null);
-    setView(next);
-  }, []);
+  const navigate = useCallback<Navigate>((next, options) => showPage(next, options), [showPage]);
 
   useEffect(() => {
     void (async () => {
@@ -294,6 +406,13 @@ export default function App() {
       // A low day ends at midnight. One left from an earlier day is deleted
       // here rather than kept, so no past low day is ever stored.
       if (isStaleLowDay(loaded, todayKey())) loaded = await forgetSettings('lowDay');
+      // A shortcut is a clear intent: `?view=money` opens Money on its first
+      // zone, and that is where it is left. Saved before anything is drawn, so
+      // the zone it was last left on never flashes up first.
+      if (hasZones(start.page) && zoneFor(start.page, loaded.zones) !== firstZone(start.page)) {
+        const zones = withZone(loaded.zones, start.page, firstZone(start.page));
+        loaded = Object.keys(zones).length > 0 ? await saveSettings({ zones }) : await forgetSettings('zones');
+      }
       setSettings(loaded);
       // Record the build straight away, whether or not we say anything. The
       // notice is then guaranteed to appear at most once, even if the user
@@ -312,6 +431,8 @@ export default function App() {
     // silently from heuristics (being installed is the big one), so asking on
     // every start costs nothing and catches the moment it becomes grantable.
     void requestPersistence();
+    // Once, on launch: `start` never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /*
@@ -376,6 +497,9 @@ export default function App() {
     off, so the page underneath is never painted on the way. "Immediately" locks
     straight away on hiding, so while it is in the background the page holds the
     lock screen and nothing else.
+
+    Locking also closes the Menu, so it never reopens over the page after the
+    lock comes off.
   */
   // Keyed on the timing alone: settings are re-read as a new object on every
   // save, and re-wiring these listeners on each one could drop the veil while
@@ -388,6 +512,7 @@ export default function App() {
       flushSync(() => {
         setLocked(true);
         setToast(null);
+        setMenuOpen(false);
       });
     const hide = () => {
       if (hiddenAt.current === null) hiddenAt.current = Date.now();
@@ -416,6 +541,7 @@ export default function App() {
   const hideNow = useCallback(() => {
     setLocked(true);
     setToast(null);
+    setMenuOpen(false);
   }, []);
 
   /** The recovery phrase opened the app: the lock comes off, and we say so. */
@@ -427,7 +553,7 @@ export default function App() {
 
   /*
     A new day while the app sat in the background. Everything that says "today"
-    - the header date, the Today screen, a low day - reads the date as it
+    - the header date, the Today page, a low day - reads the date as it
     renders, so all it needs is a render. Coming back into view gives it one
     when the date has moved on; nothing is cleared on a timer.
   */
@@ -458,14 +584,14 @@ export default function App() {
     0,
   ) ?? 0;
 
-  const renderTab = (id: TabId): ReactNode => {
+  const renderPage = (id: ZonedPage): ReactNode => {
     switch (id) {
       case 'today':
         return <Today settings={settings} onChange={setSettings} />;
       case 'inbox':
         return <Inbox settings={settings} />;
       case 'tasks':
-        return <Tasks settings={settings} initialQuery={taskQuery} />;
+        return <Tasks settings={settings} search={taskSearch} />;
       case 'backlog':
         return <Backlog settings={settings} onChange={setSettings} />;
       case 'notes':
@@ -477,47 +603,83 @@ export default function App() {
     }
   };
 
+  /** What each page's zones are told: which one is showing, and how to show another. */
+  const zoneState = (id: ZonedPage): ZoneState => ({
+    page: id,
+    zone: zoneOf(id),
+    choose: (zone, focusTab) => showZone(id, zone, focusTab),
+  });
+
   /*
     Until the saved settings arrive there is no way to know whether a lock is
     set, so nothing of the app is drawn at all - just the page colour, for the
     few milliseconds IndexedDB takes. Then it is the lock or the app, never the
-    app first. When locked, the lock screen is the whole page: no header, nav,
-    tab, toast or missed-reminders card is mounted behind it, not even hidden.
+    app first. When locked, the lock screen is the whole page: no header,
+    Menu, zone bar, page, toast or missed-reminders card is mounted behind it,
+    not even hidden.
   */
   if (!settingsLoaded) return <div className="app-blank" aria-busy="true" />;
   if (showLock) return <LockScreen lock={lock} onUnlock={() => setLocked(false)} onRecovered={recoverWithPhrase} />;
+
+  const whatsNew = noticeLine();
+  /** The bar steps aside while an editor or confirmation has the page. */
+  const showBar = zoned && !openLayers.includes(page);
 
   return (
     <ToastContext.Provider value={showToast}>
       <NavigateContext.Provider value={navigate}>
         <FoldContext.Provider value={folds}>
-          <div className="app">
+          <div className="app-frame" ref={frameRef}>
             <header className="header">
-              <div className="header-inner">
-                <div>
-                  <h1>{view === 'settings' && about ? 'About' : TITLES[view]}</h1>
-                  {view === 'today' && <p className="faint">{longDate()}</p>}
-                </div>
-                <div className="header-actions">
-                  {lock && (
-                    <button type="button" className="btn btn-quiet btn-sm" onClick={hideNow}>
-                      Hide now
-                    </button>
+              {/* The layout depends only on the text size, the screen's width
+                  and whether a lock is set - never on which page you are on -
+                  so the page under it does not jump when you change page. */}
+              <div className={`header-inner${lock ? ' has-action' : ''}`}>
+                {/* The count is read out as words in the name - "Menu, 3 in
+                    your inbox" - and drawn as a number. Given whole as a label,
+                    because Chrome puts a space before the comma when the name
+                    is pieced together from a count pinned to the corner. */}
+                <button
+                  type="button"
+                  id={MENU_BUTTON_ID}
+                  className="btn btn-sm menu-btn"
+                  aria-haspopup="dialog"
+                  aria-label={openCount > 0 ? `Menu, ${openCount} in your inbox` : undefined}
+                  onClick={openMenu}
+                >
+                  {/* Three drawn bars and the word, never the bars alone. */}
+                  <span className="menu-bars" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  Menu
+                  {openCount > 0 && (
+                    <span className="menu-count" aria-hidden="true">
+                      {openCount}
+                    </span>
                   )}
-                  <button
-                    type="button"
-                    className={view === 'settings' ? 'btn btn-sm' : 'btn btn-quiet btn-sm'}
-                    onClick={() => (view === 'settings' ? goTo(beforeSettings) : goTo('settings'))}
-                  >
-                    {view === 'settings' ? 'Done' : 'Settings'}
-                  </button>
+                </button>
+                <div className="header-title">
+                  <h1 id={HEADING_ID} tabIndex={-1}>
+                    {pageTitle(page)}
+                  </h1>
+                  {page === 'today' && <p className="faint">{longDate()}</p>}
                 </div>
+                {/* The one thing that has to be a single tap from any page,
+                    for when someone walks up. */}
+                {lock && (
+                  <button type="button" className="btn btn-quiet btn-sm header-action" onClick={hideNow}>
+                    Hide now
+                  </button>
+                )}
               </div>
             </header>
 
-            <main className="main">
-              {/* The capture box is on every screen except Settings, always first. */}
-              {view !== 'settings' && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
+            <main className="main" data-page={page}>
+              {/* The capture box is first on every zone of every working page,
+                  in the same place, and on nowhere else. */}
+              {zoned && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
 
               {recovered && (
                 <div className="card stack-sm" role="status">
@@ -532,8 +694,7 @@ export default function App() {
                       className="btn btn-sm"
                       onClick={() => {
                         setRecovered(false);
-                        goTo('settings');
-                        setAbout(false);
+                        showPage('settings');
                         setSettingsFocus('lock');
                       }}
                     >
@@ -552,14 +713,14 @@ export default function App() {
                     <strong>Steady updated to {versionLabel().toLowerCase()}.</strong> Your notes, tasks and
                     subscriptions are untouched.
                   </p>
+                  {whatsNew && <p className="small">{whatsNew}</p>}
                   <div className="btn-row">
                     <button
                       type="button"
                       className="btn btn-sm"
                       onClick={() => {
                         setUpdated(false);
-                        goTo('settings');
-                        setAbout(true);
+                        showPage('about');
                       }}
                     >
                       What's new
@@ -594,48 +755,29 @@ export default function App() {
                 </div>
               )}
 
-              {TABS.filter((id) => id === view || openLayers.includes(id)).map((id) => (
-                <div key={id} className="view" hidden={id !== view}>
-                  <LayerContext.Provider value={registrars[id]}>{renderTab(id)}</LayerContext.Provider>
+              {ZONED_PAGES.filter((id) => id === page || openLayers.includes(id)).map((id) => (
+                <div key={id} className="view" hidden={id !== page}>
+                  <LayerContext.Provider value={registrars[id]}>
+                    <ZoneContext.Provider value={zoneState(id)}>{renderPage(id)}</ZoneContext.Provider>
+                  </LayerContext.Provider>
                 </div>
               ))}
-              {view === 'settings' &&
-                (about ? (
-                  <About onBack={() => setAbout(false)} />
-                ) : (
-                  <Settings
-                    settings={settings}
-                    onChange={setSettings}
-                    onAbout={() => setAbout(true)}
-                    focus={settingsFocus}
-                  />
-                ))}
+              {page === 'settings' && <Settings settings={settings} onChange={setSettings} focus={settingsFocus} />}
+              {page === 'about' && <About />}
             </main>
 
-            <nav className="nav" aria-label="Main">
-              {NAV.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="nav-btn"
-                  aria-current={view === item.id ? 'page' : undefined}
-                  onClick={() => goTo(item.id)}
-                >
-                  <span className="nav-glyph" aria-hidden="true">
-                    {item.glyph}
-                  </span>
-                  {/* The bold width is reserved on every tab (see .nav-label), so the
-                      slots never shift when the tab you are on changes. */}
-                  <span className="nav-label" data-label={item.label}>
-                    {item.label}
-                  </span>
-                  {item.id === 'inbox' && openCount > 0 && <span className="nav-count">{openCount}</span>}
-                </button>
-              ))}
-            </nav>
+            {showBar && (
+              <ZoneBar
+                page={page}
+                zone={zoneOf(page)}
+                // The zone you are on again takes you back to its top.
+                onChoose={(zone) => showZone(page, zone)}
+              />
+            )}
 
             {toast && <Toast toast={toast} onDismiss={dismissToast} />}
           </div>
+          {menuOpen && <Menu current={page} inboxCount={openCount} onChoose={choosePage} onClose={closeMenu} />}
         </FoldContext.Provider>
       </NavigateContext.Provider>
     </ToastContext.Provider>

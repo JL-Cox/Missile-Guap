@@ -41,9 +41,9 @@
     filter chip and the Save button do NOT look alike - see the button section.
 
   * MATERIAL: PAPER UNDER A LAMP. Elevation is a tonal step plus a hairline.
-    There is exactly one shadow in this app, on the toast, because the toast is
-    the only thing that genuinely floats. A drop shadow on an OLED phone at 2am
-    is just noise.
+    There is exactly one shadow in this app, on the two things that genuinely
+    float: the toast, and the Menu drawn over the page. A drop shadow on an
+    OLED phone at 2am is just noise.
 
   * EVERY COLOUR HERE IS A LITERAL VALUE. Nothing is computed with color-mix(),
     so `test/theme.test.ts` can read this file and hold every theme to WCAG AA,
@@ -151,30 +151,26 @@ html {
      never costs you the feedback. See the reduce-motion block. */
   --press-shift: 1px;
 
-  /* ---- the nav's own budget --------------------------------------------
-     Six slots on a 412px phone is 68px each, and seven is 58px. At 1.6x text a
-     0.8rem label is 21.8px, and "Settings" needs about 85px - it clips.
+  /* ---- the zone bar's own budget ---------------------------------------
+     The bar at the bottom holds a page's zones: four at most, as words. Four
+     slots on a 360px phone are 90px each, and "Subscriptions" set bold at 1.6x
+     text needs more than that - it clips.
 
-     So the label is the ONE piece of text in this app that is capped. The nav
+     So the label is the ONE piece of text in this app that is capped. The bar
      is a row of fixed landmarks you find by position; the text-size setting
-     exists for reading, and everything you actually read still scales. In
-     exchange the glyph gives up its space as the text grows: full size to
-     1.25x, gone by 1.35x, so at large sizes the words get the whole slot.
+     exists for reading, and everything you actually read still scales, the
+     page's own title included.
 
-     The floor is 12.5px, not 11: at 1.0x the label was the smallest text in the
-     app, on the one control you use on every visit. The cap also follows the
-     screen width - 3.4vw is 14px on a 412px phone and the 12.5px floor on a
-     360px one - so at everyday text sizes the floor wins either way.
+     The floor is 12.5px, so at 1.0x a label is never the smallest text in the
+     app, on the one control you use on every visit. The cap follows the
+     screen width too - 3.9vw is 16px on a 412px phone and 14px on a 360px one -
+     so a narrow phone at large text still fits four labels on one line each.
 
-     Equal slots stopped being enough at seven: bold "Backlog" - the tab you are
-     on - is 55px in the wide font a test browser uses and 48px in one close to
-     the phone's, against 47px of room in a 360px screen's seventh. So a slot is
-     never narrower than its own label set bold, and the rest of the width is
-     shared out equally (see .nav-btn and .nav-label below). The bold width is
-     reserved on every tab, so no slot moves when the tab you are on changes. */
-  --nav-label: clamp(12.5px, min(0.76rem, 3.4vw), 15px);
-  --nav-glyph: clamp(0px, calc((1.35 - var(--text-scale)) * 10rem), 1rem);
-  --nav-gap: clamp(0px, calc((1.35 - var(--text-scale)) * 2rem), 3px);
+     A slot is never narrower than its own label set bold, and the rest of the
+     width is shared out equally (see .nav-btn and .nav-label below). The bold
+     width is reserved on every slot, so no slot moves when the zone showing
+     changes. Five zones overflowed at 360px, which is why no page has five. */
+  --zone-label: clamp(12.5px, min(0.85rem, 3.9vw), 17px);
 
   /* ---- the default palette (Calm) --------------------------------------- */
   --bg: #f4f1ea;
@@ -483,8 +479,14 @@ html {
   box-shadow: 0 0 0 2px var(--bg), 0 0 14px 3px rgba(255, 92, 195, 0.45);
 }
 
-[data-theme='synthwave'] .nav-btn[aria-current='page'] {
+/* The zone showing glows from its top rule, the page you are on in the Menu
+   from its left one: the same light, from the same edge as the rule. */
+[data-theme='synthwave'] .nav-btn[aria-selected='true'] {
   box-shadow: inset 0 3px 10px -4px rgba(255, 92, 195, 0.55);
+}
+
+[data-theme='synthwave'] .drawer-item[aria-current='page'] {
+  box-shadow: inset 3px 0 10px -4px rgba(255, 92, 195, 0.55);
 }
 
 /* A sweet-shop page in daylight. Pink ground, hot pink for what you press,
@@ -569,6 +571,11 @@ html {
 [data-theme='contrast'] select {
   border-width: 2px;
   border-style: solid;
+}
+
+/* The Menu has one edge against the page, and here it is the heavy one. */
+[data-theme='contrast'] .drawer {
+  border-right-width: 2px;
 }
 
 /* The empty state is a margin note everywhere else; here it needs a real edge. */
@@ -701,7 +708,9 @@ code {
    LAYOUT
    ========================================================================== */
 
-.app {
+/* Everything but the Menu: the header, the page, the zone bar and the toast.
+   App makes it inert while the Menu is open over it. */
+.app-frame {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -717,7 +726,7 @@ code {
   /* Left and right insets matter in landscape, where the notch eats the gutter. */
   padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
   padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
-  /* Room for the fixed nav plus the phone's own gesture bar. */
+  /* Room for the fixed zone bar plus the phone's own gesture bar. */
   padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
@@ -727,15 +736,31 @@ code {
 }
 
 /*
-  One tab's screen. It adds no box of its own - its sections are laid out by
-  .main's gap exactly as if it were not there - but it can be hidden, which is
-  how a tab with a half-written editor keeps it while you look at another tab.
+  One page. It adds no box of its own - its zones are laid out by .main's gap
+  exactly as if it were not there - but it can be hidden, which is how a page
+  with a half-written editor keeps it while you look at another page.
 */
 .view {
   display: contents;
 }
 
 .view[hidden] {
+  display: none;
+}
+
+/*
+  One zone of a page: a real box, with the same big step between its sections
+  that .main has. Not display: contents - it is a tab panel, and Chrome has
+  dropped the role of a display: contents element before. `hidden` has to win
+  over display: flex, or every zone would show at once.
+*/
+.zone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-section);
+}
+
+.zone[hidden] {
   display: none;
 }
 
@@ -879,6 +904,16 @@ code {
 */
 .fold-list > section > .fold-body {
   padding-bottom: calc(var(--gap-section) - var(--gap));
+}
+
+/*
+  Today's "More on Today": one row for each of its other zones, drawn like a
+  folded section's heading - the name, one faint line, and a quiet pill - so
+  it reads as "there is more of this, here" rather than as a new kind of
+  control. The pill says Open, because a row opens its zone.
+*/
+.signpost .fold-title {
+  font-weight: var(--w-medium);
 }
 
 /* ==========================================================================
@@ -1821,9 +1856,11 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 
 /* ==========================================================================
-   THE NAV
-   Up to seven slots have to survive 1.6x text on a 360px phone. See
-   --nav-label above for the one place in this app where a user setting is
+   THE ZONE BAR
+   A page's zones, along the bottom: up to four slots that have to survive
+   1.6x text on a 360px phone. It keeps the old nav's classes and its look,
+   so the bottom of the screen still works the way it always has. See
+   --zone-label above for the one place in this app where a user setting is
    deliberately capped, and why.
    ========================================================================== */
 
@@ -1849,19 +1886,18 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
      slot shrink until its label broke in two. */
   flex: 1 1 0;
   min-width: auto;
-  min-height: 60px;
+  min-height: 56px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--nav-gap);
   padding: var(--space-2) 2px;
   border: none;
   border-top: 3px solid transparent;
   background: transparent;
   color: var(--text-soft);
   font: inherit;
-  font-size: var(--nav-label);
+  font-size: var(--zone-label);
   font-weight: var(--w-medium);
   line-height: 1.15;
   letter-spacing: -0.01em;
@@ -1873,11 +1909,11 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 
 /*
-  The label reserves its own bold width on every tab. Its text and a hidden,
+  The label reserves its own bold width on every slot. Its text and a hidden,
   bold copy of it (from data-label) share one grid column, so the column is
-  always as wide as the bold word, whichever tab is current, and nothing moves
-  when you change tabs. The copy has no height and is never read out: hidden
-  content is left out of the button's name.
+  always as wide as the bold word, whichever zone is showing, and nothing
+  moves when you change zone. The copy has no height and is never read out:
+  hidden content is left out of the button's name.
 
   Do not put overflow: hidden on the copy - it zeroes its min-content width,
   and the reservation silently stops working.
@@ -1908,43 +1944,11 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   weight - because this is the single most important piece of orientation in the
   app and it must not depend on colour alone.
 */
-.nav-btn[aria-current='page'] {
+.nav-btn[aria-selected='true'] {
   color: var(--accent-text);
   border-top-color: var(--accent);
   background: var(--accent-soft);
   font-weight: var(--w-strong);
-}
-
-.nav-glyph {
-  font-size: var(--nav-glyph);
-  line-height: 1;
-}
-
-.nav-count {
-  /* Capped with the label, and for the same reason: it lives in the nav's fixed
-     budget. It is lifted out of the flow and sits in the slot's top corner, so
-     "Inbox" stays on the same line as every other label whether or not there is
-     anything waiting.
-
-     Anchored to the slot's right edge, not its middle: in a narrow slot a
-     count of "12" hung from the middle reached into the Tasks slot, where a
-     tap on it still opened the Inbox. It takes no taps of its own. */
-  position: absolute;
-  top: 5px;
-  right: 2px;
-  pointer-events: none;
-  font-size: clamp(10px, 0.62rem, 13px);
-  font-weight: var(--w-strong);
-  font-variant-numeric: tabular-nums;
-  color: var(--accent-text);
-  background: var(--accent-soft);
-  border-radius: var(--radius-pill);
-  padding: 0 6px;
-  line-height: 1.5;
-}
-
-.nav-btn[aria-current='page'] .nav-count {
-  background: var(--surface);
 }
 
 /* ==========================================================================
@@ -1960,27 +1964,261 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   padding: var(--space-3) var(--gutter);
   padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
   padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
+  /* Measured by the query below, in its own text size. */
+  container: header / inline-size;
 }
 
+/*
+  Menu on the left, the page's name, and Hide now on the right when a lock is
+  set. One row whenever it fits. The layout depends only on the text size,
+  the screen's width and whether a lock is set - never on which page you are
+  on - so every page but Today has a header of the same height, and nothing
+  under it jumps when you change page.
+*/
 .header-inner {
   max-width: 720px;
   margin: 0 auto;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'menu title action';
+  align-items: center;
   column-gap: var(--gap);
-  row-gap: var(--space-1);
-  flex-wrap: wrap;
+  row-gap: var(--space-2);
+}
+
+/* `em` here is the header's own text size, so this is "narrow for this text
+   size": at large text, Menu and Hide now share the first row and the name
+   gets the whole second one, rather than being squeezed between them. */
+@container header (max-width: 18.5em) {
+  .header-inner.has-action {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      'menu . action'
+      'title title title';
+  }
+}
+
+.header-title {
+  grid-area: title;
+  min-width: 0;
+}
+
+.header-action {
+  grid-area: action;
 }
 
 .header h1 {
   font-weight: var(--w-strong);
 }
 
+/* Moved to by the app after a page change, for TalkBack. Not a control. */
+.header h1:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/*
+  The Menu button: three drawn bars and the word, never the bars alone
+  (rule 6), and no glyph, so there is no font to fall back on and nothing to
+  confuse with Notes' ≡. A normal bordered button, not a quiet one, because
+  it is now the way between pages.
+*/
+.menu-btn {
+  grid-area: menu;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+}
+
+.menu-bars {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 18px;
+  height: 14px;
+  margin-right: var(--space-2);
+}
+
+.menu-bars > span {
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/*
+  What is waiting in the inbox, pinned to the button's corner. Lifted out of
+  the flow, so the button is the same width with or without it; it takes no
+  taps of its own. The accent's tint, so nothing shouts.
+*/
+.menu-count,
+.drawer-count {
+  pointer-events: none;
+  font-size: clamp(10px, 0.62rem, 13px);
+  font-weight: var(--w-strong);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: var(--radius-pill);
+  padding: 0 6px;
+  line-height: 1.5;
+}
+
+.menu-count {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  border: 1px solid var(--bg);
+}
+
+/* ==========================================================================
+   THE MENU
+   Every page, in a drawer from the left. It covers the page rather than
+   pushing it, and the page behind is set back under a veil of its own colour -
+   dimmer in a dark theme, paler in a light one, never a new colour. The list
+   sits at the bottom, in reach of a thumb.
+   ========================================================================== */
+
+/* Above the toast (40), which stays under the veil and cannot be tapped. */
+.drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+/* A tap anywhere on it closes the Menu: the strip beside the drawer is a
+   full-height target. */
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  opacity: 0.8;
+  touch-action: none;
+  animation: veil var(--motion) var(--ease-out);
+}
+
+.drawer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(360px, calc(100vw - 56px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-float);
+  padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: slide-in var(--motion) var(--ease-out);
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: var(--gap);
+  padding: var(--space-3) var(--gutter);
+}
+
+.drawer-head h2 {
+  font-size: var(--fs-head);
+  font-weight: var(--w-strong);
+}
+
+/* At the bottom while it fits; if it ever does not, it follows the heading
+   and the drawer scrolls. */
+.drawer nav {
+  margin-top: auto;
+}
+
+.drawer-group {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) 0;
+}
+
+.drawer-group + .drawer-group {
+  border-top: 1px solid var(--border);
+}
+
+/* Not capped like the zone labels: there is room here for the full size. */
+.drawer-item {
+  display: grid;
+  grid-template-columns: 1.5em minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  width: 100%;
+  min-height: 52px;
+  padding: var(--space-2) var(--gutter) var(--space-2) calc(var(--gutter) - 4px);
+  border: 0;
+  border-left: 4px solid transparent;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-snug);
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .drawer-item:hover {
+    color: var(--text);
+    background: var(--surface-alt);
+  }
+}
+
+.drawer-item:active {
+  background: var(--surface-sunk);
+}
+
+/*
+  The page you are on: the same three signals as the zone you are on - a
+  rule, the tint and the weight - with the rule on the left edge here.
+*/
+.drawer-item[aria-current='page'] {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  font-weight: var(--w-strong);
+}
+
+.drawer-glyph {
+  text-align: center;
+  line-height: 1;
+}
+
+.drawer-item[aria-current='page'] .drawer-count {
+  background: var(--surface);
+}
+
+/* Nothing behind the Menu scrolls while it is open. */
+html.menu-open {
+  overflow: hidden;
+}
+
+/* Opening slides in over --motion while the page dims; closing is instant.
+   Both reduce-motion switches take the movement away entirely. */
+@keyframes slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Only a start: it fades up to the veil's own opacity. */
+@keyframes veil {
+  from {
+    opacity: 0;
+  }
+}
+
 /* ==========================================================================
    THE TOAST
-   The one thing in this app that genuinely floats, and so the one thing with a
-   shadow. It rises 6px on entry; if motion is off it simply appears, and it was
+   It genuinely floats, and so it has the shadow - as only the Menu also does.
+   It rises 6px on entry; if motion is off it simply appears, and it was
    always readable either way.
    ========================================================================== */
 
@@ -2171,14 +2409,6 @@ html.veiled #root {
   min-height: 100dvh;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  column-gap: var(--space-2);
-  row-gap: var(--gap-row);
-  flex-wrap: wrap;
-}
-
 /*
   The lock screen. Content starts a fixed distance from the top rather than
   being centred: centred, a message appearing under the pad would nudge every
@@ -2296,6 +2526,7 @@ html.veiled #root {
   .nav,
   .toast,
   .capture,
+  .drawer-layer,
   .header button {
     display: none !important;
   }

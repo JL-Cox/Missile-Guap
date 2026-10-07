@@ -4,7 +4,7 @@ import { cutTitle } from './sections';
 import { fromDateKey, shortDate, SHORT_MONTHS, SHORT_WEEKDAYS, todayKey } from './time';
 
 /**
- * The words the Debt tab, Money and Today use for debts. Debt is a subject
+ * The words the Debt page, Money and Today use for debts. Debt is a subject
  * people are ashamed of, so every line here is a plain fact or a plan, never a
  * judgement: nothing is "owed", nothing is "late", nothing is counted against
  * anyone. test/debtwords.test.ts reads the debt screens and this file and
