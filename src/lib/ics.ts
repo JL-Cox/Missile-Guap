@@ -382,12 +382,30 @@ export function calendarForIncome(
 /** Days before each debt payment its calendar entry reminds you. Fixed, so there is no field to set. */
 export const DEBT_REMIND_DAYS = 3;
 
-/**
- * The file name for a debt's calendar entry. Deliberately neutral: the share
- * sheet and Downloads show the file name, and a lender's or a hospital's name
- * has no business appearing there.
- */
+/** The file name a debt's calendar entry falls back to when its name gives nothing usable. */
 export const DEBT_CALENDAR_FILENAME = 'payment-dates.ics';
+
+/**
+ * The file name for a debt's calendar entry, after the debt: "Car loan" gives
+ * `car-loan-payments.ics`. Each file then says which debt it is in the share
+ * sheet and in Downloads, and adding a second debt does not land beside an
+ * identical "payment-dates (1).ics". The owner chose this over a neutral name,
+ * knowing the debt's name shows there.
+ *
+ * Only letters and digits survive, joined by hyphens, so nothing a phone or a
+ * calendar app treats specially (slashes, quotes, dots) gets into the name.
+ */
+export function debtCalendarFilename(name: string): string {
+  const slug = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50)
+    .replace(/-+$/, '');
+  return slug ? `${slug}-payments.ics` : DEBT_CALENDAR_FILENAME;
+}
 
 /**
  * A debt's payments as a repeating all-day entry, from the next due date not

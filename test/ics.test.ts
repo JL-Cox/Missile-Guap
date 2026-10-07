@@ -8,6 +8,7 @@ import {
   calendarForTask,
   DEBT_CALENDAR_ENTRY_STAYS,
   DEBT_CALENDAR_FILENAME,
+  debtCalendarFilename,
   DEBT_REMIND_DAYS,
   icsFilename,
 } from '../src/lib/ics';
@@ -468,10 +469,21 @@ describe('a debt in the calendar', () => {
     expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1);
   });
 
-  it('names the calendar "Steady" and the file neutrally, never after the lender', () => {
-    const ics = calendarForDebt(loan(), '$395.09', at)!;
-    expect(ics).toContain('X-WR-CALNAME:Steady');
-    expect(DEBT_CALENDAR_FILENAME).toBe('payment-dates.ics');
+  it('names the calendar "Steady"', () => {
+    expect(calendarForDebt(loan(), '$395.09', at)!).toContain('X-WR-CALNAME:Steady');
+  });
+
+  it('names the file after the debt, with only letters, digits and hyphens', () => {
+    expect(debtCalendarFilename('Car loan')).toBe('car-loan-payments.ics');
+    expect(debtCalendarFilename('  Visa / Chase (old)  ')).toBe('visa-chase-old-payments.ics');
+    expect(debtCalendarFilename('Café Crédit')).toBe('cafe-credit-payments.ics');
+    expect(debtCalendarFilename('../../etc')).toBe('etc-payments.ics');
+    expect(debtCalendarFilename('a'.repeat(80))).toBe(`${'a'.repeat(50)}-payments.ics`);
+  });
+
+  it('falls back to a neutral name when the debt name has nothing usable', () => {
+    expect(debtCalendarFilename('')).toBe(DEBT_CALENDAR_FILENAME);
+    expect(debtCalendarFilename('$$$ ...')).toBe('payment-dates.ics');
   });
 
   it('keeps notes out unless they are switched on', () => {

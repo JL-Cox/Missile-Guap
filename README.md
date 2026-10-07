@@ -262,9 +262,9 @@ Everything else follows from that:
 - **Debts are as private as everything else.** No account numbers, logins or
   lender connections are asked for, and nothing is looked up - every number
   is one you typed. Debt payments never go into the whole-app calendar export;
-  each debt has its own *Add to my calendar* button, and the file is called
-  `payment-dates.ics` so a lender's name never shows in the share sheet or your
-  downloads. Debts and your plan are in backups and are removed by *Delete
+  each debt has its own *Add to my calendar* button, and the file is named
+  after the debt (`car-loan-payments.ics`), so that name does show in the share
+  sheet and your downloads. Debts and your plan are in backups and are removed by *Delete
   everything*.
 - **Data leaves only when you tap a button that says so**: *Save a backup file*
   (a readable file with everything in it), *Add to my calendar* and *Export
@@ -355,7 +355,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-986 unit tests cover the parts where a quiet wrong answer would make the app
+988 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between

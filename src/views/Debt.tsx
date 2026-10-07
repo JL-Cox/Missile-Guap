@@ -6,7 +6,7 @@ import { balanceAfterPaymentMinor } from '../lib/debt';
 import { markedPaidIn, paycheckRows, perCheckShareMinor, type CheckView, type PaymentRow } from '../lib/debtchecks';
 import type { DebtPlanView, DebtSummary, ExtraReason } from '../lib/payoff';
 import { whyNoPayPeriod } from '../lib/cashflow';
-import { calendarForDebt, DEBT_CALENDAR_ENTRY_STAYS, DEBT_CALENDAR_FILENAME } from '../lib/ics';
+import { calendarForDebt, DEBT_CALENDAR_ENTRY_STAYS, debtCalendarFilename } from '../lib/ics';
 import { formatMoney } from '../lib/money';
 import { countOf, cutTitle, nameList } from '../lib/sections';
 import {
@@ -1164,7 +1164,7 @@ function DebtCard({
           <AddToCalendar
             build={(options) => calendarForDebt(debt, setAmountLabel(debt), Date.now(), options)}
             kind="debt"
-            filename={DEBT_CALENDAR_FILENAME}
+            filename={debtCalendarFilename(debt.name)}
             nothingToAdd="It needs a balance and its next due date before there is anything to put in a calendar."
           />
           {updating ? (
@@ -1277,7 +1277,7 @@ function SavedPanel({
       <AddToCalendar
         build={(options) => calendarForDebt(debt, setAmountLabel(debt), Date.now(), options)}
         kind="debt"
-        filename={DEBT_CALENDAR_FILENAME}
+        filename={debtCalendarFilename(debt.name)}
         className="btn btn-primary btn-wide"
         nothingToAdd="It needs a balance and its next due date before there is anything to put in a calendar."
       />

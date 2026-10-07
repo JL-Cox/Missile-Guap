@@ -1298,12 +1298,12 @@ await page.waitForTimeout(400);
 check('Update balance saves the new balance', (await storedDebt('Harbor Visa')).balanceMinor, 240_000);
 check('and says so, with Undo', await page.locator('.toast:has-text("Balance updated.") button:text-is("Undo")').count(), 1);
 
-// Its payment dates, into the calendar: a neutral file name, no notes by default.
+// Its payment dates, into the calendar: a file named after the debt, no notes by default.
 const debtCalendar = await Promise.all([
   page.waitForEvent('download'),
   debtCard('Harbor Visa').locator('button:text-is("Add to my calendar")').click(),
 ]).then(([d]) => d);
-check('the calendar file has a neutral name', debtCalendar.suggestedFilename(), 'payment-dates.ics');
+check('the calendar file is named after the debt', debtCalendar.suggestedFilename(), 'harbor-visa-payments.ics');
 const debtIcs = await debtCalendar.createReadStream().then(async (stream) => {
   let out = '';
   for await (const chunk of stream) out += chunk;

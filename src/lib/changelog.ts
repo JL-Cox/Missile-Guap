@@ -17,6 +17,10 @@ export interface ChangeEntry {
 
 export const CHANGES: ChangeEntry[] = [
   {
+    version: 24,
+    items: ["Each debt's calendar file is named after the debt, like car-loan-payments.ics."],
+  },
+  {
     version: 23,
     items: [
       'New Debt tab: each card or loan with its balance, rate, terms and payoff date.',
