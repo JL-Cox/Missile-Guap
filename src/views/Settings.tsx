@@ -697,7 +697,8 @@ export default function Settings({
           <div className="card stack-sm">
             <p className="small">
               <strong>Nothing leaves this device unless you send it.</strong> Not to us, not to anyone. The only ways
-              out are the buttons that say so: saving a backup file, and adding things to your calendar. There is no
+              out are the buttons that say so: saving a backup file, adding things to your calendar, and exporting
+              your subscriptions from Money. There is no
               account, no login, no server, no analytics, no crash reporting, no ads and no third-party code loaded
               from anywhere.
             </p>

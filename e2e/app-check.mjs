@@ -475,6 +475,26 @@ await page.click('button:has-text("Done")');
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${OUT}/money.png`, fullPage: true });
 
+// --- exporting subscriptions to look for savings elsewhere ------------------
+check(
+  'the export says what goes in before you tap it',
+  (await page.textContent('.main')).includes('Notes and how-to-cancel steps stay here'),
+  true,
+);
+const subExport = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('button:text-is("Export my subscriptions")'),
+]).then(([d]) => d);
+check('the export is a dated spreadsheet file', /^subscriptions-\d{4}-\d{2}-\d{2}\.csv$/.test(subExport.suggestedFilename()), true);
+const subCsv = await subExport.createReadStream().then(async (stream) => {
+  let out = '';
+  for await (const chunk of stream) out += chunk;
+  return out;
+});
+check('it starts with a header row', subCsv.startsWith('Name,Category,Price,Currency,Billed,'), true);
+check('it lists the subscription with plain amounts', /\r\nNetflix,TV & film,12\.99,USD,every month,12\.99,155\.88,/.test(subCsv), true);
+check('it never carries the cancel steps', subCsv.includes('Cancel Membership'), false);
+
 // --- a name is saved exactly as typed --------------------------------------
 // "Gym membership" used to be saved as "Gymmembership": the moment the box held
 // "Gym " it matched the Gym preset and was overwritten, space and all.

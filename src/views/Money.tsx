@@ -32,6 +32,7 @@ import type { CheckView } from '../lib/debtchecks';
 import { chargesAndPayments } from '../lib/debtwords';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
+import ExportSubscriptions from '../components/ExportSubscriptions';
 import IncomeEditor from '../components/IncomeEditor';
 import { useDebtPlan } from '../components/useDebtPlan';
 import { describeFrequency, isActiveIncome, nextPayday } from '../lib/pay';
@@ -459,6 +460,7 @@ export default function Money({ settings, startAdding = false }: { settings: Set
                 />
               ))}
             </div>
+            <ExportSubscriptions subs={active} />
           </>
         )}
 

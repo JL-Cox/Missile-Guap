@@ -52,7 +52,7 @@ opposite on all three counts.
 | **Tasks** | All tasks, grouped by day, searchable across titles, notes, steps and tags. Optional times, durations, reminders, repeats and an energy level. |
 | **Backlog** | Everything that needs doing and has no day on it — book the appointment, order the thing, chase the letter. Anything you write down without giving it a date lands here by itself, so there is no decision to make at the time. Four priority levels (Low, Medium, High, Critical, and "not said", which stays a valid answer), four sort orders, and the one you used last is remembered. Nothing here is ever called late. |
 | **Notes** | Plain text you will want to look up again. Reference numbers, phone scripts, what the nurse actually said. Pin the important ones. |
-| **Money** | Your income and your subscriptions, and what one leaves of the other. Real dates rather than averages: what is still to come out this month and before your next payday, and what each individual paycheck has to cover before the next one arrives. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. |
+| **Money** | Your income and your subscriptions, and what one leaves of the other. Real dates rather than averages: what is still to come out this month and before your next payday, and what each individual paycheck has to cover before the next one arrives. Subscriptions carry the next charge date, the real monthly and yearly cost, a breakdown by category, and — the useful bit — *how to actually cancel it*, written down while you still know. Adding one is a single journey that ends with the entry in your phone's calendar. *Export my subscriptions* hands the list to a spreadsheet or an assistant, to look for cheaper plans and things to cut. |
 | **Debt** | Cards, loans, lines of credit, buy now pay later, medical bills, money a friend lent you: each with its balance (typed from the statement, with the date it was true), rate, how its minimum is worked out, due date, and any promo rate or loan terms. **This paycheck** says what this check should put toward debt, split into minimums and extra, and which debt gets the extra and why. **The plan** gives the date everything is paid off, each debt's own date, and how much interest and time that saves over paying only the minimums. You choose *highest interest first* (least interest) or *smallest balance first* (quickest wins), and how much goes toward debt from each check; Steady can suggest a cautious amount once you give it a rough figure for everything it doesn't track. It is a calculator, not financial advice, and it says so. |
 | **Settings** | Appearance, notifications, an optional app lock, backup and restore, calendar export, a plain-English account of what happens to your data, and About: the version number, what's new, and the last ten updates. |
 
@@ -267,8 +267,11 @@ Everything else follows from that:
   sheet and your downloads. Debts and your plan are in backups and are removed by *Delete
   everything*.
 - **Data leaves only when you tap a button that says so**: *Save a backup file*
-  (a readable file with everything in it), *Add to my calendar* and *Export
-  everything to my calendar* (the lines next to each button say what goes in).
+  (a readable file with everything in it), *Add to my calendar*, *Export
+  everything to my calendar* and *Export my subscriptions* (a spreadsheet file
+  of what you pay for, to look for savings with a spreadsheet or an assistant;
+  how-to-cancel steps never go in, notes only if you tick the box). The lines
+  next to each button say what goes in.
   Where the phone lets a web app hand it that kind of file, the phone's share
   sheet opens and you pick where it goes; otherwise it is saved to your
   downloads. Either way it goes only where you send it. Deleting something in the app does not
@@ -355,7 +358,7 @@ latter; the workflow works it out for you.
 npm test
 ```
 
-988 unit tests cover the parts where a quiet wrong answer would make the app
+998 unit tests cover the parts where a quiet wrong answer would make the app
 untrustworthy: local-time date maths across DST and year boundaries, month-end
 billing dates that must not drift (31 Jan → 28 Feb → **31** Mar, not 28 Mar),
 cost normalisation across every rhythm including the 24-against-26 gap between

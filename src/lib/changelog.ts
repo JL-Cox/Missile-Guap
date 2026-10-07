@@ -17,6 +17,12 @@ export interface ChangeEntry {
 
 export const CHANGES: ChangeEntry[] = [
   {
+    version: 25,
+    items: [
+      'Export my subscriptions: a spreadsheet file to look for cheaper plans and things to cut.',
+    ],
+  },
+  {
     version: 24,
     items: ["Each debt's calendar file is named after the debt, like car-loan-payments.ics."],
   },
