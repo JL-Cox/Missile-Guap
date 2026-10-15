@@ -178,6 +178,13 @@ export interface Subscription {
   remindDaysBefore: number;
   /** Set when cancelled; kept for history rather than deleted. */
   endedOn?: DateKey;
+  /**
+   * Charge dates marked "Paid": the scheduled date of each charge you have
+   * seen go out, so it stops counting as still to come out - on the day
+   * itself, rather than only from tomorrow. Only recent dates are kept (see
+   * src/lib/paid.ts); absent means nothing marked.
+   */
+  paidDates?: DateKey[];
   createdAt: number;
   updatedAt: number;
 }

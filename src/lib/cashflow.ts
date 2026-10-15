@@ -240,65 +240,6 @@ export function outlook(
   });
 }
 
-/**
- * `minor` is charges and debt payments together; `count` is the charges alone
- * and `paymentCount` the payments, so the screen can say "6 charges and 1
- * debt payment".
- */
-export interface StillToComeFigure {
-  minor: number;
-  count: number;
-  paymentCount: number;
-  until: DateKey;
-}
-
-export interface StillToCome {
-  /** Charges and payments from today to the last day of this calendar month. */
-  month: StillToComeFigure;
-  /**
-   * Charges from today to the end of the pay period, and payments due by the
-   * next payday - a payment due on payday is paid from this check, not that
-   * one. Null when there is no income recorded, or not enough of it to place a
-   * payday - in which case the app says so rather than guessing a period.
-   */
-  period: StillToComeFigure | null;
-}
-
-/** The two "what is still going to come out" figures, for the Money screen. */
-export function stillToCome(
-  incomes: IncomeSource[],
-  subs: Subscription[],
-  from: DateKey = todayKey(),
-  payments: ScheduledPayment[] = [],
-): StillToCome {
-  const monthEnd = endOfMonth(from);
-  const monthBills = billsBetween(subs, from, monthEnd);
-  const due = (until: DateKey) => payments.filter((p) => p.dueOn >= from && p.dueOn <= until);
-  const monthPayments = due(monthEnd);
-
-  const period = currentPayPeriod(incomes, from);
-  const periodBills = period ? billsBetween(subs, from, period.end) : null;
-  const periodPayments = period ? due(addDays(period.end, 1)) : [];
-
-  return {
-    month: {
-      minor: billsTotalMinor(monthBills) + paymentsTotalMinor(monthPayments),
-      count: monthBills.length,
-      paymentCount: monthPayments.length,
-      until: monthEnd,
-    },
-    period:
-      period && periodBills
-        ? {
-            minor: billsTotalMinor(periodBills) + paymentsTotalMinor(periodPayments),
-            count: periodBills.length,
-            paymentCount: periodPayments.length,
-            until: period.end,
-          }
-        : null,
-  };
-}
-
 export type NoPeriodReason =
   | { kind: 'noIncome' }
   | { kind: 'needsRecentPayday'; source: IncomeSource }

@@ -1,9 +1,9 @@
 import type { DateKey, IncomeSource, Note, Settings, Subscription, Task } from '../types';
 import type { DebtPlanView } from './payoff';
-import { agendaFor, stillOpen, unscheduled, upcomingBills, upcomingPayments } from './agenda';
-import { stillToCome } from './cashflow';
+import { agendaFor, stillOpen, unscheduled } from './agenda';
+import type { PaycheckNow } from './paycheck';
 import { fitsLowDay, isLowDay } from './lowday';
-import { formatMoney, isActive } from './money';
+import { formatMoney } from './money';
 import { sortTasks } from './priority';
 import { countOf, cutTitle } from './sections';
 import { monthYear } from './debtwords';
@@ -62,6 +62,8 @@ export interface HomeData {
   subs: Subscription[];
   incomes: IncomeSource[];
   debtView: DebtPlanView;
+  /** The paycheck you are living on, as every money screen reads it (src/lib/paycheck.ts). */
+  money: PaycheckNow;
   /** Debts still being paid, planned or not. */
   openDebts: number;
   settings: Pick<Settings, 'blurAmounts' | 'currency' | 'lowDay' | 'lookaheadDays'>;
@@ -101,7 +103,7 @@ export function todayCard(d: HomeData): Card & { id: 'today' } {
   const rows = [
     ...shown.map((i) => ({ when: i.startTime ? timeLabel(i.startTime) : 'Any time', what: i.title })),
     // Money is never on a low day's list, so a low day leaves it out here too.
-    ...(low ? [] : goingOut.map((i) => ({ when: 'Goes out', what: i.title }))),
+    ...(low ? [] : goingOut.map((i) => ({ when: i.paid ? 'Paid' : 'Goes out', what: i.title }))),
   ];
   const list = rows.slice(0, TODAY_LISTED);
   const more = rows.length - list.length;
@@ -181,41 +183,25 @@ export function notesCard(d: HomeData): Card & { id: 'notes' } {
 
 /**
  * Money: what is still to come out before the next payday - the same figure
- * Money's Coming out opens on - and the next thing to go. With amounts
- * blurred, the figure is left out and the line says what it would have been.
+ * Money's Coming out opens on, read from the same place - and the next thing
+ * to go. With amounts blurred, the figure is left out and the line says what
+ * it would have been.
  */
 export function moneyCard(d: HomeData): Card & { id: 'money' } {
-  const { settings, today } = d;
-  const payments = d.debtView.payments;
-  const hasCharges = d.subs.some((s) => isActive(s, today)) || payments.length > 0;
-  if (!hasCharges) {
+  const { settings, today, money } = d;
+  if (!money.hasCharges) {
     return { id: 'money', title: 'Money', lines: ['Add a subscription or your income to see what is coming out'] };
   }
-  const pending = stillToCome(d.incomes, d.subs, today, payments);
-  const figure = pending.period ?? pending.month;
-  const what = pending.period ? 'still to come out before your next payday' : 'still to come out this month';
+  const figure = money.stillToCome ?? money.month;
+  const what = money.stillToCome ? 'still to come out before your next payday' : 'still to come out this month';
   const lines = [settings.blurAmounts ? `What is ${what}` : what];
-  const next = nextGoing(d);
-  if (next) lines.push(`Next: ${cutTitle(next.title)}, ${describeDate(next.date, today)}`);
+  if (money.next) lines.push(`Next: ${cutTitle(money.next.title)}, ${describeDate(money.next.date, today)}`);
   return {
     id: 'money',
     title: 'Money',
     figure: settings.blurAmounts ? undefined : formatMoney(figure.minor, settings.currency),
     lines,
   };
-}
-
-/** The next charge or debt payment from tomorrow on, within the look-ahead. */
-function nextGoing(d: HomeData): { title: string; date: DateKey } | null {
-  const days = Math.max(d.settings.lookaheadDays, 31);
-  const bills = upcomingBills(d.subs, days, d.today)
-    .filter((b) => b.inDays > 0)
-    .map((b) => ({ title: b.sub.name, date: b.date }));
-  const due = upcomingPayments(d.debtView.payments, days, d.today)
-    .filter((p) => p.inDays > 0)
-    .map((p) => ({ title: `${p.debt.name} payment`, date: p.date }));
-  const all = [...bills, ...due].sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
-  return all[0] ?? null;
 }
 
 /**

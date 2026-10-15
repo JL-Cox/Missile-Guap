@@ -3,6 +3,7 @@ import type { ScheduledPayment } from './payoff';
 import { billingDatesBetween, nextBilling } from './recurrence';
 import { addDays, atTime, daysBetween, todayKey } from './time';
 import { isActive, isOngoing, yearlyMinor } from './money';
+import { isChargePaid } from './paid';
 
 /**
  * One ordered list for a day: timed things in time order, then untimed things.
@@ -26,6 +27,8 @@ export interface AgendaItem {
   subscription?: Subscription;
   debt?: Debt;
   amountMinor?: number;
+  /** A subscription charge marked paid (see src/lib/paid.ts). */
+  paid?: boolean;
 }
 
 /**
@@ -67,6 +70,7 @@ export function agendaFor(
       title: `${sub.name} renews`,
       subscription: sub,
       amountMinor: sub.amountMinor,
+      paid: isChargePaid(sub, date),
     });
   }
 
@@ -95,13 +99,14 @@ export interface UpcomingBill {
   inDays: number;
 }
 
-/** Charges landing in the next `days` days, soonest first. */
+/** Charges landing in the next `days` days, soonest first. One marked paid early has gone, so it is left out. */
 export function upcomingBills(subs: Subscription[], days: number, from: DateKey = todayKey()): UpcomingBill[] {
   const to = addDays(from, days);
   const out: UpcomingBill[] = [];
   for (const sub of subs) {
     if (!isActive(sub, from)) continue;
     for (const date of billingDatesBetween(sub, from, to)) {
+      if (isChargePaid(sub, date)) continue;
       out.push({ sub, date, inDays: daysBetween(from, date) });
     }
   }

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, blankTask, forgetSettings, saveSettings } from '../db';
-import type { DateKey, IncomeSource, Settings, Subscription, Task } from '../types';
+import type { DateKey, Settings, Task } from '../types';
 import { agendaFor, stillOpen, unscheduled, upcomingBills, upcomingPayments } from '../lib/agenda';
 import { paydaysFrom } from '../lib/cashflow';
 import { fitsLowDay, isLowDay, isStaleLowDay } from '../lib/lowday';
@@ -13,7 +13,8 @@ import { chargesAndPayments } from '../lib/debtwords';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { useTaskActions } from '../components/taskActions';
-import { useDebtPlan } from '../components/useDebtPlan';
+import { useMoney } from '../components/useDebtPlan';
+import { useMarkPaid } from '../components/useMarkPaid';
 import { Amount, Empty, FoldHeader, Hub, Section, Zone, useBackLayer, useNavigate } from '../components/ui';
 import type { CardBody } from '../lib/dashboard';
 import type { ZoneOf } from '../lib/zones';
@@ -23,8 +24,6 @@ const WAITING_SHOWN = 3;
 /** How many upcoming charges and payments fit before the list says there are more. */
 const BILLS_SHOWN = 6;
 
-const NO_SUBS: Subscription[] = [];
-const NO_INCOMES: IncomeSource[] = [];
 /** How many of the backlog's top things "No date on these" shows. */
 const LOOSE_SHOWN = 5;
 
@@ -104,10 +103,10 @@ export default function Today({
   }, [settings.lowDay, today]);
 
   const tasks = useLiveQuery(() => db.tasks.toArray(), [settings.rev], [] as Task[]) ?? [];
-  const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], NO_SUBS) ?? NO_SUBS;
-  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], NO_INCOMES) ?? NO_INCOMES;
-  // The debt plan's dated payments, the same ones Money and the Debt page show.
-  const { view: debtView } = useDebtPlan(settings, incomes, subs, today);
+  // Subscriptions, income and the debt plan's dated payments, from the same
+  // place Money and Home read them, so a charge marked paid here is paid there.
+  const { subs, incomes, view: debtView } = useMoney(settings, today);
+  const markPaid = useMarkPaid();
 
   const agenda = agendaFor(today, tasks, subs, debtView.payments);
   const openToday = agenda.filter((i) => i.kind === 'task' && i.task && !i.task.doneAt);
@@ -204,11 +203,14 @@ export default function Today({
     (leaving.length > 0 || paidSoon.length > 0) &&
     (leaving.length === 0 || billsFold === 'folded') &&
     (paidSoon.length === 0 || nextPaydayFold === 'folded');
+  // What is still to leave today: a charge marked paid has gone.
+  const stillGoingOut = goingOutToday.filter((i) => !i.paid);
   const goingOutWords = chargesAndPayments(
-    goingOutToday.filter((i) => i.kind === 'billing').length,
-    goingOutToday.filter((i) => i.kind === 'payment').length,
+    stillGoingOut.filter((i) => i.kind === 'billing').length,
+    stillGoingOut.filter((i) => i.kind === 'payment').length,
     'payment',
   );
+  const markedPaidToday = goingOutToday.length - stillGoingOut.length;
   const cards: Record<ZoneOf<'today'>, CardBody> = {
     day: {
       figure: todayShown.length > 0 ? countOf(todayShown.length, 'thing to do', 'things to do') : undefined,
@@ -222,7 +224,10 @@ export default function Today({
           ? []
           : chargedFold === 'folded'
             ? ['Money going out today is hidden for today']
-            : [`${goingOutWords} going out today`]),
+            : [
+                stillGoingOut.length > 0 ? `${goingOutWords} going out today` : 'Everything going out today is paid',
+                ...(markedPaidToday > 0 && stillGoingOut.length > 0 ? [`${markedPaidToday} already paid`] : []),
+              ]),
         ...(doneToday.length > 0 ? [`${doneToday.length} finished today`] : []),
       ],
       wide: true,
@@ -351,11 +356,16 @@ export default function Today({
               sub
             >
               {goingOutToday.map((item) => (
-                <div key={item.key} className="item">
+                <div key={item.key} className="item" data-state={item.paid ? 'paid' : 'due'}>
                   <div className="figure grow">
-                    <span className="item-title">{item.subscription?.name ?? item.title}</span>
+                    <div>
+                      <div className={`item-title${item.paid ? ' muted' : ''}`}>
+                        {item.subscription?.name ?? item.title}
+                      </div>
+                      {item.paid && <div className="faint">Paid</div>}
+                    </div>
                     <Amount
-                      className="figure-value"
+                      className={`figure-value${item.paid ? ' muted' : ''}`}
                       text={formatMoney(
                         item.amountMinor ?? 0,
                         item.subscription?.currency ?? item.debt?.currency ?? settings.currency,
@@ -363,6 +373,26 @@ export default function Today({
                       blur={settings.blurAmounts}
                     />
                   </div>
+                  {/* A charge is marked here; a debt payment on the Debt page,
+                      where marking it also asks for the new balance. */}
+                  {item.subscription &&
+                    (item.paid ? (
+                      <button
+                        type="button"
+                        className="btn btn-quiet btn-sm"
+                        onClick={() => void markPaid(item.subscription!, today, false)}
+                      >
+                        Not paid
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => void markPaid(item.subscription!, today, true)}
+                      >
+                        Paid
+                      </button>
+                    ))}
                 </div>
               ))}
             </LowDaySection>

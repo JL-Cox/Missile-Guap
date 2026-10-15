@@ -1,15 +1,13 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import type { IncomeSource, Settings, Subscription, Task } from '../types';
+import type { Settings, Task } from '../types';
 import { homeGroups } from '../lib/dashboard';
 import type { PageId } from '../lib/zones';
 import { todayKey } from '../lib/time';
-import { useDebtPlan } from '../components/useDebtPlan';
+import { useMoney } from '../components/useDebtPlan';
 import { Cards, useNavigate } from '../components/ui';
 
 const NO_TASKS: Task[] = [];
-const NO_SUBS: Subscription[] = [];
-const NO_INCOMES: IncomeSource[] = [];
 
 /**
  * The dashboard the app opens on, and where Back ends up: a card for each
@@ -23,9 +21,7 @@ export default function Home({ settings }: { settings: Settings }) {
   const tasks = useLiveQuery(() => db.tasks.toArray(), [settings.rev], NO_TASKS) ?? NO_TASKS;
   const inboxCount = useLiveQuery(() => db.captures.filter((c) => !c.clearedAt).count(), [settings.rev], 0) ?? 0;
   const notes = useLiveQuery(() => db.notes.toArray(), [settings.rev], []) ?? [];
-  const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], NO_SUBS) ?? NO_SUBS;
-  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], NO_INCOMES) ?? NO_INCOMES;
-  const { view: debtView, debts } = useDebtPlan(settings, incomes, subs, today);
+  const { subs, incomes, view: debtView, debts, now: money } = useMoney(settings, today);
 
   const groups = homeGroups({
     today,
@@ -36,6 +32,7 @@ export default function Home({ settings }: { settings: Settings }) {
     subs,
     incomes,
     debtView,
+    money,
     openDebts: debts.filter((d) => !d.paidOffOn).length,
     settings,
   });

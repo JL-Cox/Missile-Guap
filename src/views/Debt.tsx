@@ -1,7 +1,6 @@
 import { Fragment, useState, type ReactNode } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { blankDebt, db, saveDebt } from '../db';
-import type { DateKey, Debt, DebtPlan, IncomeSource, Settings, Subscription } from '../types';
+import type { DateKey, Debt, DebtPlan, IncomeSource, Settings } from '../types';
 import { balanceAfterPaymentMinor } from '../lib/debt';
 import { markedPaidIn, paycheckRows, perCheckShareMinor, type CheckView, type PaymentRow } from '../lib/debtchecks';
 import type { DebtPlanView, DebtSummary, ExtraReason } from '../lib/payoff';
@@ -27,7 +26,7 @@ import { daysBetween, shortDate, todayKey } from '../lib/time';
 import AddToCalendar from '../components/AddToCalendar';
 import DebtEditor, { BalanceForm, monthName, UpdateBalances } from '../components/DebtEditor';
 import DebtPlanEditor, { StrategyButtons } from '../components/DebtPlanEditor';
-import { useDebtPlan } from '../components/useDebtPlan';
+import { useMoney } from '../components/useDebtPlan';
 import {
   Amount,
   ConfirmButton,
@@ -41,8 +40,6 @@ import {
   useToast,
 } from '../components/ui';
 
-const NO_SUBS: Subscription[] = [];
-const NO_INCOMES: IncomeSource[] = [];
 
 /** What changing a balance hands back: the number, its date, and whether it is now paid off. */
 type BalanceChange = { balanceMinor: number; balanceAsOf: DateKey; paidOff: boolean };
@@ -84,9 +81,8 @@ export default function DebtScreen({ settings }: { settings: Settings }) {
     setUpdatingAll(false);
   });
 
-  const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], NO_SUBS) ?? NO_SUBS;
-  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], NO_INCOMES) ?? NO_INCOMES;
-  const { view, debts, plan } = useDebtPlan(settings, incomes, subs, today);
+  // The same plan, subscriptions and income Money, Today and Home read (useMoney).
+  const { subs, incomes, view, debts, plan } = useMoney(settings, today);
 
   const blur = settings.blurAmounts;
   const currency = settings.currency;

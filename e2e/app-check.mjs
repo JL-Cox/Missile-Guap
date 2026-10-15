@@ -1166,6 +1166,56 @@ const tickTarget = await page.locator('.item-check-hit').first().boundingBox();
 check('a tick box is at least 44 by 44 to a finger', tickTarget.width >= 44 && tickTarget.height >= 44, true);
 await page.screenshot({ path: `${OUT}/today.png`, fullPage: true });
 
+// --- a charge marked paid on the day ------------------------------------------
+// Netflix goes out today. Until it is marked it counts as still to come out;
+// marked paid on Today, it leaves every figure at once - Home, Money's Coming
+// out and Money's paycheck - and Undo puts it back in all of them.
+// A toast stops its timer while the pointer is on it, so a click aimed at a
+// Save button underneath one would wait for ever. Put it away first.
+const dismissToast = async () => {
+  if (await page.locator('.toast').count()) await page.click('.toast button:text-is("Dismiss")');
+};
+const dollars = (text) => Number((text ?? '').replace(/[^0-9.-]/g, ''));
+const moneyFigures = async () => {
+  await goTo('home');
+  const home = dollars(await page.textContent('[data-card-page="money"] .widget-figure'));
+  await goTo('money', 'soon');
+  const soon = dollars(await page.textContent('.view:not([hidden]) .zone[data-zone="soon"] .amount-key'));
+  await goTo('money', 'paychecks');
+  const now = page.locator('.view:not([hidden]) [data-paycheck="now"]');
+  const left = (await now.count()) ? dollars(await now.locator('.amount-key').textContent()) : null;
+  return { home, soon, left };
+};
+const figuresBefore = await moneyFigures();
+check('Home and Money say the same still to come out', figuresBefore.home, figuresBefore.soon);
+check('and Money has this paycheck, broken down', figuresBefore.left !== null, true);
+await goTo('today', 'day');
+const netflixToday = page.locator('section[aria-label="Today"] .item', { hasText: 'Netflix' });
+check('a charge going out today offers Paid', await netflixToday.locator('button:text-is("Paid")').count(), 1);
+await netflixToday.locator('button:text-is("Paid")').click();
+await page.waitForTimeout(400);
+check('marking it paid says so, with Undo', await page.locator('.toast:has-text("Netflix marked paid") button:text-is("Undo")').count(), 1);
+check('and the row says Paid, with a way to take it back', `${await netflixToday.getAttribute('data-state')} ${await netflixToday.locator('button:text-is("Not paid")').count()}`, 'paid 1');
+const stored = (await readStore('subscriptions')).find((x) => x.name === 'Netflix');
+check('only that charge\'s date is kept', JSON.stringify(stored.paidDates), JSON.stringify([todayKey]));
+await dismissToast();
+const figuresAfter = await moneyFigures();
+check('Home takes it out of still to come out, to the cent', Math.round((figuresBefore.home - figuresAfter.home) * 100), 1299);
+check('and Money says the same', figuresAfter.soon, figuresAfter.home);
+check('and what this paycheck leaves after all of it does not move', figuresAfter.left, figuresBefore.left);
+await goTo('money', 'soon');
+check(
+  'Coming out lists it as paid, with Not paid',
+  await page.locator('.view:not([hidden]) [data-state="paid"]', { hasText: 'Netflix' }).locator('button:text-is("Not paid")').count(),
+  1,
+);
+await page.locator('.view:not([hidden]) [data-state="paid"]', { hasText: 'Netflix' }).locator('button:text-is("Not paid")').click();
+await page.waitForTimeout(400);
+await dismissToast();
+const unpaid = await moneyFigures();
+check('Not paid puts it back everywhere', `${unpaid.home} ${unpaid.soon}`, `${figuresBefore.home} ${figuresBefore.soon}`);
+check('and leaves nothing marked', 'paidDates' in (await readStore('subscriptions')).find((x) => x.name === 'Netflix'), false);
+
 // --- the backlog: priority, sorting, and that the sort is remembered ------
 // The order is the whole feature. If Critical did not float to the top, or the
 // chosen sort reset itself every time the app was opened, the list would be a
@@ -1266,12 +1316,6 @@ const patchSettings = (patch) =>
     patch,
   );
 const storedSettings = async () => (await readStore('settings'))[0] ?? {};
-// A toast stops its timer while the pointer is on it, so a click aimed at a
-// Save button underneath one would wait for ever. Put it away first.
-const dismissToast = async () => {
-  if (await page.locator('.toast').count()) await page.click('.toast button:text-is("Dismiss")');
-};
-
 await page.evaluate(
   (today) =>
     new Promise((resolve) => {
@@ -1679,8 +1723,8 @@ const debtLeft = await paycheck.locator('.figure', { hasText: 'Left from this pa
 // Every zone of Money, as you would see it visiting each in turn.
 const moneyWithDebt = await allZonesText('money');
 check('Money counts the debt payment in what is still to come out', /\d+ debt payments?, up to/.test(moneyWithDebt), true);
-check('each paycheck shows its debt payments', moneyWithDebt.includes('Debt payments due'), true);
-check('and the extra toward debt from the plan', moneyWithDebt.includes('Extra toward debt'), true);
+check('this paycheck counts its debt minimums in what is still to come out', moneyWithDebt.includes('Still to come out, debt minimums included'), true);
+check('and sets aside the extra toward debt from the plan', moneyWithDebt.includes('Set aside for debt, beyond the minimums'), true);
 check('with the way to the Debt page', (await page.locator('button:text-is("Open Debt")').count()) >= 1, true);
 check(
   '"Left from this paycheck" is the same figure on Money and on Debt',

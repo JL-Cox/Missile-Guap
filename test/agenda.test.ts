@@ -138,3 +138,21 @@ describe('debt payments on a day', () => {
     expect(upcomingPayments(payments, 0, '2026-10-05').map((p) => p.inDays)).toEqual([0]);
   });
 });
+
+describe('a charge marked paid', () => {
+  const rent: Subscription = {
+    id: 'rent', name: 'Rent', amountMinor: 95_000, currency: 'USD', cycle: 'monthly', every: 1,
+    firstBilled: '2026-09-17', notes: '', cancelHow: '', remindDaysBefore: 0, createdAt: 0, updatedAt: 0,
+  };
+
+  it('stays on the day it went out, saying it is paid', () => {
+    const items = agendaFor('2026-10-17', [], [{ ...rent, paidDates: ['2026-10-17'] }]);
+    expect(items.map((i) => [i.title, i.paid])).toEqual([['Rent renews', true]]);
+    expect(agendaFor('2026-10-17', [], [rent])[0].paid).toBe(false);
+  });
+
+  it('leaves money leaving soon once marked, even early', () => {
+    expect(upcomingBills([rent], 14, '2026-10-10').map((b) => b.date)).toEqual(['2026-10-17']);
+    expect(upcomingBills([{ ...rent, paidDates: ['2026-10-17'] }], 14, '2026-10-10')).toEqual([]);
+  });
+});

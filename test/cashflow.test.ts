@@ -9,7 +9,6 @@ import {
   payFromIndex,
   paymentsForPeriods,
   payPeriods,
-  stillToCome,
   paydaysFrom,
   whyNoPayPeriod,
 } from '../src/lib/cashflow';
@@ -258,57 +257,6 @@ describe('outlook: what each cheque has to cover', () => {
   });
 });
 
-describe('stillToCome', () => {
-  const job = income({ daysOfMonth: [15, 31] });
-  const later = sub({ name: 'Gym', firstBilled: '2026-09-25', amountMinor: 3_500 });
-  const earlier = sub({ name: 'Netflix', firstBilled: '2026-09-18', amountMinor: 1_299 });
-
-  it('adds up what is left in the calendar month', () => {
-    const { month } = stillToCome([job], [earlier, later], '2026-09-17');
-    expect(month.minor).toBe(1_299 + 3_500);
-    expect(month.count).toBe(2);
-    expect(month.until).toBe('2026-09-30');
-  });
-
-  it('excludes a charge that has already gone out today', () => {
-    // Billed on the 10th, today is the 17th: that money is spent, not pending.
-    const past = sub({ firstBilled: '2026-09-10', cycle: 'yearly' });
-    expect(stillToCome([job], [past], '2026-09-17').month.minor).toBe(0);
-  });
-
-  it('includes a charge landing today, because it has not left yet', () => {
-    const today = sub({ firstBilled: '2026-09-17', cycle: 'yearly', amountMinor: 999 });
-    expect(stillToCome([job], [today], '2026-09-17').month.minor).toBe(999);
-  });
-
-  it('counts only up to the next payday for the period figure', () => {
-    // The period ends 29 Sep, so the gym on the 25th counts and nothing later would.
-    const { period } = stillToCome([job], [earlier, later], '2026-09-17');
-    expect(period?.until).toBe('2026-09-29');
-    expect(period?.minor).toBe(1_299 + 3_500);
-  });
-
-  it('gives a smaller period figure than month figure when a bill falls after payday', () => {
-    const afterPayday = sub({ name: 'Insurance', firstBilled: '2026-09-30', amountMinor: 8_000 });
-    const { month, period } = stillToCome([job], [earlier, afterPayday], '2026-09-17');
-    expect(month.minor).toBe(1_299 + 8_000);
-    expect(period?.minor).toBe(1_299);
-  });
-
-  it('reports no period rather than a guessed one when income is unknown', () => {
-    // "Not itemised" over a plausible wrong number, the same rule the paystub uses.
-    const { month, period } = stillToCome([], [earlier], '2026-09-17');
-    expect(period).toBeNull();
-    expect(month.minor).toBe(1_299);
-  });
-
-  it('reports zero, not nothing, when the month is already paid for', () => {
-    const { month } = stillToCome([job], [], '2026-09-17');
-    expect(month.minor).toBe(0);
-    expect(month.count).toBe(0);
-  });
-});
-
 /*
   "Mark as cancelled" sets the end date to today. The next-charge line still
   showed today's charge - correctly, since a charge on the day you cancel has
@@ -328,7 +276,9 @@ describe('a charge on the day you cancel', () => {
   it('agrees with the next-charge line', async () => {
     const { nextBilling } = await import('../src/lib/recurrence');
     expect(nextBilling(cancelledToday, '2026-09-23')).toBe('2026-09-23');
-    expect(stillToCome([], [cancelledToday], '2026-09-23').month.count).toBe(1);
+    const { paycheckNow } = await import('../src/lib/paycheck');
+    const now = paycheckNow({ incomes: [], subs: [cancelledToday], debtView: { checks: [], payments: [] }, today: '2026-09-23' });
+    expect(now.month.count).toBe(1);
   });
 
   it('is gone the day after', () => {

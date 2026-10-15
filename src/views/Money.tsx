@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { blankIncome, blankSubscription, db, saveSubscription } from '../db';
 import type { IncomeSource, Settings, Subscription } from '../types';
 import {
@@ -7,7 +6,6 @@ import {
   deductionsByLabel,
   formatDeduction,
   formatMoney,
-  isActive,
   leftoverMonthlyMinor,
   netMonthlyMinor,
   totalGrossYearlyMinor,
@@ -27,14 +25,17 @@ import {
   nextBilling,
 } from '../lib/recurrence';
 import { normaliseDays } from '../lib/monthdays';
-import { outlook, stillToCome, whyNoPayPeriod, type PeriodOutlook } from '../lib/cashflow';
+import { outlook, whyNoPayPeriod, type PeriodOutlook } from '../lib/cashflow';
+import type { PaycheckNow } from '../lib/paycheck';
+import { isChargePaid } from '../lib/paid';
 import type { CheckView } from '../lib/debtchecks';
 import { chargesAndPayments } from '../lib/debtwords';
 import { calendarForSubscription, icsFilename } from '../lib/ics';
 import AddToCalendar from '../components/AddToCalendar';
 import ExportSubscriptions from '../components/ExportSubscriptions';
 import IncomeEditor from '../components/IncomeEditor';
-import { useDebtPlan } from '../components/useDebtPlan';
+import { useMoney } from '../components/useDebtPlan';
+import { useMarkPaid } from '../components/useMarkPaid';
 import { describeFrequency, isActiveIncome, nextPayday } from '../lib/pay';
 import {
   BILLING_DAY_CHOICES,
@@ -48,7 +49,7 @@ import {
 } from '../lib/subscriptions';
 import { cancelledMessage } from '../lib/feedback';
 import { undoAction } from '../lib/undo';
-import { describeDate, shortDate, todayKey } from '../lib/time';
+import { addDays, describeDate, shortDate, todayKey } from '../lib/time';
 import {
   Amount,
   ConfirmButton,
@@ -65,8 +66,6 @@ import {
   useToast,
 } from '../components/ui';
 
-const NO_SUBS: Subscription[] = [];
-const NO_INCOMES: IncomeSource[] = [];
 
 /** How the subscription editor should open. */
 interface EditorFocus {
@@ -113,14 +112,14 @@ export default function Money({ settings, startAdding = false }: { settings: Set
     setJustSaved(null);
   });
 
-  const subs = useLiveQuery(() => db.subscriptions.toArray(), [settings.rev], NO_SUBS) ?? NO_SUBS;
-  const incomes = useLiveQuery(() => db.incomes.toArray(), [settings.rev], NO_INCOMES) ?? NO_INCOMES;
   /*
-    The debt plan, for its dated payments and what each check puts toward
-    debt. Money shows when payments leave and what they leave behind - never
-    a balance or a payoff date, which are the Debt page's.
+    Subscriptions, income, the debt plan and the paycheck you are living on,
+    from the one place Home and Today read them too (useMoney). Money shows
+    when payments leave and what they leave behind - never a balance or a
+    payoff date, which are the Debt page's.
   */
-  const { view: debtView } = useDebtPlan(settings, incomes, subs, today);
+  const { subs, incomes, view: debtView, now } = useMoney(settings, today);
+  const markPaid = useMarkPaid();
   const navigate = useNavigate();
   const active = subs.filter((s) => !s.endedOn).sort((a, b) => yearlyMinor(b) - yearlyMinor(a));
   const ended = subs.filter((s) => s.endedOn);
@@ -240,10 +239,11 @@ export default function Money({ settings, startAdding = false }: { settings: Set
 
   // Real dates rather than monthly averages: what is still going to leave the
   // account before more money arrives, which is the question an average hides.
-  // Debt payments are in both, on their due dates.
+  // Debt payments are in both, on their due dates. Both figures come from
+  // paycheckNow, so they are the ones Home and Today show, paid marks and all.
   const payments = debtView.payments;
-  const pending = stillToCome(incomes, subs, today, payments);
-  const noPeriod = pending.period ? null : whyNoPayPeriod(incomes, today);
+  const pending = { period: now.stillToCome, month: now.month };
+  const noPeriod = now.noPeriod;
   const [firstCheque, ...laterCheques] = outlook(incomes, subs, today, 4, payments);
   /*
     What the debt plan has each check do. "Left from this paycheck" is read
@@ -301,10 +301,15 @@ export default function Money({ settings, startAdding = false }: { settings: Set
 
   // The cards carry the figure each zone opens on. With amounts blurred the
   // figure is left out and the line says what it is, in words.
-  const hasCharges = subs.some((s) => isActive(s, today)) || payments.length > 0;
+  const hasCharges = now.hasCharges;
   const soonFigure = pending.period ?? pending.month;
   const soonWhat = pending.period ? 'still to come out before your next payday' : 'still to come out this month';
-  const firstLeft = firstCheque ? (checkFor(firstCheque)?.leftMinor ?? firstCheque.leftoverMinor) : 0;
+  // The paycheck you are in is read from paycheckNow, like everywhere else.
+  const firstLeft = firstCheque
+    ? firstCheque.current && now.leftAfterMinor !== null
+      ? now.leftAfterMinor
+      : (checkFor(firstCheque)?.leftMinor ?? firstCheque.leftoverMinor)
+    : 0;
 
   return (
     <>
@@ -363,7 +368,7 @@ export default function Money({ settings, startAdding = false }: { settings: Set
         {addButtons}
 
         <Section title="Still to come out">
-          {!subs.some((s) => isActive(s, today)) && payments.length === 0 ? (
+          {!hasCharges ? (
             <Empty>
               What is still to come out before your next payday, and this month, shows up here once you add a
               subscription.
@@ -416,12 +421,24 @@ export default function Money({ settings, startAdding = false }: { settings: Set
               )}
               <p className="faint">
                 {payments.length > 0
-                  ? 'Counted from today on the real charge and due dates, so anything that already went out this month is not in here.'
-                  : 'Counted from today on the real charge dates, so a bill that already went out this month is not in here.'}
+                  ? 'Counted from today on the real charge and due dates, so anything that already went out this month is not in here. Mark a charge paid and it leaves straight away.'
+                  : 'Counted from today on the real charge dates, so a bill that already went out this month is not in here. Mark a charge paid and it leaves straight away.'}
               </p>
             </div>
           )}
         </Section>
+
+        {now.period && (now.charges.length > 0 || now.payments.length > 0) && (
+          <Section title="This paycheck, one by one">
+            <PaycheckItems
+              now={now}
+              money={money}
+              blur={blur}
+              onPaid={(sub, date, paid) => void markPaid(sub, date, paid)}
+              onOpenDebt={() => navigate('debt', { zone: 'paychecks' })}
+            />
+          </Section>
+        )}
       </Zone>
 
       <Zone id="paychecks">
@@ -433,15 +450,26 @@ export default function Money({ settings, startAdding = false }: { settings: Set
                 {hasDebt ? ' and debt payments' : ''} this app knows about — rent, food, fuel and everything else
                 still come out of what is left.
               </p>
-              <ChequeCard
-                cheque={firstCheque}
-                check={checkFor(firstCheque)}
-                hasDebt={hasDebt}
-                today={today}
-                money={money}
-                blur={blur}
-                onOpenDebt={() => navigate('debt', { zone: 'paychecks' })}
-              />
+              {firstCheque.current && now.period && now.stillToCome && now.leftAfterMinor !== null ? (
+                <NowCard
+                  now={now}
+                  hasDebt={hasDebt}
+                  today={today}
+                  money={money}
+                  blur={blur}
+                  onOpenDebt={() => navigate('debt', { zone: 'paychecks' })}
+                />
+              ) : (
+                <ChequeCard
+                  cheque={firstCheque}
+                  check={checkFor(firstCheque)}
+                  hasDebt={hasDebt}
+                  today={today}
+                  money={money}
+                  blur={blur}
+                  onOpenDebt={() => navigate('debt', { zone: 'paychecks' })}
+                />
+              )}
               {laterCheques.length > 0 && (
                 <div className="stack-sm">
                   <h3>The next ones</h3>
@@ -748,7 +776,11 @@ function LineRow({
   return (
     <div className="figure small">
       <span className="muted">{label}</span>
-      <Amount className="figure-value" text={into ? `+${money(minor)}` : `−${money(minor)}`} blur={blur} />
+      <Amount
+        className="figure-value"
+        text={minor === 0 ? money(0) : into ? `+${money(minor)}` : `−${money(minor)}`}
+        blur={blur}
+      />
     </div>
   );
 }
@@ -826,6 +858,139 @@ function ChequeCard({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The paycheck you are living on, as it stands right now: what came in, what
+ * has gone, what is still to go, and what that leaves. The parts add up to
+ * the cent (see src/lib/paycheck.ts). Marking a charge paid moves it from
+ * "still to come out" to "gone out so far"; what is left from the paycheck
+ * does not change, because the money was always going to go.
+ */
+function NowCard({
+  now,
+  hasDebt,
+  today,
+  money,
+  blur,
+  onOpenDebt,
+}: {
+  now: PaycheckNow;
+  hasDebt: boolean;
+  today: string;
+  money: (minor: number) => string;
+  blur: boolean;
+  onOpenDebt: () => void;
+}) {
+  const period = now.period!;
+  const left = now.leftAfterMinor!;
+  const due = now.stillToCome!;
+  return (
+    <div className="card stack-sm" data-paycheck="now">
+      <FigureRow
+        label="This paycheck"
+        detail={`${period.paidBy.map((s) => s.name).join(', ')} · covers to ${describeDate(period.end, today)}`}
+        amount={money(now.incomeMinor)}
+        blur={blur}
+      />
+      <LineRow label="Gone out so far" minor={now.goneOutMinor} money={money} blur={blur} />
+      <LineRow
+        label={due.paymentCount > 0 ? 'Still to come out, debt minimums included' : 'Still to come out'}
+        minor={due.minor}
+        money={money}
+        blur={blur}
+      />
+      {now.setAsideMinor > 0 && (
+        <LineRow label="Set aside for debt, beyond the minimums" minor={now.setAsideMinor} money={money} blur={blur} />
+      )}
+      {now.setAsideMinor < 0 && (
+        <LineRow label="Kept from the last check for debt" minor={-now.setAsideMinor} money={money} blur={blur} into />
+      )}
+      <hr className="divider" />
+      {/* The Debt page's words for the same figure, so the two read as one. */}
+      <FigureRow anchor label="Left from this paycheck" amount={money(left)} blur={blur} />
+      <p className="faint">
+        Mark a charge paid under Coming out, or on Today, and it moves from still to come out to gone out.
+      </p>
+      {left < 0 && <p className="notice">{hasDebt ? SHORT_CHEQUE_WITH_PAYMENTS : SHORT_CHEQUE}</p>}
+      {hasDebt && (
+        <div className="spread">
+          <span className="faint grow">Which debt, and why, is on the Debt page.</span>
+          <button type="button" className="btn btn-sm" onClick={onOpenDebt}>
+            Open Debt
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Every charge and debt payment this paycheck covers, in date order, each
+ * saying whether it has gone. A charge due today or later has Paid; one
+ * marked paid has Not paid, to take the mark off. Debt payments are marked
+ * on the Debt page, where marking one also asks for the new balance.
+ */
+function PaycheckItems({
+  now,
+  money,
+  blur,
+  onPaid,
+  onOpenDebt,
+}: {
+  now: PaycheckNow;
+  money: (minor: number) => string;
+  blur: boolean;
+  onPaid: (sub: Subscription, date: string, paid: boolean) => void;
+  onOpenDebt: () => void;
+}) {
+  const today = now.today;
+  const rows = [
+    ...now.charges.map((c) => ({ key: c.key, date: c.date, title: c.sub.name, charge: c, payment: undefined })),
+    ...now.payments.map((p) => ({ key: p.key, date: p.dueOn, title: `${p.debt.name} payment`, charge: undefined, payment: p })),
+  ].sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  return (
+    <div className="stack-sm">
+      {rows.map((row) => {
+        const c = row.charge;
+        const state = c ? (c.paid ? 'paid' : c.gone ? 'gone' : 'due') : 'due';
+        return (
+          <div key={row.key} className="item" data-charge={c ? c.key : undefined} data-state={state}>
+            <div className="figure grow">
+              <div>
+                <div className={`item-title${state === 'due' ? '' : ' muted'}`}>{row.title}</div>
+                <div className="faint">
+                  {describeDate(row.date, today)}
+                  {state === 'paid' ? ' · paid' : state === 'gone' ? ' · gone out' : ''}
+                  {row.payment?.autopay ? ' · autopay' : ''}
+                </div>
+              </div>
+              <Amount
+                className={`figure-value${state === 'due' ? '' : ' muted'}`}
+                text={money(c ? c.amountMinor : row.payment!.amountMinor)}
+                blur={blur}
+              />
+            </div>
+            {c && state === 'due' && (
+              <button type="button" className="btn btn-sm" onClick={() => onPaid(c.sub, c.date, true)}>
+                Paid
+              </button>
+            )}
+            {c && state === 'paid' && (
+              <button type="button" className="btn btn-quiet btn-sm" onClick={() => onPaid(c.sub, c.date, false)}>
+                Not paid
+              </button>
+            )}
+            {row.payment && (
+              <button type="button" className="btn btn-quiet btn-sm" onClick={onOpenDebt}>
+                On Debt
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1037,7 +1202,10 @@ function SubscriptionCard({
   onCancelled: (sub: Subscription) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const next = nextBilling(sub);
+  // A charge marked paid, today or early, has gone: the line names the one after it.
+  const upcoming = nextBilling(sub);
+  const paidAhead = upcoming !== null && isChargePaid(sub, upcoming) ? upcoming : null;
+  const next = paidAhead ? nextBilling(sub, addDays(paidAhead, 1)) : upcoming;
   const detailsId = `sub-details-${sub.id}`;
 
   return (
@@ -1062,6 +1230,7 @@ function SubscriptionCard({
         <div className="stack-sm">
           <div className="meta">
             <span>{describeBilling(sub)}</span>
+            {paidAhead && <span>Paid: {describeDate(paidAhead)}</span>}
             {next && <span>Next: {describeDate(next)}</span>}
             {sub.category && <span className="tag">{sub.category}</span>}
           </div>

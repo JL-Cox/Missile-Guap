@@ -22,6 +22,15 @@ export interface ChangeEntry {
 
 export const CHANGES: ChangeEntry[] = [
   {
+    version: 28,
+    items: [
+      'Mark a charge Paid on Today or under Money › Coming out. It stops counting at once.',
+      'Paychecks shows this one in full: take-home, gone out, still to come out, and left.',
+      'Coming out lists every charge this paycheck covers, saying which have gone.',
+      'Home, Today, Money and Debt read every money figure from one place, so they agree.',
+    ],
+  },
+  {
     version: 27,
     notice: 'Steady opens on Home now: a card for each page. Tap one to open it.',
     items: [

@@ -320,6 +320,7 @@ await idb(
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForSelector('.main');
 await page.waitForTimeout(400);
+await goTo('today', 'money');
 check('the seeded task is on Today (so the leak checks below mean something)', (await leaks()).includes('Okafor'), true);
 check('and so is the seeded debt, as a payment', (await leaks()).includes('Nelnet'), true);
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { outlook, payPeriods, stillToCome } from '../src/lib/cashflow';
+import { outlook, payPeriods } from '../src/lib/cashflow';
+import { paycheckNow } from '../src/lib/paycheck';
 import {
   checkPlan,
   checksPerYear,
@@ -238,17 +239,29 @@ describe('V17: debt payments on Money', () => {
     expect(periods[0].remainingMinor).toBe(3_000);
   });
 
+  // The plan's own checks, as the screens get them from useDebtPlan.
+  const result = comparePlans(debts, 43_333, 'avalanche', FROM).plan;
+  const view = { checks: checkPlan({ incomes: [job], subs, plan: plan(), result, debts, from: FROM }), payments: pays };
+
   it('adds payments to "still to come", counted apart from the charges', () => {
-    const { month, period } = stillToCome([job], subs, FROM, pays);
-    expect(month).toEqual({ minor: 3_000, count: 0, paymentCount: 1, until: '2026-09-30' });
-    expect(period).toEqual({ minor: 3_000, count: 0, paymentCount: 1, until: '2026-10-01' });
+    const now = paycheckNow({ incomes: [job], subs, debtView: view, today: FROM });
+    expect(now.month).toEqual({ minor: 3_000, count: 0, paymentCount: 1, until: '2026-09-30' });
+    expect(now.stillToCome).toEqual({ minor: 3_000, count: 0, paymentCount: 1, until: '2026-10-01' });
+  });
+
+  it('lists the same payments the Debt page puts on this check', () => {
+    const now = paycheckNow({ incomes: [job], subs, debtView: view, today: FROM });
+    const check = view.checks[0];
+    expect(now.payments.map((p) => [p.debt.name, p.dueOn, p.amountMinor])).toEqual(
+      check.minimums.map((m) => [m.debt.name, m.dueOn, m.amountMinor]),
+    );
+    // And what it leaves is the Debt page's "left" for this check, to the cent.
+    expect(now.leftAfterMinor).toBe(check.leftMinor);
   });
 
   it('counts a payment due on the next payday in this period', () => {
     // Due Oct 2, the day the next check arrives: this check pays it.
     const onPayday = [{ debt: cardA, dueOn: '2026-10-02', amountMinor: 5_000, autopay: false }];
-    expect(stillToCome([job], subs, FROM, onPayday).period?.minor).toBe(5_000);
-    expect(stillToCome([job], subs, FROM, onPayday).month.minor).toBe(0);
     expect(outlook([job], subs, FROM, 2, onPayday)[0].paymentsMinor).toBe(5_000);
   });
 
@@ -257,9 +270,9 @@ describe('V17: debt payments on Money', () => {
     expect(outlook([job], subs, FROM, 4, []).map((p) => p.remainingMinor)).toEqual(
       outlook([job], subs, FROM, 4).map((p) => p.remainingMinor),
     );
-    const { month, period } = stillToCome([job], subs, FROM);
-    expect(month).toEqual({ minor: 0, count: 0, paymentCount: 0, until: '2026-09-30' });
-    expect(period?.minor).toBe(0);
+    const now = paycheckNow({ incomes: [job], subs, debtView: { checks: [], payments: [] }, today: FROM });
+    expect(now.month).toEqual({ minor: 0, count: 0, paymentCount: 0, until: '2026-09-30' });
+    expect(now.stillToCome?.minor).toBe(0);
   });
 });
 

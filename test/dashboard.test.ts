@@ -12,6 +12,7 @@ import {
   type HomeData,
 } from '../src/lib/dashboard';
 import { buildDebtPlan } from '../src/lib/payoff';
+import { paycheckNow } from '../src/lib/paycheck';
 import { atTime } from '../src/lib/time';
 import type { DebtPlan, Note, Subscription, Task } from '../src/types';
 
@@ -58,6 +59,8 @@ function sub(partial: Partial<Subscription> = {}): Subscription {
 
 function data(partial: Partial<HomeData> = {}): HomeData {
   const subs = partial.subs ?? [];
+  const incomes = partial.incomes ?? [];
+  const debtView = buildDebtPlan({ debts: [], plan: PLAN, incomes, subs, from: TODAY });
   return {
     today: TODAY,
     now: NOW,
@@ -65,8 +68,9 @@ function data(partial: Partial<HomeData> = {}): HomeData {
     inboxCount: 0,
     notes: [],
     subs,
-    incomes: [],
-    debtView: buildDebtPlan({ debts: [], plan: PLAN, incomes: [], subs, from: TODAY }),
+    incomes,
+    debtView,
+    money: paycheckNow({ incomes, subs, debtView, today: TODAY }),
     openDebts: 0,
     settings: { blurAmounts: false, currency: 'USD', lookaheadDays: 14 },
     ...partial,
