@@ -22,6 +22,17 @@ export interface ChangeEntry {
 
 export const CHANGES: ChangeEntry[] = [
   {
+    version: 27,
+    notice: 'Steady opens on Home now: a card for each page. Tap one to open it.',
+    items: [
+      'New Home page: a card for each page, with what is coming up today and the next reminder.',
+      'Each page opens on a few cards, one per part. Tap a card to open that part.',
+      'The bar at the bottom is gone. "Back to" at the top, or Back, returns to the cards.',
+      'Back goes from a part to its page, then Home, then out.',
+      'The Menu lists its pages from the top, under its heading.',
+    ],
+  },
+  {
     version: 26,
     notice: 'Pages are in the Menu now, at the top left.',
     items: [

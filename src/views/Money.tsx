@@ -56,6 +56,7 @@ import {
   DetailsButton,
   Empty,
   FormError,
+  Hub,
   Section,
   Zone,
   useAutoFocus,
@@ -91,8 +92,9 @@ let shortcutUsed = false;
  * and the next screen already knows what it costs a year, when it next charges,
  * and offers to put it in your phone's calendar. No trip to Settings.
  *
- * Four zones, from glance to reference. Coming out: the two things to add,
- * then what is still to come out - the first of the two figures set large.
+ * Four zones, from glance to reference, each a card on the page's overview,
+ * under the two things to add. Coming out: the two things to add again, then
+ * what is still to come out - the first of the two figures set large.
  * Paychecks: what each one leaves, the second. Subscriptions, with the way to
  * export them. Income, with the averages folded away at the end for when you
  * want them.
@@ -283,22 +285,82 @@ export default function Money({ settings, startAdding = false }: { settings: Set
   // zone says what would fix it rather than asking for income already there.
   const noCheque = firstCheque ? null : whyNoPayPeriod(incomes, today);
 
+  /** The two things you come here to add, together, where they are never hunted for. */
+  const addButtons = (
+    <div className="btn-row btn-row-fill">
+      <button type="button" className="btn btn-primary" onClick={startNew}>
+        Add a subscription
+      </button>
+      {activeIncomes.length === 0 && (
+        <button type="button" className="btn" onClick={addIncome}>
+          Add income
+        </button>
+      )}
+    </div>
+  );
+
+  // The cards carry the figure each zone opens on. With amounts blurred the
+  // figure is left out and the line says what it is, in words.
+  const hasCharges = subs.some((s) => isActive(s, today)) || payments.length > 0;
+  const soonFigure = pending.period ?? pending.month;
+  const soonWhat = pending.period ? 'still to come out before your next payday' : 'still to come out this month';
+  const firstLeft = firstCheque ? (checkFor(firstCheque)?.leftMinor ?? firstCheque.leftoverMinor) : 0;
+
   return (
     <>
+      <Hub
+        cards={{
+          soon: {
+            figure: hasCharges && !blur ? money(soonFigure.minor) : undefined,
+            lines: !hasCharges
+              ? ['What is still to come out, once you add a subscription']
+              : [
+                  blur ? `What is ${soonWhat}` : soonWhat,
+                  soonFigure.count + soonFigure.paymentCount === 0
+                    ? 'Nothing else is due'
+                    : chargesAndPayments(soonFigure.count, soonFigure.paymentCount),
+                ],
+          },
+          paychecks: {
+            figure: firstCheque && !blur ? money(firstLeft) : undefined,
+            lines: firstCheque
+              ? [
+                  blur ? 'What this paycheck leaves' : 'left from this paycheck',
+                  firstCheque.current
+                    ? `The one paid ${shortDate(firstCheque.period.start, today)}`
+                    : `Next one: ${describeDate(firstCheque.period.start, today)}`,
+                ]
+              : ['What each paycheck has to cover, once you add your income'],
+          },
+          subscriptions: {
+            figure: active.length > 0 && !blur ? money(monthly) : undefined,
+            lines:
+              active.length === 0
+                ? ['Nothing tracked yet']
+                : [
+                    blur ? 'What they cost a month' : 'a month, roughly',
+                    `${active.length} active${ended.length > 0 ? `, ${ended.length} cancelled` : ''}`,
+                  ],
+          },
+          income: {
+            figure: activeIncomes.length > 0 && !blur ? money(netMonthly) : undefined,
+            lines:
+              activeIncomes.length === 0
+                ? ['Add a paycheck to see what is left over']
+                : [
+                    blur ? 'Take-home a month' : 'take-home a month',
+                    activeIncomes.length === 1 ? '1 job' : `${activeIncomes.length} jobs`,
+                  ],
+          },
+        }}
+      >
+        {addButtons}
+      </Hub>
+
       <Zone id="soon">
-        {/* The two things you come here to add, together, where they are never
-            hunted for. Once there is income, adding more is rarer, and it moves
-            to the top of the Income zone. */}
-        <div className="btn-row btn-row-fill">
-          <button type="button" className="btn btn-primary" onClick={startNew}>
-            Add a subscription
-          </button>
-          {activeIncomes.length === 0 && (
-            <button type="button" className="btn" onClick={addIncome}>
-              Add income
-            </button>
-          )}
-        </div>
+        {/* Once there is income, adding more is rarer, and Add income moves to
+            the top of the Income zone. */}
+        {addButtons}
 
         <Section title="Still to come out">
           {!subs.some((s) => isActive(s, today)) && payments.length === 0 ? (

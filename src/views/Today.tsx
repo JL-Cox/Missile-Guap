@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, blankTask, forgetSettings, saveSettings } from '../db';
 import type { DateKey, IncomeSource, Settings, Subscription, Task } from '../types';
@@ -14,7 +14,9 @@ import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { useTaskActions } from '../components/taskActions';
 import { useDebtPlan } from '../components/useDebtPlan';
-import { Amount, Empty, FoldHeader, Section, Zone, useBackLayer, useNavigate, useZone } from '../components/ui';
+import { Amount, Empty, FoldHeader, Hub, Section, Zone, useBackLayer, useNavigate } from '../components/ui';
+import type { CardBody } from '../lib/dashboard';
+import type { ZoneOf } from '../lib/zones';
 
 /** How many waiting tasks show before "Show N more" - the same number every day. */
 const WAITING_SHOWN = 3;
@@ -38,13 +40,11 @@ type LowDayFold = 'off' | 'folded' | 'peeked';
 
 /**
  * The one page to open when you cannot face opening anything. Fixed order,
- * every single day, in four zones: Today - what is happening today, and a
- * line about each of the other three - then what is still waiting, what money
- * is about to move, and what has no date. Never a different layout depending
- * on what's in it: every zone is always there, and an empty one says what it
- * is for.
- *
- * Today always opens on its first zone, so "Today" means today.
+ * every single day: the low day button, then a card for each of four zones -
+ * what is happening today, what is still waiting, what money is about to
+ * move, and what has no date. Never a different layout depending on what's
+ * in it: every card and every zone is always there, and an empty one says
+ * what it is for.
  *
  * On a low day it is the same page, quieter: every section stays where it
  * always is, but only what has a time, what is Critical and what you can do on
@@ -64,7 +64,6 @@ export default function Today({
   const [shown, setShown] = useState<string[]>(() => (peeked.day === today ? peeked.keys : []));
   const { move, undateAll, remove } = useTaskActions();
   const navigate = useNavigate();
-  const zone = useZone();
   useBackLayer(editing !== null, () => setEditing(null));
 
   const low = isLowDay(settings, today);
@@ -194,10 +193,10 @@ export default function Today({
   const looseSummary = looseCount === 1 ? 'The top one from your backlog' : `The top ${looseCount} from your backlog`;
 
   /*
-    "More on Today": one line for each of the other zones, at the end of the
-    first, so what is waiting and what money is about to move are still in
-    the one glance. Always three rows, whatever is in them. A zone the low
-    day has folded says so, and nothing more.
+    Today's cards: one for each zone, so what is planned, what is waiting and
+    what money is about to move are all in the one glance. Always four cards,
+    whatever is in them. A zone the low day has folded says so, and nothing
+    more.
   */
   const HIDDEN = 'Hidden for today';
   // Hidden when there is money to show and all of it is folded.
@@ -205,34 +204,60 @@ export default function Today({
     (leaving.length > 0 || paidSoon.length > 0) &&
     (leaving.length === 0 || billsFold === 'folded') &&
     (paidSoon.length === 0 || nextPaydayFold === 'folded');
-  const signposts = [
-    {
-      zone: 'waiting',
-      title: 'Waiting',
-      summary:
+  const goingOutWords = chargesAndPayments(
+    goingOutToday.filter((i) => i.kind === 'billing').length,
+    goingOutToday.filter((i) => i.kind === 'payment').length,
+    'payment',
+  );
+  const cards: Record<ZoneOf<'today'>, CardBody> = {
+    day: {
+      figure: todayShown.length > 0 ? countOf(todayShown.length, 'thing to do', 'things to do') : undefined,
+      lines: [
+        ...(todayShown.length === 0
+          ? [openToday.length > 0 ? 'Everything planned is folded away for today' : 'Nothing planned for today']
+          : todayFolded > 0
+            ? [`and ${todayFolded} folded away for today`]
+            : []),
+        ...(goingOutToday.length === 0
+          ? []
+          : chargedFold === 'folded'
+            ? ['Money going out today is hidden for today']
+            : [`${goingOutWords} going out today`]),
+        ...(doneToday.length > 0 ? [`${doneToday.length} finished today`] : []),
+      ],
+      wide: true,
+    },
+    waiting: {
+      figure: waitingFold === 'folded' || waiting.length === 0 ? undefined : String(waiting.length),
+      lines: [
         waitingFold === 'folded'
           ? HIDDEN
           : waiting.length > 0
-            ? `${countOf(waiting.length, 'task', 'tasks')} still here`
+            ? `${waiting.length === 1 ? 'task' : 'tasks'} still here`
             : 'Nothing waiting',
+      ],
     },
-    {
-      zone: 'money',
-      title: 'Money',
-      summary: moneyHidden
-        ? HIDDEN
-        : leaving.length > 0
-          ? billsSummary
-          : nextPay
-            ? `Next payday: ${paydaySummary}`
-            : `Nothing in the next ${settings.lookaheadDays} days`,
+    money: {
+      lines: [
+        moneyHidden
+          ? HIDDEN
+          : leaving.length > 0
+            ? billsSummary
+            : nextPay
+              ? `Next payday: ${paydaySummary}`
+              : `Nothing in the next ${settings.lookaheadDays} days`,
+      ],
     },
-    {
-      zone: 'undated',
-      title: 'No date',
-      summary: looseFold === 'folded' ? HIDDEN : undated.length > 0 ? looseSummary : 'Nothing without a date',
+    undated: {
+      figure: looseFold === 'folded' || undated.length === 0 ? undefined : String(undated.length),
+      lines:
+        looseFold === 'folded'
+          ? [HIDDEN]
+          : undated.length > 0
+            ? ['with no date on them', `${looseSummary}, by priority`]
+            : ['Nothing without a date'],
     },
-  ];
+  };
 
   if (editing) {
     const saved = tasks.some((t) => t.id === editing.id);
@@ -256,7 +281,7 @@ export default function Today({
 
   return (
     <>
-      <Zone id="day">
+      <Hub cards={cards}>
         {/* First on the page and in the same place every day, on or off. The
             app never suggests it and never guesses: it has no idea what kind of
             day you are having, and nothing here records that you had one. */}
@@ -279,7 +304,9 @@ export default function Today({
             </button>
           </div>
         )}
+      </Hub>
 
+      <Zone id="day">
         <Section
           title="Today"
           aside={
@@ -413,30 +440,6 @@ export default function Today({
           </LowDaySection>
         )}
 
-        <section className="stack-sm" aria-label="More on Today">
-          <h2>More on Today</h2>
-          <div className="card card-rows">
-            {signposts.map((s, i) => (
-              <Fragment key={s.zone}>
-                {i > 0 && <hr className="divider" />}
-                <button
-                  type="button"
-                  className="fold-btn signpost"
-                  data-zone={s.zone}
-                  onClick={() => zone?.choose(s.zone, true)}
-                >
-                  <span>
-                    <span className="fold-title">{s.title}</span>{' '}
-                    <span className="fold-summary">{s.summary}</span>
-                  </span>
-                  <span className="fold-state" aria-hidden="true">
-                    Open ›
-                  </span>
-                </button>
-              </Fragment>
-            ))}
-          </div>
-        </section>
       </Zone>
 
       <Zone id="waiting">

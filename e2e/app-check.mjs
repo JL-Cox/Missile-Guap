@@ -152,36 +152,43 @@ const openSection = async (title) => {
 const visibleText = () => page.locator('.main').innerText();
 
 /*
-  Getting around. Pages are in the Menu, and each working page is split into
-  zones picked from the bar at the bottom. Both are found by their fixed ids -
-  data-page and data-zone - never by their words, so a change of wording can
-  never send a test to the wrong place.
+  Getting around. Pages are in the Menu and on Home's cards, and each working
+  page opens on a card for each of its zones. Both are found by their fixed
+  ids - data-page and data-card-zone - never by their words, so a change of
+  wording can never send a test to the wrong place.
 */
 /** The page showing, by its id: 'today', 'money', 'settings'... */
 const onPage = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-page') ?? null);
-/** The zone showing, by its id, or null where there is no bar (Settings, About, an open editor). */
-const zoneNow = () =>
-  page.evaluate(() => document.querySelector('.zones [role="tab"][aria-selected="true"]')?.getAttribute('data-zone') ?? null);
+/** The zone showing, by its id: 'hub' for a page's cards, or null on a page with no zones. */
+const zoneNow = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-zone') ?? null);
+/** Opens one of the page's zones from its cards, coming back to the cards first if need be. */
+const openZone = async (zoneId) => {
+  if ((await zoneNow()) !== 'hub') await page.click('.zone-back');
+  await page.click(`.zone:not([hidden]) [data-card-zone="${zoneId}"]`);
+};
 const openMenu = async () => {
   if (!(await page.locator('#menu').count())) await page.click('.header .menu-btn');
   await page.waitForSelector('#menu');
 };
-/** Goes to a page through the Menu, then to one of its zones. */
+/** Goes to a page through the Menu, then to one of its zones ('hub' for its cards). */
 const goTo = async (pageId, zoneId) => {
   if ((await onPage()) !== pageId) {
     await openMenu();
     await page.click(`#menu .drawer-item[data-page="${pageId}"]`);
     await page.waitForSelector(`.main[data-page="${pageId}"]`);
   }
-  if (zoneId && (await zoneNow()) !== zoneId) await page.click(`.zones [role="tab"][data-zone="${zoneId}"]`);
+  if (zoneId && (await zoneNow()) !== zoneId) {
+    if (zoneId === 'hub') await page.click('.zone-back');
+    else await openZone(zoneId);
+  }
   await page.waitForTimeout(150);
 };
 /** The text of the first thing in the zone showing. */
 const firstInZone = () => page.$eval('.view:not([hidden]) .zone:not([hidden]) > :first-child', (el) => el.textContent);
 /** Everything a page shows, zone by zone: what you would see visiting each in turn. */
 const allZonesText = async (pageId) => {
-  await goTo(pageId);
-  const ids = await page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => t.getAttribute('data-zone')));
+  await goTo(pageId, 'hub');
+  const ids = await page.$$eval('.zone:not([hidden]) [data-card-zone]', (cards) => cards.map((c) => c.getAttribute('data-card-zone')));
   let text = '';
   for (const id of ids) {
     await goTo(pageId, id);
@@ -351,13 +358,13 @@ await page.waitForTimeout(400);
 check('moving the time moves the reminder with it', await dentistRemindAt(), await localMs(10, 50));
 
 // --- Android Back closes what is open, then the zone, then goes home, then leaves ---
-/** How many entries the app has stacked above its first. 0 is Today's first zone: Back from there leaves. */
+/** How many entries the app has stacked above its first. 0 is Home: Back from there leaves. */
 const historyDepth = () => page.evaluate(() => window.history.state?.steady ?? 0);
 await goTo('tasks', 'dated');
 await page.click('button:text-is("New task"):visible');
 await page.waitForSelector('#task-title');
 await page.fill('#task-title', 'Half-written task');
-check('the zone bar steps aside while an editor has the page', await page.locator('.zones').count(), 0);
+check('the way back to the cards steps aside while an editor has the page', await page.locator('.zone-back').count(), 0);
 // Changing page through the Menu keeps the draft rather than throwing it away.
 await goTo('notes');
 await page.waitForTimeout(200);
@@ -368,22 +375,35 @@ await page.goBack();
 await page.waitForTimeout(300);
 check('Back closes the editor instead of leaving the app', await page.locator('#task-title').count(), 0);
 check('and stays on the same page', await onPage(), 'tasks');
-check('with the zone bar back, on the same zone', await zoneNow(), 'dated');
+check('on the same zone, with the way back to the cards', `${await zoneNow()} ${await page.locator('.zone-back').count()}`, 'dated 1');
 await page.goBack();
 await page.waitForTimeout(300);
-check('Back from a page goes to Today', await onPage(), 'today');
+check('Back from a zone goes to the page\'s cards', `${await onPage()} ${await zoneNow()}`, 'tasks hub');
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back from a page\'s cards goes Home', await onPage(), 'home');
 check('and the app is still open', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
+check('Home is the bottom of the history, so the next Back leaves', await historyDepth(), 0);
 
-// From a zone that is not the page's first: Back goes to the first, then to
-// Today, and Today's first zone is the bottom of the history.
+// The button at the top of a zone does what Back does.
 await goTo('money', 'subscriptions');
+check('a zone is named under the page\'s name', await page.textContent('.header-title > p'), 'Subscriptions');
+check('and the heading is read out as both', await page.textContent('.header h1'), 'Money, Subscriptions');
+check('and a button back to its page, named for it', (await page.textContent('.zone-back')).trim(), '‹ Back to Money');
+await page.click('.zone-back');
+await page.waitForTimeout(200);
+check('which goes back to Money\'s cards', `${await onPage()} ${await zoneNow()}`, 'money hub');
+check('and takes the zone\'s history entry with it', await historyDepth(), 1);
+check('with focus on the heading, for TalkBack', await page.evaluate(() => (document.activeElement?.tagName === 'H1' ? document.activeElement.textContent : '')), 'Money');
 await page.goBack();
 await page.waitForTimeout(300);
-check('Back from Money › Subscriptions goes to Money › Coming out', `${await onPage()} ${await zoneNow()}`, 'money soon');
-await page.goBack();
-await page.waitForTimeout(300);
-check('and Back again goes to Today, on its first zone', `${await onPage()} ${await zoneNow()}`, 'today day');
-check('which is the bottom of the history, so the next Back leaves', await historyDepth(), 0);
+check('and Back from there goes Home', `${await onPage()} ${await historyDepth()}`, 'home 0');
+
+// A page always opens on its cards, wherever it was left.
+await goTo('money', 'income');
+await goTo('notes');
+await goTo('money');
+check('a page opens on its cards, not on the zone it was left on', await zoneNow(), 'hub');
 
 // The Menu is on top of everything: Back closes it, and nothing else moves.
 await goTo('backlog');
@@ -397,16 +417,16 @@ check('and takes away only its own history entry', await historyDepth(), depthBe
 
 // Settings and About are pages like any other.
 await goTo('settings');
-check('Settings has no zone bar', await page.locator('.zones').count(), 0);
+check('Settings has no zones', await zoneNow(), null);
 check('and no capture box', await page.locator('#capture-input').count(), 0);
 await page.goBack();
 await page.waitForTimeout(300);
-check('Back from Settings goes to Today', await onPage(), 'today');
+check('Back from Settings goes Home', await onPage(), 'home');
 
 // --- About: version, what's new, recent updates, and Back ------------------
 await goTo('about');
 check('About has its own title', await page.textContent('.header h1'), 'About');
-check('and no zone bar', await page.locator('.zones').count(), 0);
+check('and no zones', await zoneNow(), null);
 const aboutText = await page.textContent('.main');
 check('About shows a version number', /Version \d+/.test(aboutText), true);
 check("About lists what's new", (await page.locator('section[aria-label="What\'s new"] li').count()) > 0, true);
@@ -417,7 +437,7 @@ const updates = await page.locator('ol[aria-label^="Last 10 updates"] li:visible
 check('About lists between 1 and 10 recent updates', updates >= 1 && updates <= 10, true);
 await page.goBack();
 await page.waitForTimeout(300);
-check('Back from About goes to Today', await onPage(), 'today');
+check('Back from About goes Home', await onPage(), 'home');
 await goTo('settings');
 await page.click('button:text-is("About and what\'s new")');
 await page.waitForTimeout(200);
@@ -427,10 +447,16 @@ check('Settings\' "About and what\'s new" opens the About page', await onPage(),
 await goTo('backlog');
 await openMenu();
 check(
-  'the menu lists nine pages in this order',
+  'the menu lists ten pages in this order',
   (await page.$$eval('#menu .drawer-item > span:nth-child(2)', (ls) => ls.map((l) => l.textContent.trim()))).join(' '),
-  'Today Inbox Tasks Backlog Notes Debt Money Settings About',
+  'Home Today Inbox Tasks Backlog Notes Debt Money Settings About',
 );
+// The list starts at the top of the drawer, straight under its heading.
+const menuTop = await page.evaluate(() => ({
+  head: document.querySelector('#menu .drawer-head').getBoundingClientRect().bottom,
+  list: document.querySelector('#menu nav').getBoundingClientRect().top,
+}));
+check('and the list starts at the top, under the heading', Math.abs(menuTop.list - menuTop.head) < 2, true);
 check('it is a modal dialog called Menu', await page.getByRole('dialog', { name: 'Menu' }).count(), 1);
 check('its list of pages is named', await page.getByRole('navigation', { name: 'Pages' }).count(), 1);
 check('opening it moves focus to the page you are on', await page.evaluate(() => document.activeElement?.getAttribute('data-page')), 'backlog');
@@ -482,7 +508,7 @@ await page.waitForTimeout(200);
 check('choosing another page goes there and closes the Menu', `${await page.locator('#menu').count()} ${await onPage()}`, '0 tasks');
 check('with focus on the new page\'s heading, for TalkBack', await page.evaluate(() => (document.activeElement?.tagName === 'H1' ? document.activeElement.textContent : '')), 'Tasks');
 
-// --- the zone bar: each page's zones, in the registry's order -----------------
+// --- each page's cards: one per zone, in the registry's order --------------
 const ZONE_REGISTRY = {
   today: 'day:Today waiting:Waiting money:Money undated:No date',
   inbox: 'open:To sort cleared:Dealt with',
@@ -495,87 +521,71 @@ const ZONE_REGISTRY = {
 const ZONED = Object.keys(ZONE_REGISTRY);
 /** A page's zone ids, in order: labels can hold spaces, ids cannot. */
 const zoneIdsOf = (id) => [...ZONE_REGISTRY[id].matchAll(/([a-z]+):/g)].map((m) => m[1]);
-const zoneTabs = () =>
-  page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => `${t.getAttribute('data-zone')}:${t.querySelector('.nav-label').textContent}`).join(' '));
+const zoneCards = () =>
+  page.$$eval('.zone:not([hidden]) [data-card-zone]', (cards) =>
+    cards.map((c) => `${c.getAttribute('data-card-zone')}:${c.querySelector('.widget-head > span').textContent}`).join(' '),
+  );
 for (const id of ZONED) {
-  await goTo(id);
-  check(`${id}'s zones are, in order, ${ZONE_REGISTRY[id].replace(/[a-z]+:/g, '')}`, await zoneTabs(), ZONE_REGISTRY[id]);
+  await goTo(id, 'hub');
+  check(`${id}'s cards are, in order, ${ZONE_REGISTRY[id].replace(/[a-z]+:/g, '')}`, await zoneCards(), ZONE_REGISTRY[id]);
 }
 for (const id of ['settings', 'about']) {
   await goTo(id);
-  check(`${id} has no zone bar`, await page.locator('.zones').count(), 0);
+  check(`${id} has no cards`, await page.locator('[data-card-zone]').count(), 0);
 }
-await goTo('money', 'soon');
-check('the bar is a list of tabs, named for its page', await page.getByRole('tablist', { name: 'Money zones' }).count(), 1);
+await goTo('money', 'hub');
+check('the cards are a list, named for the page', await page.getByRole('list', { name: 'Money, by part' }).count(), 1);
 check(
-  'each tab names the zone it shows, which is always there',
-  await page.$$eval('.zones [role="tab"]', (tabs) => tabs.every((t) => document.getElementById(t.getAttribute('aria-controls'))?.getAttribute('role') === 'tabpanel')),
+  'each card is one button, read out name first',
+  /^Coming out/.test((await page.getByRole('button', { name: /^Coming out/ }).first().textContent()) ?? ''),
   true,
 );
 check(
-  'only the zone showing is in the Tab order',
-  await page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => t.getAttribute('tabindex')).join('')),
-  '0-1-1-1',
+  'every card is at least 44px tall',
+  (await page.$$eval('.zone:not([hidden]) .widget', (bs) => bs.map((b) => b.getBoundingClientRect().height))).every((h) => h >= 44),
+  true,
 );
-// The keys tabs always have: Left and Right go round, Home and End to the ends.
-await page.focus('.zones [role="tab"][aria-selected="true"]');
-await page.keyboard.press('ArrowLeft');
-check('Left from the first zone goes round to the last, and shows it', `${await zoneNow()} ${await page.evaluate(() => document.activeElement?.getAttribute('data-zone'))}`, 'income income');
-await page.keyboard.press('ArrowRight');
-// Sampled for a while, not read once: each switch is saved in the background,
-// and a save from the earlier switch landing late used to put the bar back on
-// Income for a moment.
-const afterRight = await page.evaluate(
-  () =>
-    new Promise((resolve) => {
-      const seen = new Set();
-      const started = performance.now();
-      const look = () => {
-        seen.add(document.querySelector('.zones [role="tab"][aria-selected="true"]')?.getAttribute('data-zone'));
-        if (performance.now() - started < 400) requestAnimationFrame(look);
-        else resolve([...seen].join(' '));
-      };
-      look();
-    }),
-);
-check('Right from the last goes round to the first, and stays there', afterRight, 'soon');
-await page.keyboard.press('End');
-check('End goes to the last', await zoneNow(), 'income');
-await page.keyboard.press('Home');
-check('Home goes to the first', await zoneNow(), 'soon');
-// The bold copy that reserves a label's width is drawn hidden, so it must not
-// be read out as part of the tab's name ("Routines Routines").
-await goTo('backlog');
-check(
-  'each tab is read out by its label alone',
-  await page.getByRole('tablist', { name: 'Backlog zones' }).getByRole('tab', { name: 'Routines', exact: true }).count(),
-  1,
-);
-// Changing zone shows the new one from its top.
-await goTo('money', 'soon');
+await page.click('[data-card-zone="subscriptions"]');
+await page.waitForTimeout(150);
+check('a card opens its zone', await zoneNow(), 'subscriptions');
+check('with focus on the heading, which names it, for TalkBack', await page.evaluate(() => (document.activeElement?.tagName === 'H1' ? document.activeElement.textContent : '')), 'Money, Subscriptions');
+// Opening a zone shows it from its top.
+await goTo('money', 'hub');
 await page.evaluate(() => window.scrollTo(0, 400));
-await goTo('money', 'subscriptions');
-check('a new zone shows from its top', await page.evaluate(() => window.scrollY), 0);
+await page.click('[data-card-zone="income"]');
+await page.waitForTimeout(150);
+check('a zone shows from its top', await page.evaluate(() => window.scrollY), 0);
 
-// --- the zone bar and the header, at every text size: each label on one line ----
-// The zone you are on is set bold. A slot is as wide as its own label set
-// bold, reserved on every slot, so every zone of every page is visited: none
-// may break, and no slot may move when the zone showing changes. Checked at
-// both ends of the text scale and at 1.0x, on a 412px and a 360px phone.
-const barState = () =>
+// --- Home: a card for each working page ---------------------------------------
+await goTo('home');
+check(
+  'Home has three groups of cards, in a fixed order',
+  (await page.$$eval('.cards-heading', (hs) => hs.map((h) => h.textContent))).join(' '),
+  'Today Lists Money',
+);
+check(
+  'and a card for each working page',
+  (await page.$$eval('[data-card-page]', (cs) => cs.map((c) => c.getAttribute('data-card-page')))).join(' '),
+  'today inbox tasks backlog notes money debt',
+);
+check('with the capture box above them', await page.locator('#capture-input').count(), 1);
+await page.click('[data-card-page="backlog"]');
+await page.waitForTimeout(150);
+check('a card opens its page, on its cards', `${await onPage()} ${await zoneNow()}`, 'backlog hub');
+await page.goBack();
+await page.waitForTimeout(300);
+check('and Back comes Home again', await onPage(), 'home');
+
+// --- the cards and the header, at every text size ------------------------------
+// Two cards to a row while two fit, one when they do not: nothing in a card
+// may run out of it, and the page may never scroll sideways. Checked at both
+// ends of the text scale and at 1.0x, on a 412px and a 360px phone.
+const cardState = () =>
   page.evaluate(() => {
-    const buttons = [...document.querySelectorAll('.zones [role="tab"]')];
-    const bar = document.querySelector('.zones');
+    const cards = [...document.querySelectorAll('.main .widget')].filter((b) => b.offsetParent !== null);
     return {
-      widths: buttons.map((b) => b.getBoundingClientRect().width),
-      broken: buttons
-        .filter((b) => {
-          const label = b.querySelector('.nav-label');
-          return label.getBoundingClientRect().height > parseFloat(getComputedStyle(label).lineHeight) * 1.5;
-        })
-        .map((b) => b.textContent.trim()),
-      clipped: buttons.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim()),
-      overflows: bar.scrollWidth > bar.clientWidth + 1,
+      spills: cards.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.querySelector('.widget-head')?.textContent.trim()),
+      overflows: document.documentElement.scrollWidth > window.innerWidth,
     };
   });
 const headerState = () =>
@@ -596,43 +606,38 @@ for (const scale of ['0.9', '1', '1.6']) {
   for (const width of [412, 360]) {
     await page.setViewportSize({ width, height: 915 });
     const at = `at ${scale === '1' ? '1.0' : scale}x and ${width}px`;
-    const broken = new Set();
-    const clipped = new Set();
-    const shifts = [];
-    let narrowest = Infinity;
+    const spills = new Set();
     let overflows = false;
     const headers = {};
-    for (const id of [...ZONED, 'settings', 'about']) {
-      await goTo(id);
+    for (const id of ['home', ...ZONED, 'settings', 'about']) {
+      await goTo(id, ZONE_REGISTRY[id] ? 'hub' : undefined);
       headers[id] = await headerState();
-      if (!ZONE_REGISTRY[id]) continue;
-      const seen = [];
-      for (const zone of zoneIdsOf(id)) {
-        await page.click(`.zones [role="tab"][data-zone="${zone}"]`);
-        await page.waitForTimeout(120);
-        seen.push(await barState());
+      const seen = [await cardState()];
+      // Into each zone, so a zone's name as the heading is checked too.
+      for (const zone of ZONE_REGISTRY[id] ? zoneIdsOf(id) : []) {
+        await openZone(zone);
+        await page.waitForTimeout(80);
+        headers[`${id}:${zone}`] = await headerState();
+        seen.push(await cardState());
       }
-      for (const s of seen) {
-        s.broken.forEach((b) => broken.add(b));
-        s.clipped.forEach((c) => clipped.add(c));
-        narrowest = Math.min(narrowest, ...s.widths);
-        overflows ||= s.overflows;
+      for (const st of seen) {
+        st.spills.forEach((c) => spills.add(`${id}: ${c}`));
+        overflows ||= st.overflows;
       }
-      shifts.push(Math.max(...seen[0].widths.map((_, slot) => Math.max(...seen.map((s) => s.widths[slot])) - Math.min(...seen.map((s) => s.widths[slot])))));
-      // Back to the first zone, so each page starts the next size where it began.
-      await page.click(`.zones [role="tab"][data-zone="${zoneIdsOf(id)[0]}"]`);
     }
-    check(`${at}, no zone label breaks onto two lines, whichever zone is showing`, [...broken].join(', '), '');
-    check(`${at}, no zone label is clipped`, [...clipped].join(', '), '');
-    check(`${at}, no slot changes width when the zone changes`, Math.max(...shifts) < 0.5, true);
-    check(`${at}, the narrowest slot is at least 44px`, narrowest >= 44, true);
-    check(`${at}, every zone bar fits the screen`, overflows, false);
+    check(`${at}, nothing runs out of a card`, [...spills].join(', '), '');
+    check(`${at}, no page scrolls sideways`, overflows, false);
     const pages = Object.keys(headers);
     check(`${at}, no header runs off the screen`, pages.filter((p) => headers[p].overflows).join(', '), '');
-    check(`${at}, no page's name breaks onto two lines`, pages.filter((p) => headers[p].titleBreaks).join(', '), '');
+    check(`${at}, no page's or zone's name breaks onto two lines`, pages.filter((p) => headers[p].titleBreaks).join(', '), '');
     check(
-      `${at}, every page but Today has a header of the same height`,
-      new Set(pages.filter((p) => p !== 'today').map((p) => headers[p].height)).size,
+      `${at}, every page but Home and Today has a header of the same height`,
+      new Set(pages.filter((p) => !p.includes(':') && p !== 'today' && p !== 'home').map((p) => headers[p].height)).size,
+      1,
+    );
+    check(
+      `${at}, and every zone has one of the same height`,
+      new Set(pages.filter((p) => p.includes(':')).map((p) => headers[p].height)).size,
       1,
     );
   }
@@ -995,7 +1000,7 @@ check('and Done goes back to Subscriptions, where it was added', await zoneNow()
 
 // --- a note --------------------------------------------------------------
 await goTo('notes', 'all');
-await page.click('button:has-text("New note")');
+await page.click('button:has-text("New note"):visible');
 await page.waitForSelector('#note-title');
 await page.fill('#note-title', "Doctor's office");
 await page.fill('#note-body', 'Reception: (212) 555-0147\nAsk for Dr Hall.');
@@ -1007,7 +1012,7 @@ await page.waitForTimeout(400);
 // note about the same theme gets a suggestion, and that tapping it sticks.
 const makeNote = async (title, body, tags) => {
   await goTo('notes', 'all');
-  await page.click('button:has-text("New note")');
+  await page.click('button:has-text("New note"):visible');
   await page.waitForSelector('#note-title');
   await page.fill('#note-title', title);
   await page.fill('#note-body', body);
@@ -1020,7 +1025,7 @@ const makeNote = async (title, body, tags) => {
 await makeNote('Dentist appointment', 'Dentist appointment booked for Tuesday', 'health');
 await makeNote('Prescription', 'Prescription ready at the pharmacy', 'health');
 await goTo('notes', 'all');
-await page.click('button:has-text("New note")');
+await page.click('button:has-text("New note"):visible');
 await page.waitForSelector('#note-title');
 await page.fill('#note-body', 'Dentist appointment next week');
 await page.waitForTimeout(300);
@@ -1038,7 +1043,7 @@ await makeNote('Refund', 'Refund for the invoice came through', 'money');
 await makeNote('Overcharge', 'Paid the invoice and got a refund on the overcharge', 'money');
 
 await goTo('notes', 'all');
-await page.click('button:has-text("New note")');
+await page.click('button:has-text("New note"):visible');
 await page.waitForSelector('#note-title');
 await page.fill('#note-title', 'Call the dentist');
 await page.fill('#note-body', 'Need to call the dentist about that appointment');
@@ -1177,7 +1182,7 @@ for (const [title, priority] of [
   ['Order printer ink', 'Low'],
   ['Book the optician', 'Critical'],
 ]) {
-  await page.click('button:has-text("Add something")');
+  await page.click('button:has-text("Add something"):visible');
   await page.waitForSelector('#task-title');
   await page.fill('#task-title', title);
   await page.click(`button:text-is("${priority}")`);
@@ -1232,7 +1237,7 @@ check('Undo puts it back in the list', (await visibleText()).includes('Book the 
 await page.click('.item input[type="checkbox"]');
 await page.waitForTimeout(500);
 check('but is still there to be found, in the Backlog\'s Finished zone', (await page.textContent('section[aria-label="Finished"]')).includes('Book the optician'), true);
-check('which the bar names "Finished"', await page.textContent('.zones [role="tab"][data-zone="finished"]'), 'Finished');
+check('which its card names "Finished"', await page.textContent('.view:not([hidden]) [data-card-zone="finished"] .widget-head > span'), 'Finished');
 await goTo('backlog', 'finished');
 check('and shows it when that zone is chosen', (await visibleText()).includes('Book the optician'), true);
 
@@ -1290,6 +1295,7 @@ await page.evaluate(
 // Written behind Dexie's back, so its live queries have not seen them: reload.
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
+await goTo('today', 'day');
 check('the three seeded tasks are on Today', (await page.textContent('.main')).includes('Sort the recycling'), true);
 const TODAY_ZONES = ['day', 'waiting', 'money', 'undated'];
 /** Section headings in each of Today's zones: the title alone, without a folded section's one line or its Show. */
@@ -1306,10 +1312,12 @@ const todayHeadings = async () => {
 const chargedFold = 'section[aria-label="Today"] h3.fold-heading > .fold-btn:has-text("Going out today")';
 const todaySection = () => page.textContent('section[aria-label="Today"]');
 
+await goTo('today', 'hub');
 check('Today offers a low day, as a labelled button', await page.locator('button:text-is("Today is a low day")').count(), 1);
-check('first in the Today zone', (await firstInZone()).includes('Today is a low day'), true);
+check('first on Today\'s cards', (await firstInZone()).includes('Today is a low day'), true);
 check('and only there', await page.locator('button:text-is("Today is a low day")').count(), 1);
 const normalHeadings = await todayHeadings();
+await goTo('today', 'hub');
 await page.click('button:text-is("Today is a low day")');
 await page.waitForTimeout(400);
 check('turning it on keeps only today\'s date', (await storedSettings()).lowDay, todayKey);
@@ -1322,8 +1330,10 @@ await goTo('today', 'undated');
 check('Critical stays, even with no date', (await visibleText()).includes('Renew the parking permit'), true);
 check('the rest is folded away', (await page.textContent('.main')).includes('Sort the recycling'), false);
 await goTo('today', 'money');
-// Next payday is always folded whole on a low day (money is never on its list).
-check('Next payday says "Hidden for today"', (await foldButton('Next payday').textContent()).includes('Hidden for today'), true);
+// A payday is always folded whole on a low day (money is never on its list):
+// the next one, under Money - or, when the job pays today, Payday on Today.
+const paydayFold = (await foldButton('Next payday').count()) > 0 ? 'Next payday' : 'Payday';
+check(`${paydayFold} says "Hidden for today"`, (await foldButton(paydayFold).textContent()).includes('Hidden for today'), true);
 check(
   'in the same look as any folded section',
   (await page.locator('.zone:not([hidden]) h2.fold-heading > .fold-btn[aria-expanded="false"]:has-text("Hidden for today")').count()) >= 1,
@@ -1332,7 +1342,7 @@ check(
 await goTo('today', 'day');
 check('money going out today is folded to one line', (await todaySection()).includes('Netflix'), false);
 check('which says so, with Show', (await page.locator(chargedFold).textContent()).includes('Hidden for today'), true);
-check('and the line about Money in "More on Today" says it is hidden for today', (await page.textContent('.signpost[data-zone="money"]')).includes('Hidden for today'), true);
+check('and the Money card on Today\'s cards says it is hidden for today', (await page.textContent('.view:not([hidden]) [data-card-zone="money"]')).includes('Hidden for today'), true);
 await page.screenshot({ path: `${OUT}/low-day.png`, fullPage: true });
 
 await page.click(chargedFold);
@@ -1341,7 +1351,9 @@ check('Show opens that one section', (await todaySection()).includes('Netflix'),
 check('and leaves the rest folded', (await page.textContent('.main')).includes('Sort the recycling'), false);
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
+await goTo('today', 'hub');
 check('the low day survives a reload', await page.locator('button:text-is("End low day")').count(), 1);
+await goTo('today', 'day');
 check('but what you opened is not saved - it folds again', (await todaySection()).includes('Netflix'), false);
 await page.click(chargedFold);
 await page.waitForTimeout(200);
@@ -1376,15 +1388,11 @@ await lowDayBackup.saveAs(`${OUT}/e2e-low-day-backup.json`);
 const lowDayBackupText = readFileSync(`${OUT}/e2e-low-day-backup.json`, 'utf8');
 check('a backup made on a low day does not mention it', lowDayBackupText.includes('lowDay'), false);
 check('but still carries the settings', JSON.parse(lowDayBackupText).settings.backlogSort, 'az');
-check(
-  'including the zone each page was left on, which is a preference',
-  JSON.parse(lowDayBackupText).settings.zones?.backlog,
-  'finished',
-);
-check('but never Today\'s, which always opens on today', 'today' in (JSON.parse(lowDayBackupText).settings.zones ?? {}), false);
-await goTo('today');
+check('and no record of where each page was left, which is never kept', 'zones' in JSON.parse(lowDayBackupText).settings, false);
+await goTo('today', 'day');
 await page.waitForTimeout(300);
 
+await goTo('today', 'hub');
 await page.click('button:text-is("End low day")');
 await page.waitForTimeout(400);
 check('ending it puts the button back in the same place', (await firstInZone()).includes('Today is a low day'), true);
@@ -1400,6 +1408,7 @@ const yesterdayKey = await page.evaluate(() => {
 await patchSettings({ lowDay: yesterdayKey });
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
+await goTo('today', 'hub');
 check('yesterday\'s low day has ended by itself', await page.locator('button:text-is("Today is a low day")').count(), 1);
 check('and is deleted on opening, not kept', 'lowDay' in (await storedSettings()), false);
 
@@ -1425,8 +1434,10 @@ const planSection = page.locator('section[aria-label="The plan"]');
 await goTo('debt');
 await page.waitForTimeout(300);
 check('the Debt page opens from the menu', await onPage(), 'debt');
-check('on its first zone, Paychecks', await zoneNow(), 'paychecks');
+check('on its cards', await zoneNow(), 'hub');
 check('Add a debt is the first thing on it', (await firstInZone()).includes('Add a debt'), true);
+check('its Plan card says what will be there', (await visibleText()).includes('The date everything is paid off, once you add a debt'), true);
+await goTo('debt', 'paychecks');
 check('an empty Debt page says what this paycheck will show', (await visibleText()).includes('Once you add a debt, this shows what each paycheck needs to cover'), true);
 await page.screenshot({ path: `${OUT}/debt-empty.png`, fullPage: true });
 await goTo('debt', 'debts');
@@ -1702,17 +1713,17 @@ await goTo('today', 'money');
 await page.waitForTimeout(300);
 check('Today lists the payment as "<name> payment"', (await visibleText()).includes('Harbor Visa payment'), true);
 await page.screenshot({ path: `${OUT}/today-with-debt.png`, fullPage: true });
-await goTo('today', 'day');
+await goTo('today', 'hub');
 check(
-  'counted apart from the charges in the line about Money on "More on Today"',
-  /charges? and \d+ payments?/.test(await page.textContent('.signpost[data-zone="money"]')),
+  'counted apart from the charges on the Money card on Today\'s cards',
+  /charges? and \d+ payments?/.test(await page.textContent('.view:not([hidden]) [data-card-zone="money"]')),
   true,
 );
-// A row there opens its zone, with focus on that zone's tab.
-await page.click('.signpost[data-zone="money"]');
+// The card opens its zone, with focus on the zone's name.
+await page.click('.view:not([hidden]) [data-card-zone="money"]');
 await page.waitForTimeout(200);
 check('tapping it opens Today › Money', await zoneNow(), 'money');
-check('with focus on the Money tab', await page.evaluate(() => document.activeElement?.id), 'tab-today-money');
+check('with focus on the heading, which names it', await page.evaluate(() => (document.activeElement?.tagName === 'H1' ? document.activeElement.textContent : '')), 'Today, Money');
 await goTo('today', 'day');
 
 // --- getting ready for an appointment ---------------------------------------
@@ -1777,7 +1788,7 @@ check(
   (await readStore('tasks')).find((t) => t.title === 'Dentist check-up')?.followUpNoteId,
   (await saidNote())?.id,
 );
-await goTo('today');
+await goTo('today', 'day');
 await page.waitForTimeout(300);
 check('the row then opens it instead', await apptRow.locator('button:text-is("Open what was said")').count(), 1);
 await apptRow.locator('button:text-is("Open what was said")').click();
@@ -1787,7 +1798,7 @@ await dismissToast();
 await page.click('form.card button:text-is("Delete")');
 await page.click('button:text-is("Yes, delete it")');
 await page.waitForTimeout(400);
-await goTo('today');
+await goTo('today', 'day');
 await page.waitForTimeout(300);
 check('with the note deleted, it offers to write one again', await apptRow.locator('button:text-is("Write down what was said")').count(), 1);
 await apptRow.locator('button:text-is("Write down what was said")').click();
@@ -1795,7 +1806,7 @@ await page.waitForSelector('#note-title');
 await dismissToast();
 await page.click('form.card button[type="submit"]:has-text("Save")');
 await page.waitForTimeout(400);
-await goTo('today');
+await goTo('today', 'day');
 await page.waitForTimeout(300);
 await apptRow.locator('.details-btn').click();
 await apptRow.locator('button:text-is("Edit")').click();
@@ -1811,7 +1822,7 @@ check('and the note about it is not', (await readStore('notes')).filter((n) => n
 await goTo('backlog', 'routines');
 check('with none yet, the Routines zone says what a routine is and how to make one', (await visibleText()).includes('To make one, open a task with steps and tick'), true);
 await goTo('backlog', 'open');
-await page.click('button:has-text("Add something")');
+await page.click('button:has-text("Add something"):visible');
 await page.waitForSelector('#task-title');
 await page.fill('#task-title', 'Leaving the house');
 for (const step of ['Keys', 'Wallet', 'Phone']) {
@@ -1990,24 +2001,16 @@ check('an opened section is still open after a reload', await averagesFold.getAt
 await averagesFold.click();
 await page.waitForTimeout(200);
 
-// --- zones a page was left on -------------------------------------------------
-// Each page opens on the zone you left it on - remembered, like a fold - except
-// Today, which always opens on today.
+// --- where you are is never saved ---------------------------------------------
+// A page opens on its cards every time, and the app opens on Home. Nothing
+// about which zone you were in is written down, not even across a reload.
 await goTo('money', 'subscriptions');
-check('the zone a page was left on is saved', (await storedSettings()).zones?.money, 'subscriptions');
+check('the zone you are in is not saved', 'zones' in (await storedSettings()), false);
 await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
-check('after a reload the app opens on Today, on its first zone', `${await onPage()} ${await zoneNow()}`, 'today day');
+check('after a reload the app opens on Home', `${await onPage()} ${await zoneNow()}`, 'home null');
 await goTo('money');
-check('and Money opens on Subscriptions, where it was left', await zoneNow(), 'subscriptions');
-await page.goBack();
-await page.waitForTimeout(300);
-check('Back to its first zone forgets it, rather than saving the first', 'money' in ((await storedSettings()).zones ?? {}), false);
-await goTo('today', 'waiting');
-check('Today\'s zone is never saved', 'today' in ((await storedSettings()).zones ?? {}), false);
-await goTo('notes');
-await goTo('today');
-check('so Today always opens on today, even from the Menu', await zoneNow(), 'day');
+check('and Money opens on its cards', await zoneNow(), 'hub');
 
 await goTo('settings');
 await page.waitForTimeout(300);
@@ -2018,7 +2021,7 @@ check(
 );
 check('each group says where it stands', (await foldButton('App lock').textContent()).includes('Off'), true);
 await openSection('App lock');
-await goTo('today');
+await goTo('today', 'day');
 await goTo('settings');
 await page.waitForTimeout(300);
 check('and folds them all again on the next visit', await foldButton('App lock').getAttribute('aria-expanded'), 'false');
@@ -2041,10 +2044,10 @@ const unblurred = () =>
   });
 /** Checks every zone of a page for an amount in the clear, and names the zones that show one. */
 const zonesInTheClear = async (pageId) => {
-  await goTo(pageId);
-  const ids = await page.$$eval('.zones [role="tab"]', (tabs) => tabs.map((t) => t.getAttribute('data-zone')));
+  await goTo(pageId, 'hub');
+  const ids = await page.$$eval('.zone:not([hidden]) [data-card-zone]', (cards) => cards.map((c) => c.getAttribute('data-card-zone')));
   const found = [];
-  for (const id of ids) {
+  for (const id of ['hub', ...ids]) {
     await goTo(pageId, id);
     const clear = await unblurred();
     if (clear.length) found.push(`${id}: ${clear.join(' | ')}`);
@@ -2052,11 +2055,18 @@ const zonesInTheClear = async (pageId) => {
   return found.join(' / ');
 };
 check('with blur on, no zone of Today shows an amount in the clear', await zonesInTheClear('today'), '');
-await goTo('today', 'day');
+await goTo('today', 'hub');
 check(
-  'and the line about Money on "More on Today" still says what it can, without the amount',
-  /^Money\s*\d+ charges?/.test((await page.textContent('.signpost[data-zone="money"]')).trim()) &&
-    !(await page.textContent('.signpost[data-zone="money"]')).includes('$'),
+  'and the Money card on Today\'s cards still says what it can, without the amount',
+  /^Money\s*›\s*\d+ charges?/.test((await page.textContent('.view:not([hidden]) [data-card-zone="money"]')).trim()) &&
+    !(await page.textContent('.view:not([hidden]) [data-card-zone="money"]')).includes('$'),
+  true,
+);
+await goTo('home');
+check('with blur on, Home shows no amount in the clear', (await unblurred()).join(' | '), '');
+check(
+  'and its Money card says in words what the amount is',
+  (await page.textContent('[data-card-page="money"]')).includes('What is still to come out'),
   true,
 );
 check('with blur on, no zone of Money shows an amount in the clear', await zonesInTheClear('money'), '');
@@ -2081,8 +2091,7 @@ check('and its folded lines leave the amounts out', await zonesInTheClear('debt'
 check('while still listing both debts', await page.locator('section[aria-label="Your debts"] .card-tight').count(), 2);
 await page.screenshot({ path: `${OUT}/debt-blurred.png`, fullPage: true });
 
-// "Put every page back the way it started", with Undo: zones and folds both.
-await goTo('money', 'subscriptions');
+// "Put every page back the way it started", with Undo: every fold.
 await goTo('debt', 'plan');
 await openSection('How this works');
 await goTo('settings');
@@ -2090,22 +2099,15 @@ await openSection('How it looks');
 await page.click('text=Blur money amounts until I tap them');
 await page.waitForTimeout(200);
 const foldedBefore = (await storedSettings()).sections;
-const zonesBefore = (await storedSettings()).zones;
-check(
-  'before putting them back, folds and zones are both remembered',
-  `${foldedBefore?.['debt.howItWorks']} ${zonesBefore?.money} ${zonesBefore?.debt}`,
-  'true subscriptions plan',
-);
+check('before putting them back, the folds are remembered', foldedBefore?.['debt.howItWorks'], true);
 await dismissToast();
 await page.click('button:text-is("Put every page back the way it started")');
 await page.waitForTimeout(300);
 check('putting every page back says so, with Undo', await page.locator('.toast:has-text("Every page is back the way it started") button:text-is("Undo")').count(), 1);
 check('and forgets every fold, not just some', 'sections' in (await storedSettings()), false);
-check('and every zone a page was left on', 'zones' in (await storedSettings()), false);
 await page.click('.toast button:text-is("Undo")');
 await page.waitForTimeout(300);
 check('Undo brings back exactly the folds you had', JSON.stringify((await storedSettings()).sections), JSON.stringify(foldedBefore));
-check('and exactly the zones', JSON.stringify((await storedSettings()).zones), JSON.stringify(zonesBefore));
 await dismissToast();
 await page.click('button:text-is("Put every page back the way it started")');
 await page.waitForTimeout(300);
@@ -2115,7 +2117,7 @@ await page.waitForTimeout(300);
 check('a second time, it says there is nothing to put back', await page.locator('.toast:has-text("Every page is already the way it started.")').count(), 1);
 await goTo('money');
 await page.waitForTimeout(300);
-check('and then Money opens as it started, on Coming out', await zoneNow(), 'soon');
+check('and then Money opens as it always does, on its cards', await zoneNow(), 'hub');
 await goTo('money', 'income');
 check('with the averages folded, as they started', await foldButton('Averages').getAttribute('aria-expanded'), 'false');
 
@@ -2221,19 +2223,19 @@ await page.click('button:has-text("Yes, replace everything")');
 await page.waitForTimeout(600);
 check('and the backup puts every table back', JSON.stringify(await rowCounts()), JSON.stringify(before));
 
-// --- shortcuts: ?view= opens a page on its first zone ----------------------
-// Each page is left on another zone first, so landing on the first means something.
+// --- shortcuts: ?view= opens a page on its cards -----------------------------
+// Each page is left in a zone first, so landing on the cards means something.
 await goTo('debt', 'plan');
 await page.goto(`${BASE}?view=debt`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
 check('?view=debt opens on the Debt page', await onPage(), 'debt');
-check('on its first zone, Paychecks', await zoneNow(), 'paychecks');
-check('which is then where it is left', 'debt' in ((await storedSettings()).zones ?? {}), false);
+check('on its cards', await zoneNow(), 'hub');
+await openZone('debts');
 check('with the restored debts on it', (await visibleText()).includes('Harbor Visa'), true);
 await goTo('backlog', 'finished');
 await page.goto(`${BASE}?view=backlog`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
-check('?view=backlog opens Backlog on To do', `${await onPage()} ${await zoneNow()}`, 'backlog open');
+check('?view=backlog opens Backlog on its cards', `${await onPage()} ${await zoneNow()}`, 'backlog hub');
 await page.goto(`${BASE}?view=settings`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
 check('?view=settings opens Settings', await onPage(), 'settings');
@@ -2243,8 +2245,8 @@ await page.waitForTimeout(600);
 check('?view=money&add=subscription opens the subscription form', await page.locator('#sub-name').count(), 1);
 await page.click('form.card button:text-is("Cancel")');
 await page.waitForTimeout(300);
-check('and Cancel leaves you on Money › Coming out, where the button is', `${await onPage()} ${await zoneNow()}`, 'money soon');
-await goTo('today');
+check('and Cancel leaves you on Money\'s cards, where the button is', `${await onPage()} ${await zoneNow()}`, 'money hub');
+await goTo('today', 'day');
 
 // --- the privacy claim ---------------------------------------------------
 // The whole promise is that this page cannot send your data anywhere. Prove it
@@ -2285,9 +2287,9 @@ await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(2500);
 check('the app still renders with no server', await page.evaluate(() => Boolean(document.querySelector('.main'))), true);
 check(
-  "the Menu button is there, and Today's 4 zone tabs",
-  await page.evaluate(() => `${document.querySelectorAll('.header .menu-btn').length} ${document.querySelectorAll('.zones [role="tab"]').length}`),
-  '1 4',
+  "the Menu button is there, and Home's 7 cards",
+  await page.evaluate(() => `${document.querySelectorAll('.header .menu-btn').length} ${document.querySelectorAll('[data-card-page]').length}`),
+  '1 7',
 );
 check('the data is still there', (await page.textContent('.main')).includes('Call the dentist'), true);
 await page.screenshot({ path: `${OUT}/offline.png`, fullPage: true });

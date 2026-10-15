@@ -8,7 +8,8 @@ import { todayKey } from '../lib/time';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { useTaskActions } from '../components/taskActions';
-import { Empty, Section, Zone, useBackLayer } from '../components/ui';
+import { Empty, Hub, Section, Zone, useBackLayer } from '../components/ui';
+import { countOf, cutTitle } from '../lib/sections';
 
 /**
  * Everything that needs doing and has no day on it.
@@ -22,8 +23,8 @@ import { Empty, Section, Zone, useBackLayer } from '../components/ui';
  * Giving one a day is how it leaves. Nothing here is late, nothing is counted,
  * and the list never tells you how long something has been sitting.
  *
- * Three zones: what is still to do, the routines you reuse, and what you have
- * ticked off.
+ * Three zones, each a card on the page's overview: what is still to do, the
+ * routines you reuse, and what you have ticked off.
  */
 export default function Backlog({
   settings,
@@ -121,6 +122,37 @@ export default function Backlog({
 
   return (
     <>
+      <Hub
+        cards={{
+          open: {
+            figure: String(open.length),
+            lines:
+              open.length === 0
+                ? ['Nothing outstanding']
+                : ['to get to, none of it late', `${sort === 'priority' ? 'Top' : 'First'}: ${cutTitle(open[0].title)}`],
+          },
+          routines: {
+            figure: String(routines.length),
+            lines: [routines.length === 0 ? 'No routines yet' : 'checklists you run again'],
+          },
+          finished: {
+            lines: [
+              finished.length === 0
+                ? 'Nothing ticked off yet'
+                : finished.length < 10
+                  ? `${countOf(finished.length, 'thing', 'things')} ticked off`
+                  : 'The last 10 you ticked off',
+            ],
+          },
+        }}
+      >
+        <div className="btn-row">
+          <button type="button" className="btn btn-sm" onClick={() => setEditing(blankTask())}>
+            Add something
+          </button>
+        </div>
+      </Hub>
+
       <Zone id="open">
         <Section
           title="Backlog"

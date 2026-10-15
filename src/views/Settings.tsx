@@ -237,24 +237,21 @@ export default function Settings({
   };
 
   /*
-    "Put every page back the way it started". The zone each page was left on
-    and every fold you changed are forgotten at once, and Undo brings back
-    exactly what you had - and only that, so a setting that was not stored
-    before is not stored after.
+    "Put every page back the way it started". Every fold you changed is
+    forgotten at once, and Undo brings back exactly what you had - and only
+    that, so a setting that was not stored before is not stored after.
   */
   const resetPages = async () => {
-    const { sections, zones } = settings;
-    const hadSections = Boolean(sections && Object.keys(sections).length > 0);
-    const hadZones = Boolean(zones && Object.keys(zones).length > 0);
-    if (!hadSections && !hadZones) {
+    const { sections } = settings;
+    if (!sections || Object.keys(sections).length === 0) {
       onToast('Every page is already the way it started.');
       return;
     }
-    onChange(await forgetSettings('sections', 'zones'));
+    onChange(await forgetSettings('sections'));
     onToast('Every page is back the way it started.', {
       label: 'Undo',
       run: async () => {
-        onChange(await saveSettings({ ...(hadSections ? { sections } : {}), ...(hadZones ? { zones } : {}) }));
+        onChange(await saveSettings({ sections }));
         onToast('Put back as you had them.');
       },
     });
@@ -354,8 +351,7 @@ export default function Settings({
               </button>
             </div>
             <p className="faint">
-              Each page opens on its first zone again, and every section opens or folds the way it did when you
-              first used Steady. Nothing else changes.
+              Every section opens or folds the way it did when you first used Steady. Nothing else changes.
             </p>
           </div>
         </Section>

@@ -8,12 +8,13 @@ import { groupTasks, taskMatches, type TaskGroup } from '../lib/tasklist';
 import TaskRow from '../components/TaskRow';
 import TaskEditor from '../components/TaskEditor';
 import { useTaskActions } from '../components/taskActions';
-import { Empty, Section, Zone, useBackLayer } from '../components/ui';
+import { Empty, Hub, Section, Zone, useBackLayer } from '../components/ui';
+import { cutTitle } from '../lib/sections';
 
 /**
- * Every task, in four zones: what has a date (today first, then what is
- * coming, then earlier days still open), what has none, what is finished, and
- * a search that looks through all of them.
+ * Every task, in four zones, each a card on the page's overview: what has a
+ * date (today first, then what is coming, then earlier days still open), what
+ * has none, what is finished, and a search that looks through all of them.
  *
  * `search` is handed over by Notes - "3 matching tasks - open Tasks" - and
  * lands in the Search zone's box. A new object each time, so it is put in the
@@ -84,8 +85,34 @@ export default function Tasks({ settings, search = null }: { settings: Settings;
     </section>
   );
 
+  const datedCount = dated.reduce((sum, g) => sum + g.tasks.length, 0);
+  const finishedCount = finished.reduce((sum, g) => sum + g.tasks.length, 0);
+
   return (
     <>
+      <Hub
+        cards={{
+          dated: {
+            figure: String(datedCount),
+            lines:
+              datedCount === 0
+                ? ['Nothing has a date yet']
+                : ['with a day on them', `${dated[0].label}: ${cutTitle(dated[0].tasks[0].title)}`],
+          },
+          undated: {
+            figure: String(undated.length),
+            lines: [undated.length === 0 ? 'Every task has a date' : 'with no day yet, also on your Backlog'],
+          },
+          finished: {
+            figure: String(finishedCount),
+            lines: [finishedCount === 0 ? 'Nothing ticked off yet' : 'ticked off, newest first'],
+          },
+          search: { lines: ['Look through every task: titles, notes, steps and tags'] },
+        }}
+      >
+        <div className="btn-row">{newTask}</div>
+      </Hub>
+
       <Zone id="dated">
         <Section title="Has a date" aside={newTask}>
           {dated.length === 0 && (

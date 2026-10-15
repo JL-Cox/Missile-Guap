@@ -12,9 +12,8 @@ import { useLatest } from './ui';
  * Android's own Back gesture lives on the screen's edges. Close, a tap on
  * the dimmed page beside it, Escape and Back all close it.
  *
- * The list sits at the bottom of the drawer, in reach of a thumb, with the
- * heading and Close at the top: look at the top, act at the bottom, as the
- * phone's own apps do. The order never changes.
+ * The list starts at the top of the drawer, straight under the heading and
+ * Close, where you start reading. The order never changes.
  */
 export default function Menu({
   current,
@@ -91,9 +90,9 @@ export default function Menu({
             Close
           </button>
         </div>
-        {/* Three short lists, split by a hairline: the lists you work in, the
-            two money pages, and the app's own pages. No headings - "list,
-            5 items" is all TalkBack needs to say. */}
+        {/* Four short lists, split by a hairline: Home on its own, the lists
+            you work in, the two money pages, and the app's own pages. No
+            headings - "list, 5 items" is all TalkBack needs to say. */}
         <nav aria-label="Pages">
           {groups.map((pages) => (
             <ul key={pages[0].id} className="drawer-group">

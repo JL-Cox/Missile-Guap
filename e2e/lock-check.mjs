@@ -225,11 +225,11 @@ const openGroup = async (title) => {
 
 /*
   Getting around, as in app-check.mjs: pages through the Menu, zones from the
-  bar, both by their fixed ids.
+  page's cards, both by their fixed ids.
 */
 const onPage = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-page') ?? null);
-const zoneNow = () =>
-  page.evaluate(() => document.querySelector('.zones [role="tab"][aria-selected="true"]')?.getAttribute('data-zone') ?? null);
+/** The zone showing, by its id: 'hub' for a page's cards, or null on a page with no zones. */
+const zoneNow = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-zone') ?? null);
 const openMenu = async () => {
   if (!(await page.locator('#menu').count())) await page.click('.header .menu-btn');
   await page.waitForSelector('#menu');
@@ -240,7 +240,10 @@ const goTo = async (pageId, zoneId) => {
     await page.click(`#menu .drawer-item[data-page="${pageId}"]`);
     await page.waitForSelector(`.main[data-page="${pageId}"]`);
   }
-  if (zoneId && (await zoneNow()) !== zoneId) await page.click(`.zones [role="tab"][data-zone="${zoneId}"]`);
+  if (zoneId && (await zoneNow()) !== zoneId) {
+    if ((await zoneNow()) !== 'hub') await page.click('.zone-back');
+    if (zoneId !== 'hub') await page.click(`.zone:not([hidden]) [data-card-zone="${zoneId}"]`);
+  }
   await page.waitForTimeout(150);
 };
 
@@ -443,8 +446,7 @@ await page.screenshot({ path: `${OUT}/lock-screen.png` });
 
 /* ------------------------------------------------------------- wrong, right */
 
-// The settings as they stand now: the zone Tasks was left on is in them, and
-// nothing a wrong PIN does may add to them.
+// The settings as they stand now: nothing a wrong PIN does may add to them.
 const beforeMisses = await readSettings();
 check('Unlock waits for at least 4 digits', await page.locator('main.lock .pin-pad button.btn-primary').isDisabled(), true);
 await typePin('1111', 'main.lock');

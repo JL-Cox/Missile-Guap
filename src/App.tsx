@@ -11,19 +11,7 @@ import { CHANGES } from './lib/changelog';
 import { shortDateTime, todayKey } from './lib/time';
 import { isStaleLowDay } from './lib/lowday';
 import { isOpen as savedOpen, withFold, type FoldId } from './lib/sections';
-import {
-  PAGE_IDS,
-  firstZone,
-  hasZones,
-  isPageId,
-  pageTitle,
-  remembersZone,
-  withZone,
-  zoneFor,
-  type PageId,
-  type ZonedPage,
-  type ZoneOf,
-} from './lib/zones';
+import { HUB, PAGE_IDS, hasZones, isPageId, pageTitle, zoneLabel, type PageId, type ZonedPage } from './lib/zones';
 import { lockAvailable, readLock, shouldLock } from './lib/lock';
 import CaptureBar from './components/CaptureBar';
 import LockScreen from './components/LockScreen';
@@ -34,7 +22,6 @@ import {
   NavigateContext,
   Toast,
   ToastContext,
-  ZoneBar,
   ZoneContext,
   useLatest,
   type Folds,
@@ -43,6 +30,7 @@ import {
   type ToastState,
   type ZoneState,
 } from './components/ui';
+import Home from './views/Home';
 import Today from './views/Today';
 import Inbox from './views/Inbox';
 import Tasks from './views/Tasks';
@@ -61,17 +49,17 @@ const ZONED_PAGES = PAGE_IDS.filter(hasZones);
  * `?view=inbox`, or `?view=money&add=subscription` to go straight to the form.
  * Reading them here is what makes those shortcuts real rather than decorative.
  * Any page's name works, `?view=debt` and `?view=settings` included, and it
- * lands on that page's first zone.
+ * lands on that page's cards. With none, the app opens on Home.
  */
 function startingPoint(): { page: PageId; add?: 'subscription' } {
   try {
     const params = new URLSearchParams(window.location.search);
     const wanted = params.get('view');
-    const page = wanted && isPageId(wanted) ? wanted : 'today';
+    const page = wanted && isPageId(wanted) ? wanted : 'home';
     return { page, add: page === 'money' && params.get('add') === 'subscription' ? 'subscription' : undefined };
   } catch {
     // A malformed URL is not a reason to fail to open.
-    return { page: 'today' };
+    return { page: 'home' };
   }
 }
 
@@ -92,16 +80,16 @@ function noticeLine(): string | undefined {
 }
 
 /**
- * When a background save of folds or zones finishes, take everything it
- * stored except that one setting, which the screen already shows newer.
+ * When a background save of folds finishes, take everything it stored except
+ * that one setting, which the screen already shows newer.
  *
  * Each tap shows at once and queues its save. Without this, a save queued by
  * an earlier tap would land after a later tap and put the screen back to the
- * earlier choice for a moment - Income, then Coming out, then Income again,
- * then Coming out. The stored record still ends up right, because the queue
- * runs in order; this only stops the screen going backwards meanwhile.
+ * earlier choice for a moment - open, then closed, then open again. The
+ * stored record still ends up right, because the queue runs in order; this
+ * only stops the screen going backwards meanwhile.
  */
-function keepShown<K extends 'sections' | 'zones'>(saved: SettingsType, key: K) {
+function keepShown<K extends 'sections'>(saved: SettingsType, key: K) {
   return (shown: SettingsType): SettingsType => {
     const next = { ...saved };
     if (shown[key] === undefined) delete next[key];
@@ -118,10 +106,11 @@ export default function App() {
   const [start] = useState(startingPoint);
   const [page, setPage] = useState<PageId>(start.page);
   /**
-   * Today's zone. Held here and never saved: Today opens on its first zone
-   * every time you come to it, from the Menu, from Back and on launch.
+   * The zone each working page is on, or its cards (HUB) when it has none
+   * here. Held in memory and never saved: a page opens on its cards every
+   * time you come to it from the Menu, from Home or from Back.
    */
-  const [todayZone, setTodayZone] = useState<ZoneOf<'today'>>(firstZone('today'));
+  const [zones, setZones] = useState<Partial<Record<ZonedPage, string>>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsType>(DEFAULT_SETTINGS);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -189,35 +178,17 @@ export default function App() {
     [],
   );
 
-  /*
-    Zones. A page's zone shows at once and is saved behind it, one save at a
-    time, the same way a fold is. Only zones that are not a page's first are
-    kept - see src/lib/zones.ts - and none at all means the setting is taken
-    away. Today's is held above and never saved.
-  */
-  const zoneOf = <P extends ZonedPage>(p: P): ZoneOf<P> =>
-    (p === 'today' ? todayZone : zoneFor(p, settings.zones)) as ZoneOf<P>;
-  const zoneSaves = useRef<Promise<void>>(Promise.resolve());
-  const saveZone = useCallback((p: ZonedPage, zone: string) => {
-    if (!remembersZone(p)) {
-      setTodayZone(zone as ZoneOf<'today'>);
-      return;
-    }
-    setSettings((s) => ({ ...s, zones: withZone(s.zones, p, zone) }));
-    zoneSaves.current = zoneSaves.current.then(async () => {
-      const zones = withZone((await getSettings()).zones, p, zone);
-      setSettings(
-        keepShown(Object.keys(zones).length > 0 ? await saveSettings({ zones }) : await forgetSettings('zones'), 'zones'),
-      );
-    });
+  const zoneOf = (p: ZonedPage): string => zones[p] ?? HUB;
+  const setZone = useCallback((p: ZonedPage, zone: string) => {
+    setZones((prev) => ({ ...prev, [p]: zone }));
   }, []);
 
   /*
     After a move, the page is shown from its top and focus goes where TalkBack
-    should pick up: the new page's heading after a page change, the Menu
-    button when the Menu closes with nothing changed, a zone's tab when a
-    signpost on Today opens it. Done once the move has been drawn, so focus
-    never lands on something that is about to go.
+    should pick up: the heading, which names the page or the zone you are now
+    on, or the Menu button when the Menu closes with nothing changed. Done
+    once the move has been drawn, so focus never lands on something that is
+    about to go.
   */
   const afterMove = useRef<{ toTop: boolean; focus: string | null }>({ toTop: false, focus: null });
   const [moves, setMoves] = useState(0);
@@ -226,20 +197,20 @@ export default function App() {
     setMoves((n) => n + 1);
   }, []);
 
-  /** Shows one of a page's zones, from its top. */
+  /** Shows one of a page's zones, or with HUB its cards, from the top. */
   const showZone = useCallback(
-    (p: ZonedPage, zone: string, focusTab = false) => {
-      saveZone(p, zone);
-      moved(true, focusTab ? `tab-${p}-${zone}` : null);
+    (p: ZonedPage, zone: string) => {
+      setZone(p, zone);
+      moved(true, HEADING_ID);
     },
-    [saveZone, moved],
+    [setZone, moved],
   );
 
   /**
    * Changes page, closing the Menu if it is open. Every page change - the
-   * Menu, Back, a link from another page - comes through here. Today always
-   * opens on its first zone; every other page on the zone it was left on,
-   * unless the link says which.
+   * Menu, a card on Home, Back, a link from another page - comes through
+   * here. A page opens on its cards, unless the link says which zone, or the
+   * page still has an editor open, which is kept just as it was left.
    */
   const showPage = useCallback(
     (next: PageId, options: { zone?: string; query?: string; note?: Note } = {}) => {
@@ -250,13 +221,13 @@ export default function App() {
       // note a task row sent you to.
       setNoteToOpen(options.note ?? null);
       if (hasZones(next)) {
-        if (options.zone) saveZone(next, options.zone);
-        else if (!remembersZone(next)) setTodayZone(firstZone('today'));
+        if (options.zone) setZone(next, options.zone);
+        else if (!closers.current[next]) setZone(next, HUB);
       }
       setPage(next);
       moved(true, HEADING_ID);
     },
-    [saveZone, moved],
+    [setZone, moved],
   );
 
   const openMenu = useCallback(() => setMenuOpen(true), []);
@@ -276,17 +247,18 @@ export default function App() {
     made a history entry. Now the history holds, at most, one entry for each of
     these, bottom to top:
 
-      Today, on its first zone  (always the first entry - Back from here leaves)
-      the page you are on, if it is not Today
-      the zone you are on, if it is not that page's first
+      Home                      (always the first entry - Back from here leaves)
+      the page you are on, if it is not Home - on its cards
+      the zone you are on, if you have gone into one
       an editor or confirmation, if one is open on the page you are looking at
       the Menu, if it is open
 
-    Back takes the top one away. That is the pattern Android's own apps use:
-    Back goes home, then out - never through every page you happened to visit.
-    Settings and About are pages like any other, so Back from either goes to
-    Today. The entries are only counters; what Back does is decided from the
-    app's own state, so the two cannot disagree about where you are.
+    Back takes the top one away: out of the zone to the page's cards, then to
+    Home, then out. That is the pattern Android's own apps use - never through
+    every page you happened to visit. Settings and About are pages like any
+    other, so Back from either goes to Home. The entries are only counters;
+    what Back does is decided from the app's own state, so the two cannot
+    disagree about where you are.
   */
   const zoned = hasZones(page);
   // The lock screen sits at the bottom with nothing above it, so Back from it
@@ -294,15 +266,15 @@ export default function App() {
   // than quietly changing pages behind it.
   const depth = showLock
     ? 0
-    : (page !== 'today' ? 1 : 0) +
-      (zoned && zoneOf(page) !== firstZone(page) ? 1 : 0) +
+    : (page !== 'home' ? 1 : 0) +
+      (zoned && zoneOf(page) !== HUB ? 1 : 0) +
       (zoned && openLayers.includes(page) ? 1 : 0) +
       (menuOpen ? 1 : 0);
   const depthRef = useRef(historyDepth());
   const ignorePops = useRef(0);
 
   useEffect(() => {
-    // The first entry drops any shortcut's ?view=, so a reload lands on Today
+    // The first entry drops any shortcut's ?view=, so a reload lands on Home
     // like any other launch rather than reopening a form.
     if (window.location.search) {
       window.history.replaceState(window.history.state, '', window.location.pathname);
@@ -329,9 +301,9 @@ export default function App() {
     if (zoned) {
       const close = closers.current[page];
       if (close) return close();
-      if (zoneOf(page) !== firstZone(page)) return showZone(page, firstZone(page));
+      if (zoneOf(page) !== HUB) return showZone(page, HUB);
     }
-    if (page !== 'today') showPage('today');
+    if (page !== 'home') showPage('home');
   });
 
   useEffect(() => {
@@ -406,13 +378,9 @@ export default function App() {
       // A low day ends at midnight. One left from an earlier day is deleted
       // here rather than kept, so no past low day is ever stored.
       if (isStaleLowDay(loaded, todayKey())) loaded = await forgetSettings('lowDay');
-      // A shortcut is a clear intent: `?view=money` opens Money on its first
-      // zone, and that is where it is left. Saved before anything is drawn, so
-      // the zone it was last left on never flashes up first.
-      if (hasZones(start.page) && zoneFor(start.page, loaded.zones) !== firstZone(start.page)) {
-        const zones = withZone(loaded.zones, start.page, firstZone(start.page));
-        loaded = Object.keys(zones).length > 0 ? await saveSettings({ zones }) : await forgetSettings('zones');
-      }
+      // Pages used to reopen on the zone they were left on. They open on their
+      // cards now, so a zone saved by an older version is cleared away.
+      if (loaded.zones !== undefined) loaded = await forgetSettings('zones');
       setSettings(loaded);
       // Record the build straight away, whether or not we say anything. The
       // notice is then guaranteed to appear at most once, even if the user
@@ -431,8 +399,6 @@ export default function App() {
     // silently from heuristics (being installed is the big one), so asking on
     // every start costs nothing and catches the moment it becomes grantable.
     void requestPersistence();
-    // Once, on launch: `start` never changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /*
@@ -607,7 +573,7 @@ export default function App() {
   const zoneState = (id: ZonedPage): ZoneState => ({
     page: id,
     zone: zoneOf(id),
-    choose: (zone, focusTab) => showZone(id, zone, focusTab),
+    choose: (zone) => showZone(id, zone),
   });
 
   /*
@@ -615,15 +581,17 @@ export default function App() {
     set, so nothing of the app is drawn at all - just the page colour, for the
     few milliseconds IndexedDB takes. Then it is the lock or the app, never the
     app first. When locked, the lock screen is the whole page: no header,
-    Menu, zone bar, page, toast or missed-reminders card is mounted behind it,
-    not even hidden.
+    Menu, page, toast or missed-reminders card is mounted behind it, not even
+    hidden.
   */
   if (!settingsLoaded) return <div className="app-blank" aria-busy="true" />;
   if (showLock) return <LockScreen lock={lock} onUnlock={() => setLocked(false)} onRecovered={recoverWithPhrase} />;
 
   const whatsNew = noticeLine();
-  /** The bar steps aside while an editor or confirmation has the page. */
-  const showBar = zoned && !openLayers.includes(page);
+  /** The zone you are in, if you have gone into one. */
+  const inZone = zoned && zoneOf(page) !== HUB ? zoneOf(page) : null;
+  /** The way back to the page's cards steps aside while an editor or confirmation has the page. */
+  const showBack = zoned && inZone !== null && !openLayers.includes(page);
 
   return (
     <ToastContext.Provider value={showToast}>
@@ -660,11 +628,25 @@ export default function App() {
                     </span>
                   )}
                 </button>
+                {/* The page's name, and in a zone the zone's under it, where
+                    Home and Today put the date: where you are, in the page's
+                    own words. The heading is read out as both at once -
+                    "Money, Coming out" - so focus landing on it says where you
+                    went. A zone's name sits on its own line because "Coming
+                    out" or "Subscriptions" at large text does not fit beside
+                    the Menu button on a small phone. */}
                 <div className="header-title">
                   <h1 id={HEADING_ID} tabIndex={-1}>
                     {pageTitle(page)}
+                    {zoned && inZone && <span className="sr-only">, {zoneLabel(page, inZone)}</span>}
                   </h1>
-                  {page === 'today' && <p className="faint">{longDate()}</p>}
+                  {zoned && inZone ? (
+                    <p className="faint" aria-hidden="true">
+                      {zoneLabel(page, inZone)}
+                    </p>
+                  ) : (
+                    (page === 'home' || page === 'today') && <p className="faint">{longDate()}</p>
+                  )}
                 </div>
                 {/* The one thing that has to be a single tap from any page,
                     for when someone walks up. */}
@@ -676,10 +658,22 @@ export default function App() {
               </div>
             </header>
 
-            <main className="main" data-page={page}>
-              {/* The capture box is first on every zone of every working page,
-                  in the same place, and on nowhere else. */}
-              {zoned && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
+            <main className="main" data-page={page} data-zone={zoned ? zoneOf(page) : undefined}>
+              {/* In a zone, the way back to the page's cards comes first, as a
+                  labelled button: Android's Back does the same. */}
+              {showBack && (
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-sm zone-back"
+                  data-back-to={page}
+                  onClick={() => showZone(page, HUB)}
+                >
+                  <span aria-hidden="true">‹ </span>Back to {pageTitle(page)}
+                </button>
+              )}
+              {/* The capture box is on Home and on every working page, cards and
+                  zones alike, in the same place, and on nowhere else. */}
+              {(zoned || page === 'home') && <CaptureBar onSaved={() => showToast('Saved to your inbox.')} />}
 
               {recovered && (
                 <div className="card stack-sm" role="status">
@@ -762,18 +756,10 @@ export default function App() {
                   </LayerContext.Provider>
                 </div>
               ))}
+              {page === 'home' && <Home settings={settings} />}
               {page === 'settings' && <Settings settings={settings} onChange={setSettings} focus={settingsFocus} />}
               {page === 'about' && <About />}
             </main>
-
-            {showBar && (
-              <ZoneBar
-                page={page}
-                zone={zoneOf(page)}
-                // The zone you are on again takes you back to its top.
-                onChoose={(zone) => showZone(page, zone)}
-              />
-            )}
 
             {toast && <Toast toast={toast} onDismiss={dismissToast} />}
           </div>

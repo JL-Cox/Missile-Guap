@@ -2,7 +2,8 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useRef, us
 import type { DateKey, Note } from '../types';
 import { addDays } from '../lib/time';
 import { FOLDS, isOpen as savedOpen, type Fold, type FoldId } from '../lib/sections';
-import { pageTitle, zonesOf, type PageId, type ZonedPage, type ZoneOf } from '../lib/zones';
+import { HUB, pageTitle, zonesOf, type PageId, type ZonedPage, type ZoneOf } from '../lib/zones';
+import type { Card, CardBody } from '../lib/dashboard';
 
 /** Small shared pieces. Everything is labelled in words - no icon-only controls. */
 
@@ -286,8 +287,8 @@ export function Toast({ toast, onDismiss }: { toast: ToastState; onDismiss: () =
    ever made a history entry. A view with something open on top of it - an
    editor, a confirmation - declares it here, and App turns that into a history
    entry, so Back closes the editor rather than the app. It also takes the
-   zone bar away while it is open: the whole page is the form then, and
-   Save, Cancel or Back brings the bar back on the same zone. See App.tsx.
+   "Back to" button away while it is open: the whole page is the form then,
+   and Save, Cancel or Back brings it back on the same zone. See App.tsx.
    -------------------------------------------------------------------------- */
 
 export const LayerContext = createContext<(close: (() => void) | null) => void>(() => undefined);
@@ -329,21 +330,23 @@ export function useNavigate(): Navigate {
 }
 
 /* ---------------------------------------------------------------------------
-   Zones
+   Zones and cards
 
    Each working page is split into a few zones, so no page is one long scroll
-   (see src/lib/zones.ts). The bar at the bottom picks one; the page draws
-   every zone it has, and the ones not picked are hidden rather than removed,
-   so an open Details row or a "Show 2 more" is as you left it when you come
-   back - the same reason a folded section is hidden rather than removed.
+   (see src/lib/zones.ts). A page opens on its overview - a card for each
+   zone, saying what is in it - and a card opens its zone. The page draws
+   every zone it has, and the ones not showing are hidden rather than
+   removed, so an open Details row or a "Show 2 more" is as you left it when
+   you come back - the same reason a folded section is hidden rather than
+   removed.
    -------------------------------------------------------------------------- */
 
 export interface ZoneState {
   page: ZonedPage;
-  /** The zone showing now. */
+  /** The zone showing now, or HUB for the page's overview. */
   zone: string;
-  /** Shows another of this page's zones from its top. `focusTab` moves focus to its tab in the bar. */
-  choose: (zone: string, focusTab?: boolean) => void;
+  /** Shows one of this page's zones, or with HUB its overview, from the top. */
+  choose: (zone: string) => void;
 }
 
 export const ZoneContext = createContext<ZoneState | null>(null);
@@ -353,88 +356,104 @@ export function useZone(): ZoneState | null {
 }
 
 /**
- * One zone of a page: a tab panel, named by its tab in the bar. Every zone is
- * always drawn, and the bar's tabs point at them, so `aria-controls` always
- * leads somewhere real. test/zones.test.ts checks each page draws each of its
- * zones exactly once.
+ * One zone of a page. Every zone is always drawn, and shown only when it is
+ * the one chosen. test/zones.test.ts checks each page draws each of its zones
+ * exactly once.
  */
 export function Zone({ id, children }: { id: string; children: ReactNode }) {
   const at = useZone();
   if (!at) return <div className="zone">{children}</div>;
   return (
-    <div
-      role="tabpanel"
-      id={`zone-${at.page}-${id}`}
-      aria-labelledby={`tab-${at.page}-${id}`}
-      className="zone"
-      hidden={at.zone !== id}
-    >
+    <div id={`zone-${at.page}-${id}`} className="zone" data-zone={id} hidden={at.zone !== id}>
       {children}
     </div>
   );
 }
 
 /**
- * The bar at the bottom: this page's zones, as tabs. TalkBack reads one as
- * "Coming out, tab, 1 of 4, selected", which says where you are, how many
- * there are and which one is showing. Labels are words, never icons.
- *
- * The keys are the usual ones for tabs: Left and Right move along and wrap,
- * Home and End go to the ends, and moving shows that zone straight away.
- * Only the zone showing is in the Tab order, so Tab leaves the bar in one go.
+ * A grid of cards, each one a single button. TalkBack reads a card as one
+ * thing, its name first - "Coming out, $240, before your next payday" - and
+ * the list it sits in says how many there are.
  */
-export function ZoneBar({
-  page,
-  zone,
-  onChoose,
+export function Cards({
+  cards,
+  label,
+  onOpen,
+  kind,
 }: {
-  page: ZonedPage;
-  zone: string;
-  onChoose: (zone: string) => void;
+  cards: Card[];
+  /** Names the list for TalkBack: "Money, by part". */
+  label: string;
+  onOpen: (id: string) => void;
+  /** What a card's id is, for the data attribute tests find cards by. */
+  kind: 'zone' | 'page';
 }) {
-  const zones = zonesOf(page);
-  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
-  const moveTo = (index: number) => {
-    const next = (index + zones.length) % zones.length;
-    onChoose(zones[next].id);
-    tabs.current[next]?.focus();
-  };
+  // Two to a row, so an odd card out at the end of a run would sit beside a
+  // gap. It takes the whole row instead.
+  const wide = new Set(cards.filter((c) => c.wide).map((c) => c.id));
+  let run: Card[] = [];
+  for (const card of [...cards, null]) {
+    if (card && !card.wide) {
+      run.push(card);
+      continue;
+    }
+    if (run.length % 2 === 1) wide.add(run[run.length - 1].id);
+    run = [];
+  }
 
   return (
-    <div className="nav zones" role="tablist" aria-label={`${pageTitle(page)} zones`}>
-      {zones.map((z, i) => {
-        const selected = z.id === zone;
-        return (
+    <ul className="cards" aria-label={label}>
+      {cards.map((card) => (
+        <li key={card.id} className={wide.has(card.id) ? 'card-wide' : undefined}>
           <button
-            key={z.id}
-            ref={(el) => {
-              tabs.current[i] = el;
-            }}
             type="button"
-            role="tab"
-            className="nav-btn"
-            id={`tab-${page}-${z.id}`}
-            data-zone={z.id}
-            aria-selected={selected}
-            aria-controls={`zone-${page}-${z.id}`}
-            tabIndex={selected ? 0 : -1}
-            onClick={() => onChoose(z.id)}
-            onKeyDown={(e) => {
-              const to =
-                e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? zones.length - 1 : null;
-              if (to === null) return;
-              e.preventDefault();
-              moveTo(to);
-            }}
+            className="widget"
+            {...(kind === 'zone' ? { 'data-card-zone': card.id } : { 'data-card-page': card.id })}
+            onClick={() => onOpen(card.id)}
           >
-            {/* The bold width is reserved on every tab (see .nav-label), so the
-                slots never shift when the zone showing changes. */}
-            <span className="nav-label" data-label={z.label}>
-              {z.label}
+            <span className="widget-head">
+              <span>{card.title}</span>
+              <span className="widget-go" aria-hidden="true">
+                ›
+              </span>
             </span>
+            {card.figure !== undefined && <span className="widget-figure">{card.figure}</span>}
+            {card.lines?.map((line, i) => (
+              <span key={i} className="widget-line">
+                {line}
+              </span>
+            ))}
+            {card.list && card.list.length > 0 && (
+              <span className="widget-list">
+                {card.list.map((row, i) => (
+                  <span key={i} className="widget-row">
+                    <span className="widget-when">{row.when}</span>
+                    <span className="widget-what">{row.what}</span>
+                  </span>
+                ))}
+              </span>
+            )}
           </button>
-        );
-      })}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * A page's overview: a card for each of its zones, in the registry's order
+ * and under the registry's names, so a card can never name a zone that is not
+ * there. The page says what goes on each card, and can put the one or two
+ * things you come to the page to do above them.
+ */
+export function Hub({ cards, children }: { cards: Record<string, CardBody>; children?: ReactNode }) {
+  const at = useZone();
+  if (!at) return null;
+  const all = zonesOf(at.page).map((z) => ({ id: z.id, title: z.label, ...cards[z.id] }));
+  return (
+    <div id={`zone-${at.page}-${HUB}`} className="zone" data-zone={HUB} hidden={at.zone !== HUB}>
+      {children}
+      <Cards cards={all} label={`${pageTitle(at.page)}, by part`} kind="zone" onOpen={(id) => at.choose(id)} />
     </div>
   );
 }

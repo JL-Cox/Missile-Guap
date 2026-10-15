@@ -3,7 +3,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { blankNote, blankTask, clearCapture, db, saveNote, unclearCapture } from '../db';
 import type { Capture, Note, Settings, Task } from '../types';
 import TaskEditor from '../components/TaskEditor';
-import { Empty, Section, Zone, useBackLayer, useToast } from '../components/ui';
+import { Empty, Hub, Section, Zone, useBackLayer, useToast } from '../components/ui';
+import { cutTitle } from '../lib/sections';
 import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSuggestions';
 import { splitCapture, undoFiling } from '../lib/inbox';
 import { savedTaskWhere } from '../lib/feedback';
@@ -17,8 +18,8 @@ import { shortDateTime } from '../lib/time';
  * Each of the three says where the thing went, and the two that clear it offer
  * Undo in the same toast every other screen uses.
  *
- * Two zones: what is still to sort, and what has been dealt with - kept, never
- * deleted, and one tap from going back.
+ * Two zones, each a card on the page's overview: what is still to sort, and
+ * what has been dealt with - kept, never deleted, and one tap from going back.
  */
 export default function Inbox({ settings }: { settings: Settings }) {
   const [editing, setEditing] = useState<{ task: Task; captureId: string } | null>(null);
@@ -106,6 +107,22 @@ export default function Inbox({ settings }: { settings: Settings }) {
 
   return (
     <>
+      <Hub
+        cards={{
+          open: {
+            figure: String(open.length),
+            lines:
+              open.length === 0
+                ? ['The inbox is clear']
+                : ['to sort', `Newest: ${cutTitle(open[0].text.split('\n')[0])}`],
+          },
+          cleared: {
+            figure: String(cleared.length),
+            lines: ['cleared, and kept - nothing is deleted'],
+          },
+        }}
+      />
+
       <Zone id="open">
         <Section title={open.length > 0 ? `Inbox (${open.length})` : 'Inbox'}>
           {open.length === 0 ? (

@@ -61,34 +61,14 @@ const day = (offset = 0) => {
 
 let count = 0;
 
-/**
- * A whole screen, top to bottom.
- *
- * The zone bar is `position: fixed` in the real app, which in a full-page
- * capture strands it wherever the viewport happened to be - halfway down the
- * image. For these shots only, it is pinned to the bottom of the document
- * instead, so one picture shows the entire zone with its bar once, where it
- * belongs. Nothing else is touched, and the `phone-*` shots below are the
- * unmodified view.
- */
-const pinNav = () =>
-  page.evaluate(() => {
-    if (document.getElementById('shot-css')) return;
-    const style = document.createElement('style');
-    style.id = 'shot-css';
-    style.textContent = 'body{position:relative}.nav{position:absolute!important;top:auto;bottom:0}';
-    document.head.appendChild(style);
-  });
-
+/** A whole screen, top to bottom. */
 const shot = async (name) => {
   await page.waitForTimeout(220);
-  await pinNav();
   await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
-  await page.evaluate(() => document.getElementById('shot-css')?.remove());
   count += 1;
 };
 
-/** Exactly what the phone shows: one viewport, the zone bar fixed where it is. */
+/** Exactly what the phone shows: one viewport. */
 const shotPhone = async (name) => {
   // Changing page or zone starts at the top by itself now; this is for a
   // shot taken after scrolling within one.
@@ -111,8 +91,7 @@ async function appearance({ theme, textScale = 1, customTheme, lowDay }) {
         const req = indexedDB.open('steady');
         req.onsuccess = () => {
           const tx = req.result.transaction('settings', 'readwrite');
-          // The whole record, so each pass also starts with every page on its
-          // first zone and no lock.
+          // The whole record, so each pass also starts with no lock.
           tx.objectStore('settings').put({
             id: 'settings',
             theme,
@@ -144,9 +123,9 @@ async function appearance({ theme, textScale = 1, customTheme, lowDay }) {
 
 /*
   Getting around, as in app-check.mjs: pages through the Menu, zones from the
-  bar, both by their fixed ids.
+  page's cards, both by their fixed ids.
 */
-/** Each working page's zones, in the bar's order. Settings and About have none. */
+/** Each working page's zones, in the order of its cards. Home, Settings and About have none. */
 const ZONES = {
   today: ['day', 'waiting', 'money', 'undated'],
   inbox: ['open', 'cleared'],
@@ -157,8 +136,8 @@ const ZONES = {
   money: ['soon', 'paychecks', 'subscriptions', 'income'],
 };
 const onPage = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-page') ?? null);
-const zoneNow = () =>
-  page.evaluate(() => document.querySelector('.zones [role="tab"][aria-selected="true"]')?.getAttribute('data-zone') ?? null);
+/** The zone showing, 'hub' for a page's cards, or null on a page without zones. */
+const zoneNow = () => page.evaluate(() => document.querySelector('.main')?.getAttribute('data-zone') ?? null);
 const openMenu = async () => {
   if (!(await page.locator('#menu').count())) await page.click('.header .menu-btn');
   await page.waitForSelector('#menu');
@@ -169,7 +148,10 @@ const goTo = async (pageId, zoneId) => {
     await page.click(`#menu .drawer-item[data-page="${pageId}"]`);
     await page.waitForSelector(`.main[data-page="${pageId}"]`);
   }
-  if (zoneId && (await zoneNow()) !== zoneId) await page.click(`.zones [role="tab"][data-zone="${zoneId}"]`);
+  if (zoneId && (await zoneNow()) !== zoneId) {
+    if ((await zoneNow()) !== 'hub') await page.click('.zone-back');
+    if (zoneId !== 'hub') await page.click(`.zone:not([hidden]) [data-card-zone="${zoneId}"]`);
+  }
   await page.waitForTimeout(260);
 };
 
@@ -653,13 +635,16 @@ async function setDebts({ debts = [], plan = false, paidOff = false } = {}) {
 /* ------------------------------------------------------------------ capture */
 
 /**
- * Every page. With `allZones`, each zone of each working page; otherwise only
- * the zone each page opens on. Then Settings and About, which have no zone
- * bar, and Settings with one group open.
+ * Every page. Home first, then each working page's cards, and with
+ * `allZones` each of its zones too. Then Settings and About, which have no
+ * zones, and Settings with one group open.
  */
 async function everyScreen(tag, { allZones = false, alsoAsPhone = false } = {}) {
+  await goTo('home');
+  await shot(`${tag}-home`);
+  if (alsoAsPhone) await shotPhone(`phone-${tag}-home`);
   for (const [pageId, zones] of Object.entries(ZONES)) {
-    for (const zone of allZones ? zones : zones.slice(0, 1)) {
+    for (const zone of allZones ? ['hub', ...zones] : ['hub']) {
       await goTo(pageId, zone);
       await shot(`${tag}-${pageId}-${zone}`);
       if (alsoAsPhone) await shotPhone(`phone-${tag}-${pageId}-${zone}`);
@@ -683,7 +668,7 @@ async function everyScreen(tag, { allZones = false, alsoAsPhone = false } = {}) 
   await goTo('about');
   await shot(`${tag}-about`);
   if (alsoAsPhone) await shotPhone(`phone-${tag}-about`);
-  await goTo('today');
+  await goTo('home');
 }
 
 /** The forms, opened on real records and cancelled again so nothing changes. */
@@ -763,7 +748,7 @@ const FULL = [
   ['aurora-1.0', { theme: 'aurora' }],
   ['aurora-1.6', { theme: 'aurora', textScale: 1.6 }],
 ];
-/** The themes and sizes whose every zone is looked at; the rest show each page's first. */
+/** The themes and sizes whose every zone is looked at; the rest show each page's cards. */
 const EVERY_ZONE = new Set(['calm-1.0', 'calm-1.6', 'dark-1.0', 'synthwave-1.0']);
 
 for (const [tag, opts] of FULL) {
@@ -791,8 +776,8 @@ for (const [tag, opts] of [
   ['custom-warmnight-ochre', { theme: 'custom', customTheme: { ground: 'warmNight', accent: 'ochre' } }],
 ]) {
   await appearance(opts);
-  await goTo('today', 'day');
-  await shot(`${tag}-today-day`);
+  await goTo('home');
+  await shot(`${tag}-home`);
   await goTo('money', 'soon');
   await shot(`${tag}-money-soon`);
   await goTo('settings');
@@ -833,7 +818,7 @@ for (const [tag, opts] of [
   ['lowday-calm-1.6', { theme: 'calm', textScale: 1.6 }],
 ]) {
   await appearance({ ...opts, lowDay: day(0) });
-  for (const zone of ZONES.today) {
+  for (const zone of ['hub', ...ZONES.today]) {
     await goTo('today', zone);
     await shot(`${tag}-today-${zone}`);
   }
@@ -850,9 +835,7 @@ const DEBT_OUT = process.env.DEBT_SCREENSHOT_DIR ?? 'e2e/screenshots-debt';
 mkdirSync(DEBT_OUT, { recursive: true });
 const debtShot = async (name) => {
   await page.waitForTimeout(220);
-  await pinNav();
   await page.screenshot({ path: `${DEBT_OUT}/${name}.png`, fullPage: true });
-  await page.evaluate(() => document.getElementById('shot-css')?.remove());
   count += 1;
 };
 /** Opens a folded section on the Debt page, if it is not open already. */
@@ -870,14 +853,14 @@ for (const [tag, opts] of [
 ]) {
   await setDebts();
   await appearance(opts);
-  for (const zone of ZONES.debt) {
+  for (const zone of ['hub', ...ZONES.debt]) {
     await goTo('debt', zone);
     await debtShot(`${tag}-debt-empty-${zone}`);
   }
 
   await setDebts({ debts: debtSeed(), plan: true, paidOff: true });
   await appearance(opts);
-  for (const zone of ZONES.debt) {
+  for (const zone of ['hub', ...ZONES.debt]) {
     await goTo('debt', zone);
     await debtShot(`${tag}-debt-${zone}`);
   }
@@ -922,38 +905,34 @@ for (const [tag, opts] of [
 await setDebts({ debts: debtSeed() });
 
 /*
-  --- the zone bar on every page, at both ends of the text scale ---------------
-  Up to four labelled slots. This is the case the --zone-label cap and the
-  reserved bold width exist for, proven by measurement as well as by eye: each
-  slot's width, and whether any label is clipped.
+  --- Home and every page's cards, at both ends of the text scale --------------
+  Two cards to a row while two fit, one when they do not. Proven by
+  measurement as well as by eye: how many columns each grid has, and whether
+  any card's text runs out of it.
 */
 for (const [tag, opts] of [
-  ['zones-calm-1.0', { theme: 'calm' }],
-  ['zones-calm-1.6', { theme: 'calm', textScale: 1.6 }],
-  ['zones-dark-1.6', { theme: 'dark', textScale: 1.6 }],
-  ['zones-synthwave-1.0', { theme: 'synthwave' }],
+  ['cards-calm-1.0', { theme: 'calm' }],
+  ['cards-calm-1.6', { theme: 'calm', textScale: 1.6 }],
+  ['cards-dark-1.6', { theme: 'dark', textScale: 1.6 }],
+  ['cards-synthwave-1.0', { theme: 'synthwave' }],
 ]) {
   await appearance(opts);
   for (const width of [412, 360]) {
     await page.setViewportSize({ width, height: 915 });
-    for (const pageId of Object.keys(ZONES)) {
-      await goTo(pageId);
-      const box = await page.locator('.zones').boundingBox();
-      await page.screenshot({
-        path: `${OUT}/${tag}-${width}-${pageId}.png`,
-        clip: { x: box.x, y: box.y - 8, width: box.width, height: box.height + 8 },
-      });
+    for (const pageId of ['home', ...Object.keys(ZONES)]) {
+      await goTo(pageId, pageId === 'home' ? undefined : 'hub');
+      await page.screenshot({ path: `${OUT}/${tag}-${width}-${pageId}.png`, fullPage: true });
       count += 1;
-      const slots = await page.evaluate(() =>
-        [...document.querySelectorAll('.zones [role="tab"]')].map((b) => ({
-          label: b.textContent.trim(),
-          width: Math.round(b.getBoundingClientRect().width),
-          clipped: b.scrollWidth > b.clientWidth + 1,
-          size: getComputedStyle(b).fontSize,
+      const grids = await page.evaluate(() =>
+        [...document.querySelectorAll('.zone:not([hidden]) .cards, .main > .cards-group .cards')].map((ul) => ({
+          columns: getComputedStyle(ul).gridTemplateColumns.split(' ').length,
+          spill: [...ul.querySelectorAll('.widget')]
+            .filter((b) => b.scrollWidth > b.clientWidth + 1)
+            .map((b) => b.querySelector('.widget-head')?.textContent.trim()),
         })),
       );
       console.log(
-        `  ${tag} ${width}px ${pageId}: ${slots.map((s) => `${s.label} ${s.width}px${s.clipped ? ' CLIPPED' : ''}`).join(', ')} (labels ${slots[0].size})`,
+        `  ${tag} ${width}px ${pageId}: ${grids.map((g) => `${g.columns} col${g.spill.length ? ` SPILLS ${g.spill.join(', ')}` : ''}`).join(' | ')}`,
       );
     }
   }
@@ -1070,7 +1049,7 @@ for (const [theme, textScale] of [
 // Writing the whole record again takes the lock away, for anything after this.
 await appearance({ theme: 'calm' });
 
-/* --- the pages with no zone bar, as the phone shows them --------------------- */
+/* --- the pages with no zones, as the phone shows them ------------------------ */
 for (const [tag, opts] of [
   ['calm-1.0', { theme: 'calm' }],
   ['calm-1.6', { theme: 'calm', textScale: 1.6 }],

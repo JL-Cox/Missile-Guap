@@ -5,6 +5,7 @@ import type { Note, Settings, Task } from '../types';
 import {
   ConfirmButton,
   Empty,
+  Hub,
   Section,
   TagList,
   Zone,
@@ -15,6 +16,7 @@ import {
   useToast,
 } from '../components/ui';
 import { taskMatches } from '../lib/tasklist';
+import { cutTitle } from '../lib/sections';
 import { undoAction } from '../lib/undo';
 import { shortDate, todayKey } from '../lib/time';
 import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSuggestions';
@@ -24,9 +26,10 @@ import TagSuggestions, { useSuggestions, useTagModel } from '../components/TagSu
  * number, what the nurse actually said. Plain text on purpose - no formatting
  * to fiddle with, nothing to get wrong, and it reads back exactly as typed.
  *
- * Two zones: every note, pinned ones first, and a search. The search box is in
- * its own zone under its own heading, so it is never mistaken for the box at
- * the top that writes something down.
+ * Two zones, each a card on the page's overview: every note, pinned ones
+ * first, and a search. The search box is in its own zone under its own
+ * heading, so it is never mistaken for the box at the top that writes
+ * something down.
  */
 export default function Notes({ settings, openNote = null }: { settings: Settings; openNote?: Note | null }) {
   /*
@@ -93,6 +96,32 @@ export default function Notes({ settings, openNote = null }: { settings: Setting
 
   return (
     <>
+      <Hub
+        cards={{
+          all: {
+            figure: String(notes.length),
+            lines:
+              notes.length === 0
+                ? ['Nothing written down yet']
+                : [
+                    notes.length === 1 ? 'note' : 'notes',
+                    pinned.length === 1
+                      ? `At the top: ${cutTitle(pinned[0].title || 'Untitled')}`
+                      : pinned.length > 1
+                        ? `${pinned.length} kept at the top`
+                        : `Newest: ${cutTitle(notes[0].title || 'Untitled')}`,
+                  ],
+          },
+          search: { lines: ['Look through every note, and see which tasks match too'] },
+        }}
+      >
+        <div className="btn-row">
+          <button type="button" className="btn btn-sm" onClick={() => setEditing(blankNote())}>
+            New note
+          </button>
+        </div>
+      </Hub>
+
       <Zone id="all">
         <Section
           title="Notes"

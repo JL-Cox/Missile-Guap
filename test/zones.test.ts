@@ -2,28 +2,13 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import {
-  PAGES,
-  PAGE_IDS,
-  ZONES,
-  firstZone,
-  hasZones,
-  isPageId,
-  isZoneOf,
-  remembersZone,
-  withZone,
-  zoneFor,
-  type ZonedPage,
-} from '../src/lib/zones';
-import { DEVICE_SETTINGS, withoutDeviceSettings } from '../src/lib/backup';
+import { HUB, PAGES, PAGE_IDS, ZONES, firstZone, hasZones, isPageId, isZoneOf, zoneLabel, type ZonedPage } from '../src/lib/zones';
 
 /**
  * The page and zone registry is the one place the Menu's order and each
- * bottom bar's zones live, and the zone a page was left on is a preference on
- * somebody's phone. These hold both to the rules that make them safe: fixed
- * words, a bar that fits a small phone at large text, every zone really drawn
- * by its page, and a saved map that never grows past what differs from the
- * start.
+ * page's zones live. These hold it to the rules that make it safe: fixed
+ * words, a page's cards that fit two rows, and every zone really drawn by
+ * its page, with the page's overview drawn once.
  */
 
 const SRC = fileURLToPath(new URL('../src', import.meta.url));
@@ -54,17 +39,17 @@ const viewOf = (page: ZonedPage) => {
 };
 
 describe('the Menu', () => {
-  it('lists nine pages in a fixed order', () => {
-    expect(PAGE_IDS.join(' ')).toBe('today inbox tasks backlog notes debt money settings about');
-    expect(PAGES.map((p) => p.title).join(' ')).toBe('Today Inbox Tasks Backlog Notes Debt Money Settings About');
+  it('lists ten pages in a fixed order, Home first', () => {
+    expect(PAGE_IDS.join(' ')).toBe('home today inbox tasks backlog notes debt money settings about');
+    expect(PAGES.map((p) => p.title).join(' ')).toBe('Home Today Inbox Tasks Backlog Notes Debt Money Settings About');
   });
 
-  it('in three groups: the lists, the money pages, and the app\'s own pages', () => {
-    expect(PAGES.map((p) => p.group).join('')).toBe('000001122');
+  it("in four groups: Home, the lists, the money pages, and the app's own pages", () => {
+    expect(PAGES.map((p) => p.group).join('')).toBe('0111112233');
   });
 
   it('keeps the old nav glyphs on the working pages, and none on Settings and About', () => {
-    expect(PAGES.map((p) => p.glyph).join(' ')).toBe('◎ ↓ ✓ ◇ ≡ ◔ $  ');
+    expect(PAGES.map((p) => p.glyph).join(' ')).toBe('⊞ ◎ ↓ ✓ ◇ ≡ ◔ $  ');
   });
 
   it('knows its own pages and no others', () => {
@@ -75,15 +60,16 @@ describe('the Menu', () => {
 });
 
 describe('the zones', () => {
-  it('belong to the seven working pages, and not to Settings or About', () => {
+  it('belong to the seven working pages, and not to Home, Settings or About', () => {
     expect(ZONED.join(' ')).toBe('today inbox tasks backlog notes debt money');
+    expect(hasZones('home')).toBe(false);
     expect(hasZones('settings')).toBe(false);
     expect(hasZones('about')).toBe(false);
     expect(hasZones('__proto__')).toBe(false);
     expect(hasZones('toString')).toBe(false);
   });
 
-  it('are two to four a page, so the bar fits a 360px phone at large text', () => {
+  it('are two to four a page, so a page\'s cards are at most two rows', () => {
     for (const page of ZONED) {
       expect(ZONES[page].length, page).toBeGreaterThanOrEqual(2);
       expect(ZONES[page].length, page).toBeLessThanOrEqual(4);
@@ -106,6 +92,10 @@ describe('the zones', () => {
     }
   });
 
+  it('never use the overview\'s id', () => {
+    for (const page of ZONED) expect(isZoneOf(page, HUB), page).toBe(false);
+  });
+
   it('are each drawn exactly once by their own page, as <Zone id="...">', () => {
     for (const page of ZONED) {
       const text = viewOf(page);
@@ -118,7 +108,7 @@ describe('the zones', () => {
     }
   });
 
-  it('start each page on its first zone', () => {
+  it('have a first, which each page lists first', () => {
     expect(firstZone('today')).toBe('day');
     expect(firstZone('money')).toBe('soon');
     expect(firstZone('debt')).toBe('paychecks');
@@ -134,83 +124,25 @@ describe('the zones', () => {
   });
 });
 
-describe('zoneFor', () => {
-  it('opens a page on its first zone when nothing is saved', () => {
+describe("each page's overview", () => {
+  it('is drawn exactly once by its page, as <Hub', () => {
     for (const page of ZONED) {
-      expect(zoneFor(page), page).toBe(firstZone(page));
-      expect(zoneFor(page, {}), page).toBe(firstZone(page));
+      const uses = viewOf(page).match(/<Hub\b/g) ?? [];
+      expect(uses.length, page).toBe(1);
     }
   });
 
-  it('opens a page on the zone it was left on', () => {
-    expect(zoneFor('money', { money: 'subscriptions' })).toBe('subscriptions');
-    expect(zoneFor('debt', { money: 'subscriptions', debt: 'plan' })).toBe('plan');
-  });
-
-  it('always opens Today on today, whatever is saved', () => {
-    expect(remembersZone('today')).toBe(false);
-    expect(zoneFor('today', { today: 'waiting' })).toBe('day');
-    for (const page of ZONED.filter((p) => p !== 'today')) expect(remembersZone(page), page).toBe(true);
-  });
-
-  it('falls back to the first zone for anything it does not know', () => {
-    const messy = { money: 'plan', debt: 7, tasks: 'Search', notes: '__proto__' } as unknown as Record<string, string>;
-    expect(zoneFor('money', messy)).toBe('soon');
-    expect(zoneFor('debt', messy)).toBe('paychecks');
-    expect(zoneFor('tasks', messy)).toBe('dated');
-    expect(zoneFor('notes', messy)).toBe('all');
+  it('gives each card its zone\'s own name', () => {
+    expect(zoneLabel('money', 'soon')).toBe('Coming out');
+    expect(zoneLabel('debt', 'plan')).toBe('Plan');
+    expect(zoneLabel('money', HUB)).toBe('Money');
   });
 });
 
-describe('withZone', () => {
-  it('stores a zone that is not the first', () => {
-    expect(withZone(undefined, 'money', 'subscriptions')).toEqual({ money: 'subscriptions' });
-  });
-
-  it('never stores a first zone', () => {
-    for (const page of ZONED) expect(withZone(undefined, page, firstZone(page)), page).toEqual({});
-    expect(withZone({ money: 'income' }, 'money', 'soon')).toEqual({});
-  });
-
-  it("never stores Today's zone", () => {
-    expect(withZone(undefined, 'today', 'waiting')).toEqual({});
-    expect(withZone({ today: 'money' } as Record<string, string>, 'debt', 'plan')).toEqual({ debt: 'plan' });
-  });
-
-  it('keeps the other pages you left on another zone', () => {
-    const one = withZone(undefined, 'money', 'income');
-    const two = withZone(one, 'debt', 'debts');
-    expect(two).toEqual({ money: 'income', debt: 'debts' });
-    expect(withZone(two, 'money', 'soon')).toEqual({ debt: 'debts' });
-  });
-
-  it('drops unknown pages, unknown zones, first zones and anything that is not a word', () => {
-    const messy = {
-      lock: 'open',
-      settings: 'look',
-      money: 'plan',
-      debt: 'paychecks',
-      inbox: 3,
-      notes: 'search',
-    } as unknown as Record<string, string>;
-    expect(withZone(messy, 'tasks', 'finished')).toEqual({ notes: 'search', tasks: 'finished' });
-  });
-
-  it('ignores a zone that is not the page\'s own', () => {
-    expect(withZone({ money: 'income' }, 'money', 'plan')).toEqual({});
-  });
-
-  it('leaves the map it was given alone', () => {
-    const stored = { money: 'income' };
-    withZone(stored, 'money', 'soon');
-    expect(stored).toEqual({ money: 'income' });
-  });
-});
-
-describe('where the zones are kept', () => {
-  it('is a preference that travels in backups, not a device-only setting', () => {
-    expect([...DEVICE_SETTINGS]).not.toContain('zones');
-    const zones = { money: 'subscriptions' };
-    expect(withoutDeviceSettings({ theme: 'calm', zones }).zones).toEqual(zones);
+describe('where you are is never saved', () => {
+  it('has no code left that writes a zone to the settings', () => {
+    for (const { path, text } of sources) {
+      expect(/saveSettings\(\{\s*zones/.test(text), path).toBe(false);
+    }
   });
 });

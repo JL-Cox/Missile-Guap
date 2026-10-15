@@ -33,6 +33,7 @@ import {
   ConfirmButton,
   DetailsButton,
   Empty,
+  Hub,
   Section,
   Zone,
   useBackLayer,
@@ -62,10 +63,10 @@ type Money = (minor: number) => string;
  * useDebtPlan). The screen chooses words and lays out what comes back; it
  * does no sums of its own.
  *
- * Three zones, the same every time. Paychecks: Add a debt, then This
- * paycheck, which never folds. Plan: the plan, and how the numbers are worked
- * out, folded. Debts: Add a debt again, the debts themselves, and what is paid
- * off, folded.
+ * Three zones, the same every time, each a card on the page's overview,
+ * under Add a debt. Paychecks: Add a debt, then This paycheck, which never
+ * folds. Plan: the plan, and how the numbers are worked out, folded. Debts:
+ * Add a debt again, the debts themselves, and what is paid off, folded.
  */
 export default function DebtScreen({ settings }: { settings: Settings }) {
   const today = todayKey();
@@ -232,8 +233,50 @@ export default function DebtScreen({ settings }: { settings: Settings }) {
     </div>
   );
 
+  // The cards say the same figures the zones open on: This paycheck's, and
+  // the plan's finish date. Amounts are left out while they are blurred.
+  const check = view.checks[0];
+  const planned = view.planned.length > 0;
+  const finishes = planned && view.result.status === 'paidOff' ? view.result.paidOffOn : null;
+
   return (
     <>
+      <Hub
+        cards={{
+          paychecks: {
+            figure: planned && check && !blur ? money(check.towardDebtMinor) : undefined,
+            lines:
+              open.length === 0
+                ? ['What each paycheck puts toward debt, once you add one']
+                : !planned
+                  ? ['Fills in once a debt has a balance and a due date']
+                  : !check
+                    ? ['Add your income to see what each paycheck covers']
+                    : [blur ? 'What this paycheck puts toward debt' : 'toward debt from this paycheck'],
+          },
+          plan: {
+            figure: finishes ? monthYear(finishes) : undefined,
+            lines: !planned
+              ? ['The date everything is paid off, once you add a debt']
+              : finishes
+                ? [
+                    'when everything is paid off',
+                    view.strategy === 'avalanche' ? 'Highest interest first' : 'Smallest balance first',
+                  ]
+                : ['These payments do not pay everything off yet. Open the plan to see why'],
+          },
+          debts: {
+            figure: String(open.length),
+            lines: [
+              open.length === 1 ? 'debt being paid' : 'debts being paid',
+              ...(paidOff.length > 0 ? [paidOffSummary(paidOff)] : []),
+            ],
+          },
+        }}
+      >
+        {addDebt}
+      </Hub>
+
       <Zone id="paychecks">
         {addDebt}
 

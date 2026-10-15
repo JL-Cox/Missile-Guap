@@ -47,6 +47,7 @@ opposite on all three counts.
 
 | Screen | What it holds |
 | --- | --- |
+| **Home** | Where the app opens: a card for each page below, saying what is worth knowing about it - what is on today and the next reminder, how much is in the inbox, what is coming up this week, what is still to come out before payday, what this paycheck puts toward debt. Tap a card to open its page. |
 | **Today** | What is planned today, what is still waiting, what money is about to leave, and anything with no date yet. |
 | **Inbox** | Everything you typed into the capture box. Three buttons per item, always the same three: make it a task, keep it as a note, done with it. |
 | **Tasks** | All tasks, grouped by day, searchable across titles, notes, steps and tags. Optional times, durations, reminders, repeats and an energy level. |
@@ -58,16 +59,19 @@ opposite on all three counts.
 
 Four things hold across every screen:
 
-- **Pages are in the Menu; each page is split into zones.** *Menu*, at the top
-  left, opens a panel listing every page (Today, Inbox, Tasks, Backlog, Notes,
-  Debt, Money, then Settings and About), with your Inbox count on the button.
-  The bar at the bottom splits the page you are on into two to four zones -
-  Money is *Coming out · Paychecks · Subscriptions · Income* - so no page is
-  one long scroll. Each page opens on the zone you were last on, except Today,
-  which always opens on today; its first zone ends with a short "More on
-  Today" card saying what is in the others. Tasks and Notes each have a Search
-  zone that looks through everything. *Hide now* sits at the top right when
-  the app lock is on.
+- **Home, then a page's cards, then the part you want.** The app opens on
+  *Home*: a card for each working page, in three groups (Today, Lists,
+  Money), each saying the one or two things worth knowing - so most glances
+  end there. A card opens its page, and every working page opens on its own
+  cards, one for each of its two to four parts - Money is *Coming out ·
+  Paychecks · Subscriptions · Income* - each with its figure and a line about
+  what is in it. A card opens that part, with *Back to Money* at the top. No
+  page is one long scroll, and no list sits behind a bar of tabs. Pages always
+  open on their cards; where you were is never saved. *Menu*, at the top
+  left, lists every page from the top (Home, Today, Inbox, Tasks, Backlog,
+  Notes, Debt, Money, then Settings and About), with your Inbox count on the
+  button. Tasks and Notes each have a Search part that looks through
+  everything. *Hide now* sits at the top right when the app lock is on.
 - **A few reference sections fold.** Averages on Money, *How this works* and
   *Paid off* on Debt, and every Settings group have a Show / Hide button on
   their heading, and while folded the heading still says what is in it.
@@ -80,7 +84,7 @@ Four things hold across every screen:
   and it says so. Deleting still asks twice first; Undo is as well as that, not
   instead of it.
 - **Back does what Android's Back should.** It closes the Menu or the form you
-  have open, then goes to the page's first zone, then to Today, then leaves
+  have open, then goes from a part back to its page's cards, then Home, then leaves
   the app - never through every page you happened to visit. A half-written
   task is kept if you go to another page and come back.
 
